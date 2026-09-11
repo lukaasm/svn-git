@@ -1,0 +1,291 @@
+<ResourceDictionary
+    x:Class="Sg.App.Templates"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+
+    <!-- The colours a status letter wears, VS Code's git decorations, one set per theme. -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="StatusModifiedBrush" Color="#E2C08D" />
+            <SolidColorBrush x:Key="StatusModifiedBackgroundBrush" Color="#2EE2C08D" />
+            <SolidColorBrush x:Key="StatusAddedBrush" Color="#73C991" />
+            <SolidColorBrush x:Key="StatusAddedBackgroundBrush" Color="#2E73C991" />
+            <SolidColorBrush x:Key="StatusDeletedBrush" Color="#F14C4C" />
+            <SolidColorBrush x:Key="StatusDeletedBackgroundBrush" Color="#2EF14C4C" />
+            <SolidColorBrush x:Key="StatusRenamedBrush" Color="#B180D7" />
+            <SolidColorBrush x:Key="StatusRenamedBackgroundBrush" Color="#2EB180D7" />
+            <SolidColorBrush x:Key="StatusConflictBrush" Color="#FF8C5A" />
+            <SolidColorBrush x:Key="StatusConflictBackgroundBrush" Color="#2EFF8C5A" />
+            <SolidColorBrush x:Key="StatusUntrackedBrush" Color="#9DA5B4" />
+            <SolidColorBrush x:Key="StatusUntrackedBackgroundBrush" Color="#249DA5B4" />
+            <SolidColorBrush x:Key="StatusOtherBrush" Color="#9DA5B4" />
+            <SolidColorBrush x:Key="StatusOtherBackgroundBrush" Color="#009DA5B4" />
+            <SolidColorBrush x:Key="SkeletonBrush" Color="#33FFFFFF" />
+            <!-- One colour per working copy, handed out in load order, so an interleaved list stays readable. -->
+            <SolidColorBrush x:Key="RepoBrush0" Color="#6CB6FF" />
+            <SolidColorBrush x:Key="RepoBackground0" Color="#336CB6FF" />
+            <SolidColorBrush x:Key="RepoBrush1" Color="#4EC9B0" />
+            <SolidColorBrush x:Key="RepoBackground1" Color="#334EC9B0" />
+            <SolidColorBrush x:Key="RepoBrush2" Color="#C586C0" />
+            <SolidColorBrush x:Key="RepoBackground2" Color="#33C586C0" />
+            <SolidColorBrush x:Key="RepoBrush3" Color="#DCDCAA" />
+            <SolidColorBrush x:Key="RepoBackground3" Color="#33DCDCAA" />
+            <SolidColorBrush x:Key="RepoBrush4" Color="#F09A87" />
+            <SolidColorBrush x:Key="RepoBackground4" Color="#33F09A87" />
+            <SolidColorBrush x:Key="RepoBrush5" Color="#9CDCFE" />
+            <SolidColorBrush x:Key="RepoBackground5" Color="#339CDCFE" />
+            <SolidColorBrush x:Key="RepoBrush6" Color="#B5CEA8" />
+            <SolidColorBrush x:Key="RepoBackground6" Color="#33B5CEA8" />
+            <SolidColorBrush x:Key="RepoBrush7" Color="#D7A0F5" />
+            <SolidColorBrush x:Key="RepoBackground7" Color="#33D7A0F5" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="StatusModifiedBrush" Color="#895503" />
+            <SolidColorBrush x:Key="StatusModifiedBackgroundBrush" Color="#26E2C08D" />
+            <SolidColorBrush x:Key="StatusAddedBrush" Color="#3B7A2A" />
+            <SolidColorBrush x:Key="StatusAddedBackgroundBrush" Color="#2673C991" />
+            <SolidColorBrush x:Key="StatusDeletedBrush" Color="#AD0707" />
+            <SolidColorBrush x:Key="StatusDeletedBackgroundBrush" Color="#26F14C4C" />
+            <SolidColorBrush x:Key="StatusRenamedBrush" Color="#6F42C1" />
+            <SolidColorBrush x:Key="StatusRenamedBackgroundBrush" Color="#26B180D7" />
+            <SolidColorBrush x:Key="StatusConflictBrush" Color="#B4460A" />
+            <SolidColorBrush x:Key="StatusConflictBackgroundBrush" Color="#26FF8C5A" />
+            <SolidColorBrush x:Key="StatusUntrackedBrush" Color="#6E7781" />
+            <SolidColorBrush x:Key="StatusUntrackedBackgroundBrush" Color="#1F6E7781" />
+            <SolidColorBrush x:Key="StatusOtherBrush" Color="#6E7781" />
+            <SolidColorBrush x:Key="StatusOtherBackgroundBrush" Color="#006E7781" />
+            <SolidColorBrush x:Key="SkeletonBrush" Color="#26000000" />
+            <!-- One colour per working copy, handed out in load order, so an interleaved list stays readable. -->
+            <SolidColorBrush x:Key="RepoBrush0" Color="#0A5FB4" />
+            <SolidColorBrush x:Key="RepoBackground0" Color="#240A5FB4" />
+            <SolidColorBrush x:Key="RepoBrush1" Color="#0F766E" />
+            <SolidColorBrush x:Key="RepoBackground1" Color="#240F766E" />
+            <SolidColorBrush x:Key="RepoBrush2" Color="#8B2FA0" />
+            <SolidColorBrush x:Key="RepoBackground2" Color="#248B2FA0" />
+            <SolidColorBrush x:Key="RepoBrush3" Color="#7A5C00" />
+            <SolidColorBrush x:Key="RepoBackground3" Color="#247A5C00" />
+            <SolidColorBrush x:Key="RepoBrush4" Color="#B03A26" />
+            <SolidColorBrush x:Key="RepoBackground4" Color="#24B03A26" />
+            <SolidColorBrush x:Key="RepoBrush5" Color="#1F6FA8" />
+            <SolidColorBrush x:Key="RepoBackground5" Color="#241F6FA8" />
+            <SolidColorBrush x:Key="RepoBrush6" Color="#3F7020" />
+            <SolidColorBrush x:Key="RepoBackground6" Color="#243F7020" />
+            <SolidColorBrush x:Key="RepoBrush7" Color="#6B3FA0" />
+            <SolidColorBrush x:Key="RepoBackground7" Color="#246B3FA0" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="StatusModifiedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusModifiedBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="StatusAddedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusAddedBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="StatusDeletedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusDeletedBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="StatusRenamedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusRenamedBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="StatusConflictBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusConflictBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="StatusUntrackedBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="StatusUntrackedBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="StatusOtherBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="StatusOtherBackgroundBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="SkeletonBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="RepoBrush0" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground0" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush1" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground1" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush2" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground2" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush3" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground3" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush4" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground4" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush5" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground5" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush6" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground6" Color="Transparent" />
+            <SolidColorBrush x:Key="RepoBrush7" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RepoBackground7" Color="Transparent" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <!-- ONE DENSITY FOR EVERY LIST IN THE APP.
+         Files, commits, revisions, monitored repositories: every row is this tall, padded this much and
+         set in this size. Change a number here and all of them move together; a template only spells a
+         size out where it deliberately differs, like the status badge. -->
+    <x:Double x:Key="RowMinHeight">22</x:Double>
+    <x:Double x:Key="RowFontSize">12</x:Double>
+    <x:Double x:Key="RowIconSize">12</x:Double>
+    <x:Double x:Key="RowSpacing">10</x:Double>
+    <!-- The right side leaves room for the scrollbar, which WinUI draws over the rows, not beside them. -->
+    <Thickness x:Key="RowPadding">8,0,16,0</Thickness>
+
+    <!-- The grab handle between two panes. ColumnSplitter.Attach gives it its behaviour. -->
+    <Style x:Key="Splitter" TargetType="Thumb">
+        <Setter Property="Width" Value="4" />
+        <Setter Property="Margin" Value="3,0" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+    </Style>
+
+    <!-- The container every list row sits in. -->
+    <Style x:Key="CompactItem" TargetType="ListViewItem">
+        <Setter Property="MinHeight" Value="{StaticResource RowMinHeight}" />
+        <Setter Property="Padding" Value="{StaticResource RowPadding}" />
+        <Setter Property="FontSize" Value="{StaticResource RowFontSize}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+
+    <!-- The four kinds of text a row is made of. Rows are one line, so they all centre and all trim. -->
+    <Style x:Key="RowText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource RowFontSize}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <Style x:Key="RowTextDim" TargetType="TextBlock" BasedOn="{StaticResource RowText}">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+    </Style>
+    <Style x:Key="RowMono" TargetType="TextBlock" BasedOn="{StaticResource RowText}">
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
+    </Style>
+    <Style x:Key="RowMonoDim" TargetType="TextBlock" BasedOn="{StaticResource RowMono}">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+    </Style>
+
+    <!-- A line of a file tree, drawn on a plain list: the indent for its depth, a chevron on a folder,
+         the status letter in a tinted badge on a file, a folder icon, the name, the lines added and
+         removed, and a folder's file count. TreeView drew these once, but it indents 16 pixels a
+         level from code and keeps minimum heights of its own; the list does what it is told. -->
+    <DataTemplate x:Key="FileTreeTemplate" x:DataType="local:TreeNode">
+        <Grid ColumnDefinitions="16,Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="6" Margin="{x:Bind Indent}" ToolTipService.ToolTip="{x:Bind Tip}">
+            <Button Visibility="{x:Bind ChevronVisibility}" Click="Chevron_Click" Background="Transparent" BorderThickness="0"
+                    Padding="0" MinWidth="0" MinHeight="0" Width="16" Height="16" VerticalAlignment="Center"
+                    AutomationProperties.Name="Open or close the folder">
+                <FontIcon Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" FontSize="9" />
+            </Button>
+            <Border Grid.Column="1" Width="24" Height="16" CornerRadius="4" Background="{x:Bind CodeBackground}" VerticalAlignment="Center"
+                    Visibility="{x:Bind BadgeVisibility}" ToolTipService.ToolTip="{x:Bind CodeTip}">
+                <TextBlock Text="{x:Bind Code}" Foreground="{x:Bind CodeBrush}" FontFamily="Cascadia Mono, Consolas" FontSize="11" FontWeight="Bold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <FontIcon Grid.Column="2" Glyph="{x:Bind Glyph}" Visibility="{x:Bind GlyphVisibility}" FontSize="{StaticResource RowIconSize}"
+                      VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="3" Text="{x:Bind Text}" Style="{StaticResource RowMono}" />
+            <!-- Lines added and removed, once the patch has been read. A folder shows the sum of its files.
+                 Until then a grey bar holds their place, so a page still reading does not look done. -->
+            <Border Grid.Column="4" Grid.ColumnSpan="2" Width="36" Height="8" CornerRadius="4" VerticalAlignment="Center"
+                    Background="{ThemeResource SkeletonBrush}" Visibility="{x:Bind StatsPendingVisibility, Mode=OneWay}" />
+            <TextBlock Grid.Column="4" Text="{x:Bind AddedText, Mode=OneWay}" Style="{StaticResource RowMono}" Foreground="{ThemeResource StatusAddedBrush}" />
+            <TextBlock Grid.Column="5" Text="{x:Bind RemovedText, Mode=OneWay}" Style="{StaticResource RowMono}" Foreground="{ThemeResource StatusDeletedBrush}" />
+            <TextBlock Grid.Column="6" Text="{x:Bind CountText}" Style="{StaticResource RowTextDim}" MinWidth="16" TextAlignment="Right" />
+        </Grid>
+    </DataTemplate>
+
+    <!-- The same line where the tree also decides what goes out: commit, revert, and picking a side
+         in a conflict. A folder's box is the answer its files add up to, and setting it sets them all. -->
+    <DataTemplate x:Key="CheckedFileTreeTemplate" x:DataType="local:TreeNode">
+        <Grid ColumnDefinitions="16,Auto,Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="6" Margin="{x:Bind Indent}" ToolTipService.ToolTip="{x:Bind Tip}">
+            <Button Visibility="{x:Bind ChevronVisibility}" Click="Chevron_Click" Background="Transparent" BorderThickness="0"
+                    Padding="0" MinWidth="0" MinHeight="0" Width="16" Height="16" VerticalAlignment="Center"
+                    AutomationProperties.Name="Open or close the folder">
+                <FontIcon Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" FontSize="9" />
+            </Button>
+            <!-- A CheckBox draws its box inside a 32 high grid of its own, whatever MinHeight says, and that
+                 made every ticked tree a third taller than every other list. The negative margin gives the
+                 row back the height the box does not use; the 20 pixel box itself stays whole.
+                 IsThreeState is on so the box can draw the half state a folder works out, and the binding
+                 only reads: Check_Click is what writes, so the box never tells the tree what it is. -->
+            <CheckBox Grid.Column="1" IsChecked="{x:Bind Checked, Mode=OneWay}" IsThreeState="True" Click="Check_Click"
+                      MinWidth="0" MinHeight="0" Padding="0" Margin="0,-5" VerticalAlignment="Center" />
+            <Border Grid.Column="2" Width="24" Height="16" CornerRadius="4" Background="{x:Bind CodeBackground}" VerticalAlignment="Center"
+                    Visibility="{x:Bind BadgeVisibility}" ToolTipService.ToolTip="{x:Bind CodeTip}">
+                <TextBlock Text="{x:Bind Code}" Foreground="{x:Bind CodeBrush}" FontFamily="Cascadia Mono, Consolas" FontSize="11" FontWeight="Bold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <FontIcon Grid.Column="3" Glyph="{x:Bind Glyph}" Visibility="{x:Bind GlyphVisibility}" FontSize="{StaticResource RowIconSize}"
+                      VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="4" Text="{x:Bind Text}" Style="{StaticResource RowMono}" />
+            <Border Grid.Column="5" Grid.ColumnSpan="2" Width="36" Height="8" CornerRadius="4" VerticalAlignment="Center"
+                    Background="{ThemeResource SkeletonBrush}" Visibility="{x:Bind StatsPendingVisibility, Mode=OneWay}" />
+            <TextBlock Grid.Column="5" Text="{x:Bind AddedText, Mode=OneWay}" Style="{StaticResource RowMono}" Foreground="{ThemeResource StatusAddedBrush}" />
+            <TextBlock Grid.Column="6" Text="{x:Bind RemovedText, Mode=OneWay}" Style="{StaticResource RowMono}" Foreground="{ThemeResource StatusDeletedBrush}" />
+            <TextBlock Grid.Column="7" Text="{x:Bind CountText}" Style="{StaticResource RowTextDim}" MinWidth="16" TextAlignment="Right" />
+        </Grid>
+    </DataTemplate>
+
+    <!-- A git commit: the log and the push window list the same commits, so they list them the same way,
+         and the same way a revision is listed. The date and the sha are the row's identity, not its point:
+         the details pane names both, and so does the tooltip. -->
+    <!-- The push window dims the commits that are staying behind and tags them, so the line between what
+         goes now and what waits is read off the list itself. Every other window leaves both off. -->
+    <DataTemplate x:Key="CommitRowTemplate" x:DataType="local:CommitRow">
+        <Grid ColumnDefinitions="12,100,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}"
+              Opacity="{x:Bind RowOpacity}">
+            <!-- Only the one line a run of snapshots folds into wears a chevron. The column is there on
+                 every row so the authors stay in one line down the list. -->
+            <FontIcon Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" Visibility="{x:Bind ChevronVisibility}" FontSize="9" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{x:Bind Author}" Style="{StaticResource RowTextDim}" />
+            <TextBlock Grid.Column="2" Text="{x:Bind Subject, Mode=OneWay}" Style="{StaticResource RowText}" FontWeight="{x:Bind Weight}" />
+            <Border Grid.Column="3" Visibility="{x:Bind StaysVisibility}" CornerRadius="4" Padding="6,1" VerticalAlignment="Center"
+                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                <TextBlock Text="stays" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+            </Border>
+        </Grid>
+    </DataTemplate>
+
+    <!-- One shelf. The name is what the reader gave it, and the three greys after it say where it came
+         from, how much is in it, and when: enough to pick the right one without opening any of them. -->
+    <DataTemplate x:Key="ShelfRowTemplate" x:DataType="local:ShelfRow">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">
+            <FontIcon Glyph="{x:Bind Glyph}" FontSize="{StaticResource RowIconSize}" VerticalAlignment="Center"
+                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="1" Text="{x:Bind Title}" Style="{StaticResource RowText}" Foreground="{x:Bind TitleBrush}" />
+            <TextBlock Grid.Column="2" Text="{x:Bind Where}" Style="{StaticResource RowTextDim}" />
+            <TextBlock Grid.Column="3" Text="{x:Bind CountText}" Style="{StaticResource RowTextDim}" />
+            <TextBlock Grid.Column="4" Text="{x:Bind When}" Style="{StaticResource RowMonoDim}" />
+        </Grid>
+    </DataTemplate>
+
+    <!-- One line of a blamed file: who put it there, then the line itself. The mark keeps one width so
+         the code down the right stays in a column, which is the whole point of reading it this way. -->
+    <DataTemplate x:Key="BlameRowTemplate" x:DataType="local:BlameRow">
+        <Grid ColumnDefinitions="64,90,44,*" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">
+            <Border CornerRadius="4" Padding="6,1" Background="{x:Bind MarkBackground}" VerticalAlignment="Center" HorizontalAlignment="Left">
+                <TextBlock Text="{x:Bind Mark}" Foreground="{x:Bind MarkBrush}" Style="{StaticResource RowText}" FontWeight="SemiBold" />
+            </Border>
+            <TextBlock Grid.Column="1" Text="{x:Bind Author}" Style="{StaticResource RowTextDim}" TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="2" Text="{x:Bind Number}" Style="{StaticResource RowTextDim}" TextAlignment="Right" />
+            <TextBlock Grid.Column="3" Text="{x:Bind Text}" FontFamily="Cascadia Mono, Consolas" FontSize="12"
+                       TextWrapping="NoWrap" IsTextSelectionEnabled="True" />
+        </Grid>
+    </DataTemplate>
+
+    <!-- An SVN revision, in the SVN log and in the monitor. The leading mark is what the two windows
+         disagree about, so the row asks it for a glyph instead of drawing its own. The revision number
+         is not in the row: the details pane names it, and so does the row's tooltip. -->
+    <DataTemplate x:Key="RevisionRowTemplate" x:DataType="local:SvnRevRow">
+        <!-- Fixed widths, not Auto: a long author or a long repository tag must not push the subject
+             out of line with the row above it. The date is not here at all: the message is what the row
+             is for, and the details pane and the tooltip both name the date. -->
+        <Grid ColumnDefinitions="18,Auto,*" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}"
+              Opacity="{x:Bind RowOpacity}">
+            <!-- The mark slot carries the chevron on a fold line, and the revision's own mark otherwise. -->
+            <FontIcon Glyph="{x:Bind MarkGlyph}" FontSize="{StaticResource RowIconSize}" VerticalAlignment="Center"
+                      Visibility="{x:Bind MarkVisibility}" Foreground="{x:Bind MarkBrush}" ToolTipService.ToolTip="{x:Bind MarkTip}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource RowSpacing}">
+                <!-- Which working copy the revision came from, in a slot of one width so the author lines up
+                     across rows. A list of one repository, like the monitor, drops the slot and its gap, not
+                     just the tag: a blank column in front of every author read as a row that lost something. -->
+                <Grid Width="110" Visibility="{x:Bind RepoVisibility}">
+                    <Border CornerRadius="4" Padding="6,1" Background="{x:Bind RepoBackground}" VerticalAlignment="Center" HorizontalAlignment="Left"
+                            ToolTipService.ToolTip="{x:Bind RepoTip}">
+                        <TextBlock Text="{x:Bind Repo}" Foreground="{x:Bind RepoBrush}" Style="{StaticResource RowText}" FontWeight="SemiBold" />
+                    </Border>
+                </Grid>
+                <TextBlock Text="{x:Bind Author}" Style="{StaticResource RowTextDim}" Width="100" />
+            </StackPanel>
+            <TextBlock Grid.Column="2" Text="{x:Bind Subject}" Style="{StaticResource RowText}" FontWeight="{x:Bind Weight}" />
+        </Grid>
+    </DataTemplate>
+
+</ResourceDictionary>

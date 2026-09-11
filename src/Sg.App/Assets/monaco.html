@@ -1,0 +1,443 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+html,body{margin:0;height:100%;overflow:hidden}
+#c,#t{height:100%}
+#t{display:none}
+
+/* Monaco tints the whole changed line as strongly as the changed words inside it,
+   so the words disappear into the line. These are the variables Monaco resolves
+   those two colours from: keep a faint wash on the line, saying "something here
+   changed", and let the word highlight say what changed.
+   Monaco declares them on ".monaco-editor, .monaco-diff-editor" from a stylesheet
+   loaded after this one, so the body prefix is there to win on specificity. */
+body .monaco-editor,
+body .monaco-diff-editor,
+body .monaco-component {
+  --vscode-diffEditor-insertedLineBackground: rgba(46,160,67,.09);
+  --vscode-diffEditor-removedLineBackground: rgba(207,34,46,.09);
+  --vscode-diffEditor-insertedTextBackground: rgba(46,160,67,.32);
+  --vscode-diffEditor-removedTextBackground: rgba(207,34,46,.30);
+}
+@media (prefers-color-scheme: dark) {
+  body .monaco-editor,
+  body .monaco-diff-editor,
+  body .monaco-component {
+    --vscode-diffEditor-insertedLineBackground: rgba(63,185,80,.11);
+    --vscode-diffEditor-removedLineBackground: rgba(248,81,73,.11);
+    --vscode-diffEditor-insertedTextBackground: rgba(63,185,80,.38);
+    --vscode-diffEditor-removedTextBackground: rgba(248,81,73,.34);
+  }
+}
+
+/* A word highlight says which words of a line changed. When every character of the line is new there
+   are no such words, and painting them all in the strong colour turns a whole added file into one
+   green field: louder than the same change read as a patch over many files, which says it in a wash.
+   Two views fall back to that wash. sg-flat is a file that is only added or only deleted. sg-inline
+   is the one column view, where Monaco paints a whole added line in the word colour as well. */
+body.sg-inline .monaco-editor,
+body.sg-inline .monaco-diff-editor,
+body.sg-inline .monaco-component {
+  --vscode-diffEditor-insertedTextBackground: rgba(46,160,67,.18);
+  --vscode-diffEditor-removedTextBackground: rgba(207,34,46,.17);
+}
+body.sg-flat .monaco-editor,
+body.sg-flat .monaco-diff-editor,
+body.sg-flat .monaco-component {
+  --vscode-diffEditor-insertedTextBackground: rgba(46,160,67,.10);
+  --vscode-diffEditor-removedTextBackground: rgba(207,34,46,.10);
+}
+@media (prefers-color-scheme: dark) {
+  body.sg-inline .monaco-editor,
+  body.sg-inline .monaco-diff-editor,
+  body.sg-inline .monaco-component {
+    --vscode-diffEditor-insertedTextBackground: rgba(63,185,80,.20);
+    --vscode-diffEditor-removedTextBackground: rgba(248,81,73,.18);
+  }
+  body.sg-flat .monaco-editor,
+  body.sg-flat .monaco-diff-editor,
+  body.sg-flat .monaco-component {
+    --vscode-diffEditor-insertedTextBackground: rgba(63,185,80,.12);
+    --vscode-diffEditor-removedTextBackground: rgba(248,81,73,.12);
+  }
+}
+
+/* The unified view over many files. The text is set in the language of the files it covers, so the code
+   reads like code; these washes carry what the +/- markers mean, the way the diff editor does above. */
+:root {
+  --sg-u-add: rgba(46,160,67,.10);
+  --sg-u-del: rgba(207,34,46,.10);
+  --sg-u-hunk: rgba(128,0,128,.07);
+  --sg-u-file: rgba(4,81,165,.10);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sg-u-add: rgba(63,185,80,.12);
+    --sg-u-del: rgba(248,81,73,.12);
+    --sg-u-hunk: rgba(197,134,192,.12);
+    --sg-u-file: rgba(156,220,254,.13);
+  }
+}
+/* The picked palette writes these four over, so the whole-patch view and the side by side view of the
+   same change agree. Until one arrives they follow the OS, which is what the editor does too. */
+.u-add { background: var(--sg-u-add); }
+.u-del { background: var(--sg-u-del); }
+.u-hunk { background: var(--sg-u-hunk); }
+.u-file { background: var(--sg-u-file); font-weight: 600; }
+</style>
+</head>
+<body><div id="c"></div><div id="t"></div>
+<script>
+(function () {
+  var post = function (m) { if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(m); };
+  var vs = new URLSearchParams(location.search).get('vs') || 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs';
+  var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.body.style.background = dark ? '#1e1e1e' : '#ffffff';
+  window.MonacoEnvironment = {
+    getWorkerUrl: function () {
+      return URL.createObjectURL(new Blob(
+        ["self.MonacoEnvironment={baseUrl:'" + vs + "/../'};importScripts('" + vs + "/base/worker/workerMain.js');"],
+        { type: 'text/javascript' }));
+    }
+  };
+  var diffEditor = null, textEditor = null, pending = null, layoutSideBySide = true, collapsed = false, textShowing = false;
+  /* The modified side is the file on disk, so a window that can write it lets the reader edit it here.
+     contentGuard stops the change the app itself makes from reading back as an edit by the reader. */
+  var editable = false, contentGuard = false, contentSub = null, registered = [];
+  /* Lines that differ only in the space at their ends read as unchanged. What a block carries is
+     unaffected: the blocks come from the patch git or svn wrote, not from what is drawn here. */
+  var ignoreWhitespace = false;
+  /* Collapsed: Monaco keeps this many lines around each change and folds the rest of the file into a
+     band the reader can press to open. The count matches what a unified diff shows, so the same change
+     reads the same in both views. Line numbers do not move, so revert chunk and F7 still see the file. */
+  function hiddenRegions() {
+    return { enabled: collapsed, contextLineCount: 3, minimumLineCount: 3, revealLineCount: 20 };
+  }
+  /* What the unified view last parsed: one fold per file, and the lines F7 walks. */
+  var folds = [], navLines = [];
+  function showDiff(m) {
+    textShowing = false;
+    document.getElementById('t').style.display = 'none';
+    document.getElementById('c').style.display = 'block';
+    var old = diffEditor.getModel();
+    if (contentSub) { contentSub.dispose(); contentSub = null; }
+    var modified = monaco.editor.createModel(m.modified || '', m.language || 'plaintext');
+    contentGuard = true;
+    diffEditor.setModel({
+      original: monaco.editor.createModel(m.original || '', m.language || 'plaintext'),
+      modified: modified
+    });
+    contentGuard = false;
+    if (old) { old.original.dispose(); old.modified.dispose(); }
+    document.body.classList.toggle('sg-flat', !(m.original || '').length || !(m.modified || '').length);
+    editable = !!m.editable;
+    diffEditor.updateOptions({ readOnly: !editable });
+    contentSub = modified.onDidChangeContent(function () { if (!contentGuard) post('dirty'); });
+    diffEditor.layout();
+    post('sel:null');
+  }
+
+  /* The whole modified side, for the window to write to disk. Called through ExecuteScript. */
+  window.sgGetModified = function () {
+    var m = diffEditor && diffEditor.getModel();
+    return m ? m.modified.getValue() : '';
+  };
+
+  /* Where the cursor is on the modified side, as a line range. The window turns it into a block of the
+     patch it read, which is what stage, unstage and revert act on. */
+  function reportSelection() {
+    if (textShowing || !diffEditor) { post('sel:null'); return; }
+    var ed = diffEditor.getModifiedEditor();
+    var s = ed.getSelection();
+    if (!s) { post('sel:null'); return; }
+    post('sel:' + JSON.stringify({ s: s.startLineNumber, e: s.endLineNumber }));
+  }
+
+  /* The buttons over the diff, repeated inside the editor's own menu so the keyboard reaches them.
+     The window sends the list every time it changes, and the old registrations go with it. */
+  function setActions(list) {
+    for (var i = 0; i < registered.length; i++) { try { registered[i].dispose(); } catch (e) { } }
+    registered = [];
+    if (!diffEditor) return;
+    var ed = diffEditor.getModifiedEditor();
+    for (var j = 0; j < (list || []).length; j++) {
+      (function (a, order) {
+        var keys = [];
+        if (a.key === 'ctrl+s') keys.push(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS);
+        else if (a.key === 'ctrl+shift+s') keys.push(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS);
+        else if (a.key === 'ctrl+r') keys.push(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR);
+        else if (a.key === 'ctrl+u') keys.push(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyU);
+        registered.push(ed.addAction({
+          id: 'sg.' + a.id,
+          label: a.label,
+          keybindings: keys,
+          contextMenuGroupId: 'sg',
+          contextMenuOrder: order,
+          run: function () { post('act:' + a.id); }
+        }));
+      })(list[j], j);
+    }
+  }
+  /* The same extensions the app maps in DiffView.LanguageFor. A unified patch names its files, so the
+     view can read them in their own language instead of as grey text; keep the two lists in step. */
+  function langFor(path) {
+    var name = path.replace(/^.*[\\\/]/, '');
+    if (/^CMakeLists\.txt$/i.test(name) || /\.cmake$/i.test(name)) return 'cmake';
+    var ext = (/\.[^.]*$/.exec(name) || [''])[0].toLowerCase();
+    if (['.cpp','.cc','.cxx','.c','.h','.hpp','.inl','.hlsl','.glsl','.fx'].indexOf(ext) >= 0) return 'cpp';
+    if (ext === '.cs') return 'csharp';
+    if (ext === '.py') return 'python';
+    if (ext === '.json') return 'json';
+    if (['.xml','.xaml','.vcxproj','.csproj','.props','.targets'].indexOf(ext) >= 0) return 'xml';
+    if (ext === '.lua') return 'lua';
+    if (ext === '.js') return 'javascript';
+    if (ext === '.ts') return 'typescript';
+    if (ext === '.md') return 'markdown';
+    if (['.yaml','.yml'].indexOf(ext) >= 0) return 'yaml';
+    if (['.bat','.cmd'].indexOf(ext) >= 0) return 'bat';
+    if (ext === '.ps1') return 'powershell';
+    if (ext === '.sh') return 'shell';
+    if (['.ini','.cfg','.toml'].indexOf(ext) >= 0) return 'ini';
+    if (['.html','.htm'].indexOf(ext) >= 0) return 'html';
+    if (ext === '.css') return 'css';
+    return 'plaintext';
+  }
+  /* A unified patch, rewritten for reading. The git and svn headers over each file say the same thing
+     four times over; the path alone says it once, and folds the file away when it is not the one being
+     read. What is left is code, so the model takes the language the patch's files are written in. */
+  /* svn and git hand back CRLF here, and a stray carriage return at the end of a line quietly defeats
+     every regex anchored with $. Split on both. */
+  function parsePatch(text) {
+    var lines = text.split(/\r?\n/), out = [], folds = [], nav = [], deco = [], votes = {}, start = 0, n = 0, best = '', top = 0;
+    function mark(line, cls) { deco.push({ range: new monaco.Range(line, 1, line, 1), options: { isWholeLine: true, className: cls } }); }
+    function close() { if (start > 0 && n > start) folds.push({ start: start, end: n }); }
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i], path = null, m2;
+      if ((m2 = /^diff --git a\/(.+?) b\/(.+)$/.exec(l))) path = m2[2];
+      else if ((m2 = /^Index: (.+)$/.exec(l))) path = m2[1];
+      if (path !== null) {
+        close();
+        out.push(path); n++;
+        start = n; nav.push(n); mark(n, 'u-file');
+        var lang = langFor(path);
+        votes[lang] = (votes[lang] || 0) + 1;
+        if (votes[lang] > top) { top = votes[lang]; best = lang; }
+        continue;
+      }
+      if (/^(index [0-9a-f]|--- |\+\+\+ |={3,}$|new file mode |deleted file mode |old mode |new mode |similarity index |dissimilarity index |rename (from|to) |copy (from|to) )/.test(l)) continue;
+      out.push(l); n++;
+      if (/^@@/.test(l)) { nav.push(n); mark(n, 'u-hunk'); }
+      else if (/^\+/.test(l)) mark(n, 'u-add');
+      else if (/^-/.test(l)) mark(n, 'u-del');
+    }
+    close();
+    return { text: out.join('\n'), language: best || 'plaintext', folds: folds, nav: nav, deco: deco };
+  }
+  function showText(m) {
+    textShowing = true;
+    editable = false;
+    if (contentSub) { contentSub.dispose(); contentSub = null; }
+    post('sel:null');
+    document.getElementById('c').style.display = 'none';
+    document.getElementById('t').style.display = 'block';
+    var patch = m.language === 'unified-diff' ? parsePatch(m.text || '') : null;
+    var old = textEditor.getModel();
+    textEditor.setModel(monaco.editor.createModel(patch ? patch.text : (m.text || ''), patch ? patch.language : (m.language || 'plaintext')));
+    if (old) old.dispose();
+    folds = patch ? patch.folds : [];
+    navLines = patch ? patch.nav : [];
+    textEditor.deltaDecorations([], patch ? patch.deco : []);
+    textEditor.layout();
+  }
+  /* F7 and Shift+F7. The diff editor knows its changes; the unified view walks the file headers and the
+     hunks the parse marked, which is the same walk now that the headers are a line of their own. */
+  function goTo(next) {
+    if (!textShowing) {
+      if (diffEditor && diffEditor.goToDiff) diffEditor.goToDiff(next ? 'next' : 'previous');
+      return;
+    }
+    var model = textEditor && textEditor.getModel();
+    if (!model || !navLines.length) return;
+    var pos = textEditor.getPosition(), line = pos ? pos.lineNumber : (next ? 0 : model.getLineCount() + 1), i, target = null;
+    if (next) { for (i = 0; i < navLines.length; i++) if (navLines[i] > line) { target = navLines[i]; break; } }
+    else { for (i = navLines.length - 1; i >= 0; i--) if (navLines[i] < line) { target = navLines[i]; break; } }
+    if (target === null) return;
+    textEditor.setPosition({ lineNumber: target, column: 1 });
+    textEditor.revealLineInCenter(target);
+  }
+  /* The palette the window picked, held until Monaco is up. It arrives before "ready" often enough
+     that not keeping it would leave the first diff of a run in the built in colours. */
+  var pendingTheme = null;
+
+  function rgba(hex, a) {
+    var n = parseInt(hex, 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+
+  /* Monaco paints the syntax and the editor; CSS variables paint the diff. Both come from the same six
+     digits per colour, so a theme says what green means once.
+
+     The two washes are deliberately far apart. A changed line gets a faint one that only says "something
+     here changed"; the words inside it get a strong one that says what. Where there are no such words -
+     a file that is only added, or the one column view, where Monaco paints the whole line as a word -
+     the strong wash would turn the screen into a field of green, so those two fall back to something
+     between the two. */
+  function defineTheme(t) {
+    monaco.editor.defineTheme('sg-custom', {
+      base: t.dark ? 'vs-dark' : 'vs',
+      inherit: true,
+      rules: [
+        { token: '', foreground: t.foreground },
+        { token: 'keyword', foreground: t.keyword },
+        { token: 'keyword.control', foreground: t.keyword },
+        { token: 'string', foreground: t.literal },
+        { token: 'comment', foreground: t.comment, fontStyle: 'italic' },
+        { token: 'number', foreground: t.number },
+        { token: 'type', foreground: t.type },
+        { token: 'type.identifier', foreground: t.type },
+        { token: 'entity.name.function', foreground: t.function },
+        { token: 'function', foreground: t.function },
+        { token: 'identifier', foreground: t.foreground },
+        { token: 'delimiter', foreground: t.foreground },
+        /* and the unified patch grammar, which is the same story told in one column */
+        { token: 'diff.meta', foreground: t.type, fontStyle: 'bold' },
+        { token: 'diff.hunk', foreground: t.renamed },
+        { token: 'diff.added', foreground: t.added },
+        { token: 'diff.removed', foreground: t.removed },
+        { token: 'diff.context', foreground: t.foreground }
+      ],
+      colors: {
+        'editor.background': '#' + t.background,
+        'editor.foreground': '#' + t.foreground,
+        'editorLineNumber.foreground': '#' + t.lineNumber,
+        'editorLineNumber.activeForeground': '#' + t.foreground,
+        'editor.selectionBackground': '#' + t.selection,
+        'editorGutter.addedBackground': '#' + t.added,
+        'editorGutter.deletedBackground': '#' + t.removed,
+        'editorGutter.modifiedBackground': '#' + t.modified,
+        'editorOverviewRuler.addedForeground': '#' + t.added,
+        'editorOverviewRuler.deletedForeground': '#' + t.removed
+      }
+    });
+    var css = [
+      'body .monaco-editor, body .monaco-diff-editor, body .monaco-component {',
+      '  --vscode-diffEditor-insertedLineBackground:' + rgba(t.added, 0.10) + ';',
+      '  --vscode-diffEditor-removedLineBackground:' + rgba(t.removed, 0.10) + ';',
+      '  --vscode-diffEditor-insertedTextBackground:' + rgba(t.added, 0.34) + ';',
+      '  --vscode-diffEditor-removedTextBackground:' + rgba(t.removed, 0.32) + ';',
+      '}',
+      'body.sg-inline .monaco-editor, body.sg-inline .monaco-diff-editor, body.sg-inline .monaco-component {',
+      '  --vscode-diffEditor-insertedTextBackground:' + rgba(t.added, 0.19) + ';',
+      '  --vscode-diffEditor-removedTextBackground:' + rgba(t.removed, 0.18) + ';',
+      '}',
+      'body.sg-flat .monaco-editor, body.sg-flat .monaco-diff-editor, body.sg-flat .monaco-component {',
+      '  --vscode-diffEditor-insertedTextBackground:' + rgba(t.added, 0.11) + ';',
+      '  --vscode-diffEditor-removedTextBackground:' + rgba(t.removed, 0.10) + ';',
+      '  --sg-u-add:' + rgba(t.added, 0.13) + ';',
+      '  --sg-u-del:' + rgba(t.removed, 0.13) + ';',
+      '  --sg-u-hunk:' + rgba(t.comment, 0.16) + ';',
+      '  --sg-u-file:' + rgba(t.keyword, 0.14) + ';',
+      '}'
+    ].join('\n');
+    var tag = document.getElementById('sg-theme-css');
+    if (!tag) {
+      tag = document.createElement('style');
+      tag.id = 'sg-theme-css';
+      document.head.appendChild(tag);
+    }
+    tag.textContent = css;
+  }
+
+  function setTheme(t) {
+    if (!t) return;
+    pendingTheme = t;
+    if (!window.monaco || !monaco.editor) return;
+    defineTheme(t);
+    monaco.editor.setTheme('sg-custom');
+  }
+
+  function show(m) {
+    if (m && m.command === 'goto') {
+      goTo(!!m.next);
+      return;
+    }
+    if (m && m.command === 'layout') {
+      layoutSideBySide = !!m.sideBySide;
+      document.body.classList.toggle('sg-inline', !layoutSideBySide);
+      collapsed = !!m.collapsed;
+      ignoreWhitespace = !!m.ignoreWhitespace;
+      if (diffEditor) diffEditor.updateOptions({ renderSideBySide: layoutSideBySide, hideUnchangedRegions: hiddenRegions(), ignoreTrimWhitespace: ignoreWhitespace });
+      return;
+    }
+    if (m && m.command === 'theme') { setTheme(m.theme); return; }
+    if (m && m.command === 'actions') { setActions(m.actions); return; }
+    if (m && m.command === 'focus') {
+      if (diffEditor && !textShowing) diffEditor.getModifiedEditor().focus();
+      return;
+    }
+    pending = m;
+    if (!diffEditor) return;
+    if (m.text !== undefined) { showText(m); post('shown'); } else showDiff(m);
+  }
+  function init() {
+    require.config({ paths: { vs: vs } });
+    require(['vs/editor/editor.main'], function () {
+      monaco.languages.register({ id: 'unified-diff' });
+      monaco.languages.setMonarchTokensProvider('unified-diff', {
+        tokenizer: { root: [
+          [/^(diff |index |Index: |={3,}|--- |\+\+\+ ).*$/, 'diff.meta'],
+          [/^@@.*$/, 'diff.hunk'],
+          [/^\+.*$/, 'diff.added'],
+          [/^-.*$/, 'diff.removed'],
+          [/^.*$/, 'diff.context']
+        ] }
+      });
+      monaco.editor.defineTheme('sg-dark', { base: 'vs-dark', inherit: true, rules: [
+        { token: 'diff.meta', foreground: '9cdcfe', fontStyle: 'bold' },
+        { token: 'diff.hunk', foreground: 'c586c0' },
+        { token: 'diff.added', foreground: '4ec9b0' },
+        { token: 'diff.removed', foreground: 'f48771' },
+        { token: 'diff.context', foreground: 'd4d4d4' }
+      ], colors: {} });
+      monaco.editor.defineTheme('sg-light', { base: 'vs', inherit: true, rules: [
+        { token: 'diff.meta', foreground: '0451a5', fontStyle: 'bold' },
+        { token: 'diff.hunk', foreground: '800080' },
+        { token: 'diff.added', foreground: '098658' },
+        { token: 'diff.removed', foreground: 'a31515' },
+        { token: 'diff.context', foreground: '333333' }
+      ], colors: {} });
+      /* One fold per file in the unified view. The languages are the ones langFor can answer with, plus
+         the diff grammar itself for a patch whose files have no extension worth knowing. */
+      monaco.languages.registerFoldingRangeProvider(
+        ['unified-diff','plaintext','cpp','csharp','python','json','xml','lua','javascript','typescript','markdown','yaml','bat','powershell','shell','ini','html','css','cmake'],
+        { provideFoldingRanges: function (model) { return textEditor && model === textEditor.getModel() ? folds : []; } });
+      var theme = dark ? 'sg-dark' : 'sg-light';
+      if (pendingTheme) { defineTheme(pendingTheme); theme = 'sg-custom'; }
+      diffEditor = monaco.editor.createDiffEditor(document.getElementById('c'), {
+        readOnly: true, originalEditable: false, renderSideBySide: layoutSideBySide, automaticLayout: true,
+        useInlineViewWhenSpaceIsLimited: false, ignoreTrimWhitespace: ignoreWhitespace, theme: theme, minimap: { enabled: false },
+        hideUnchangedRegions: hiddenRegions()
+      });
+      diffEditor.getModifiedEditor().onDidChangeCursorSelection(reportSelection);
+      diffEditor.onDidUpdateDiff(function () { reportSelection(); post('shown'); });
+      textEditor = monaco.editor.create(document.getElementById('t'), {
+        readOnly: true, automaticLayout: true, theme: theme, minimap: { enabled: false }, wordWrap: 'off',
+        lineNumbers: 'on', renderLineHighlight: 'none', scrollBeyondLastLine: false,
+        folding: true, foldingStrategy: 'auto', showFoldingControls: 'always'
+      });
+      if (pending) show(pending);
+      post('ready');
+    }, function () { post('error:Monaco failed to load from ' + vs); });
+  }
+  if (window.chrome && window.chrome.webview) window.chrome.webview.addEventListener('message', function (e) { show(e.data); });
+  var s = document.createElement('script');
+  s.src = vs + '/loader.js';
+  s.onload = init;
+  s.onerror = function () { post('error:cannot load ' + vs + '/loader.js. No internet? Set another Monaco URL in Settings.'); };
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

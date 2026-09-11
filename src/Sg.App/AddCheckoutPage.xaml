@@ -1,0 +1,32 @@
+<local:SgPage
+    x:Class="Sg.App.AddCheckoutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <Grid RowDefinitions="*,Auto,Auto" RowSpacing="8">
+        <ScrollViewer Grid.Row="0" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="12" MaxWidth="1000" Padding="0,0,0,16">
+                <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                           Text="Adds a checkout to the open root: a working copy that already exists on disk, or one svn checks out from a URL first. It joins the checkouts in the pane, shares the one git store, and gets its own snapshot ref. 'New server checkout' is the faster way to another branch of a checkout you already have: it copies that one and switches." />
+
+                <Border Style="{StaticResource Card}">
+                    <local:CheckoutFields x:Name="Fields" />
+                </Border>
+
+                <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                           Text="Adding writes one file into the checkout: .git, a one-line pointer back to the root. Then it hashes every versioned file once, which on a 16 GB checkout takes minutes. SVN never sees any of it." />
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
+                x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="Add_Click" IsEnabled="False"
+                ToolTipService.ToolTip="Same as 'sg checkout add'. From a URL, svn checkout runs first. Then every versioned file is read and hashed once, which is the long step." />
+            <Button x:Name="CloseButton" Content="Close" Click="Close_Click"
+                    ToolTipService.ToolTip="Back to the overview. Nothing is registered unless you added it." />
+            <TextBlock x:Name="Result" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <local:StatusStrip x:Name="Pane" Grid.Row="2" />
+    </Grid>
+</local:SgPage>

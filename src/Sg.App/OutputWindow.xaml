@@ -1,0 +1,33 @@
+<Window
+    x:Class="Sg.App.OutputWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Log">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+    <Grid RowDefinitions="Auto,Auto,*">
+        <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="Log" Subtitle="what sg did" />
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Padding="16,4,16,8">
+            <TextBlock x:Name="StatusText" Style="{StaticResource Secondary}" VerticalAlignment="Center"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+            <ToggleButton x:Name="FollowToggle" Grid.Column="1" Content="Follow" IsChecked="True" FontSize="12" Padding="8,2" MinHeight="0"
+                          ToolTipService.ToolTip="Keep the newest line in view. Turn it off to read back through what already happened while an operation is still writing." />
+            <Button Grid.Column="2" Click="Clear_Click" Padding="8,2" MinHeight="0" FontSize="12"
+                    AutomationProperties.Name="Clear log"
+                    ToolTipService.ToolTip="Empty the log. It stops nothing and undoes nothing.">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                    <TextBlock Text="Clear" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="16,0,16,16" Padding="12,8">
+            <TextBox x:Name="LogText" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                     FontFamily="Cascadia Mono, Consolas" FontSize="12" BorderThickness="0" Background="Transparent" Padding="0"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+        </Border>
+    </Grid>
+</Window>

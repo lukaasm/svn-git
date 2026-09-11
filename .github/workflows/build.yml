@@ -1,0 +1,137 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write     # the rolling 'latest-build' release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The runner image ships git but no Subversion. The bridge tests build real repositories with svnadmin.
+      - name: Install Subversion
+        shell: pwsh
+        run: |
+          choco install svn --no-progress --yes
+          # Chocolatey only fixes PATH for its own shell. Find the bin folder and hand it to the later steps.
+          foreach ($dir in "${env:ProgramFiles(x86)}\Subversion\bin", "$env:ProgramFiles\Subversion\bin", "$env:ProgramFiles\SlikSvn\bin") {
+            if (Test-Path (Join-Path $dir 'svnadmin.exe')) { $env:PATH = "$dir;$env:PATH" }
+          }
+          $svnadmin = Get-Command svnadmin -ErrorAction SilentlyContinue
+          if (-not $svnadmin) { throw 'svnadmin is not on PATH after the install' }
+          $bin = Split-Path $svnadmin.Source
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          foreach ($exe in 'svn', 'svnadmin', 'svnmucc') {
+            if (-not (Test-Path (Join-Path $bin "$exe.exe"))) { throw "$exe.exe is missing from $bin" }
+          }
+          Write-Host "subversion in $bin"
+          svn --version --quiet
+
+      - name: Test
+        run: dotnet test tests/Sg.Core.Tests -c Release --nologo
+
+      - name: Publish sg
+        run: >
+          dotnet publish src/sg -c Release -r win-x64
+          --self-contained false -p:PublishSingleFile=true
+          -o out/sg
+
+      # Ships Monaco next to the exe, so diffs are syntax coloured with no internet.
+      - name: Bundle the Monaco editor
+        shell: pwsh
+        run: ./scripts/fetch-monaco.ps1
+
+      - name: Publish sg-ui
+        run: dotnet publish src/Sg.App -c Release -r win-x64 -o out/sg/ui
+
+      - name: Write the sg-ui shim
+        shell: pwsh
+        run: |
+          Set-Content -Path out/sg/sg-ui.cmd -Encoding ascii -Value @(
+            '@echo off'
+            'start "" "%~dp0ui\sg-ui.exe" %*'
+          )
+
+      # sg update reads this file to know which build is installed.
+      - name: Write build.json
+        shell: pwsh
+        run: |
+          [ordered]@{
+            runId     = ${{ github.run_id }}
+            runNumber = ${{ github.run_number }}
+            commit    = '${{ github.sha }}'
+            ref       = '${{ github.ref_name }}'
+            builtUtc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          } | ConvertTo-Json | Set-Content -Path out/sg/build.json -Encoding utf8
+          Get-Content out/sg/build.json
+
+      - name: Upload the artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sg-win-x64
+          path: out/sg
+          if-no-files-found: error
+          compression-level: 9
+
+      - name: Zip the build
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: Compress-Archive -Path out/sg/* -DestinationPath sg-win-x64.zip -CompressionLevel Optimal
+
+      # One rolling prerelease, replaced every build. sg update downloads this, no token needed.
+      - name: Publish the latest-build release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build sg-win-x64.zip \
+            --title "build ${{ github.run_number }}" \
+            --notes-file out/sg/build.json \
+            --target "${{ github.sha }}" \
+            --prerelease
+
+  # Leaves exactly one artifact in the repository: the one this run just uploaded.
+  keep-latest-only:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete artifacts from older runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/artifacts" \
+            --jq ".artifacts[] | select(.workflow_run.id != $KEEP) | .id" > stale.txt
+          echo "keeping run $KEEP, deleting $(wc -l < stale.txt) older artifact(s)"
+          while read -r id; do
+            [ -n "$id" ] || continue
+            gh api -X DELETE "repos/$REPO/actions/artifacts/$id" && echo "deleted $id"
+          done < stale.txt

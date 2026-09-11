@@ -1,0 +1,86 @@
+<local:SgPage
+    x:Class="Sg.App.ConflictPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <Grid RowDefinitions="*,Auto">
+
+        <!-- No file in conflict means no list, no sides to pick and no diff: the page is the one
+             sentence about what stopped, and the buttons that move it on. -->
+        <local:EmptyState x:Name="NoConflicts" Grid.Row="0" Visibility="Collapsed" Glyph="&#xE73E;" Title="Nothing in conflict">
+            <local:EmptyState.Action>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <local:IconButton Glyph="&#xE768;" Text="Continue" x:Name="EmptyContinue" Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"
+                        ToolTipService.ToolTip="Go on. The next commit may stop again." />
+                    <local:IconButton Glyph="&#xE7BA;" Text="Force what fits" x:Name="EmptyForce" Visibility="Collapsed" Click="Force_Click"
+                        ToolTipService.ToolTip="Write as much of the stopped patch into the worktree as still fits, and leave the rest beside each file as .rej. Asks first." />
+                    <local:IconButton Glyph="&#xE711;" Text="Abort" x:Name="EmptyAbort" Click="Abort_Click"
+                        ToolTipService.ToolTip="Stop and put the branch back. Asks first, and says what it costs." />
+                    <local:IconButton Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the conflict state again." />
+                    <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
+                </StackPanel>
+            </local:EmptyState.Action>
+        </local:EmptyState>
+
+        <Grid x:Name="Filled" Grid.Row="0" RowDefinitions="Auto,*,Auto">
+            <InfoBar x:Name="StateBar" Grid.Row="0" Severity="Warning" IsClosable="False" IsOpen="True" />
+
+            <Grid x:Name="Body" Grid.Row="1" Padding="0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="LeftCol" Width="560" MinWidth="320" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="*" MinWidth="400" />
+                </Grid.ColumnDefinitions>
+
+                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" RowSpacing="6">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBlock x:Name="FilesHeader" Text="Files in conflict" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <TextBox x:Name="Filter" Grid.Column="1" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
+                                 ToolTipService.ToolTip="Show only the rows whose path contains this text." />
+                    </Grid>
+                    <!-- Which two versions these are depends on what stopped, so both buttons are named
+                         from the page rather than written here. -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                        <local:IconButton x:Name="TakeOurs" Glyph="&#xE753;" Text="Keep this side" Click="TakeOurs_Click" />
+                        <local:IconButton x:Name="TakeTheirs" Glyph="&#xE8A5;" Text="Keep that side" Click="TakeTheirs_Click" />
+                        <local:IconButton Glyph="&#xE70F;" Text="Edit"
+                            Click="OpenFile_Click" ToolTipService.ToolTip="Open the ticked files in their default editor. Each holds both versions between conflict markers. Edit it, save, then mark it resolved." />
+                        <local:IconButton Glyph="&#xE73E;" Text="Mark resolved"
+                            Click="MarkResolved_Click" ToolTipService.ToolTip="Tell git the ticked files are done, after you edited them by hand." />
+                    </StackPanel>
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
+                        <Grid>
+                            <!-- Tick the files a side applies to. A tree has nowhere to drag a selection across,
+                                 and a folder's box picks a side for everything under it in one click. -->
+                            <local:RowTreeView x:Name="Files" ItemTemplate="{StaticResource CheckedFileTreeTemplate}" />
+                            <local:Skeleton x:Name="FilesSkeleton" RowCount="5" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
+
+                <Border Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                    <local:DiffView x:Name="Diff" Margin="1" />
+                </Border>
+            </Grid>
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                <local:IconButton x:Name="ContinueButton" Glyph="&#xE768;" Text="Continue"
+                    Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"
+                    ToolTipService.ToolTip="Go on. Works when no file is in conflict any more. The next commit may stop again." />
+                <local:IconButton x:Name="SkipButton" Glyph="&#xE72A;" Text="Skip this one"
+                    Click="Skip_Click" ToolTipService.ToolTip="Drop the commit this stopped on and go on with the ones after it. Asks first." />
+                <local:IconButton x:Name="ForceButton" Glyph="&#xE7BA;" Text="Force what fits" Visibility="Collapsed"
+                    Click="Force_Click" ToolTipService.ToolTip="Only when a patch would not go in at all. Writes what still fits into the worktree and leaves every refused hunk beside its file as .rej, to put in by hand. Asks first." />
+                <local:IconButton x:Name="AbortButton" Glyph="&#xE711;" Text="Abort"
+                    Click="Abort_Click" ToolTipService.ToolTip="Stop and put the branch back. Asks first, and says what it costs." />
+                <local:IconButton Glyph="&#xE72C;" Text="Refresh"
+                    Click="Refresh_Click" ToolTipService.ToolTip="Read the conflict state again, for example after you edited files outside." />
+                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. What stopped stays where it is." />
+            </StackPanel>
+        </Grid>
+
+        <local:StatusStrip x:Name="Pane" Grid.Row="1" Margin="0,8,0,0" />
+    </Grid>
+</local:SgPage>

@@ -1,0 +1,290 @@
+<local:SgPage
+    x:Class="Sg.App.CheckoutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+    <!-- One checkout and its worktrees. The checkout is the page rather than a card on it: only one can
+         be selected at a time, so its name, its state and everything it can do are the page's own toolbar
+         and stay put. The worktrees keep the shape Windows Settings gives a category: a card each, the one
+         action on its right, and the rest behind its chevron. -->
+    <Grid RowDefinitions="*,Auto">
+      <!-- One cap around the toolbar and the list together, so they are centred as one thing. Capping and
+           centring them separately looked identical and was not: the toolbar was centred in the page and
+           the list in the scroller's viewport, and the viewport is what changes when a card is expanded
+           far enough to need a scrollbar. Folding the cards back up then moved the whole list sideways
+           under the pointer, against a toolbar that had not moved. -->
+      <Grid Grid.Row="0" RowDefinitions="Auto,*" RowSpacing="12" MaxWidth="1000">
+        <!-- Runs along the top edge while the state of every checkout and worktree is read. -->
+        <ProgressBar x:Name="BusyBar" Grid.Row="0" VerticalAlignment="Top" Style="{StaticResource LoadingBar}" Margin="0,-8,0,0" Canvas.ZIndex="1" />
+
+        <!-- The page toolbar. Two rows: what this checkout is and the one thing to do about it, then
+             every other thing it can do. Both were a card that scrolled away with the worktrees. -->
+        <StackPanel x:Name="CheckoutBar" Grid.Row="0" Visibility="Collapsed">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="10">
+                <FontIcon Glyph="&#xE8B7;" FontSize="16" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" x:Name="CoName" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" x:Name="CoRevision" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <!-- The URL, because the header over the page already writes the name and the path. -->
+                <TextBlock Grid.Column="3" x:Name="CoUrl" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <!-- What the server says, and the one thing to do about it: the same two, in the same
+                     order, that every worktree card puts on the right of its own header. -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <ProgressRing x:Name="CoRemoteRing" Width="14" Height="14" MinWidth="14" MinHeight="14" IsActive="True" VerticalAlignment="Center"
+                                  ToolTipService.ToolTip="Asking the SVN server for new commits." />
+                    <local:StatusChip x:Name="CoRemoteBadge" Severity="Caution" Glyph="&#xE896;" Visibility="Collapsed"
+                                      ToolTipService.ToolTip="Commits on the SVN server that the snapshot does not have yet. Sync brings them in." />
+                    <local:StatusChip x:Name="CoLocalBadge" Severity="Attention" Glyph="&#xE70F;" Visibility="Collapsed"
+                                      ToolTipService.ToolTip="Files edited directly in the checkout, not in a worktree. Commit shows them." />
+                    <local:StatusChip x:Name="CoShelfBadge" Severity="Neutral" Glyph="&#xE7B8;" Visibility="Collapsed"
+                                      ToolTipService.ToolTip="Sets of changes waiting on the shelf. Open 'Shelved changes' to read one and write it back." />
+                    <!-- The same split the two commit pages and Push have: the left half is the thing to do
+                         with the checkout's own changes, and the right half is the other thing to do with
+                         exactly those changes - put them aside. Shelving from here takes all of them,
+                         which is the answer when the reason is "a push wants this file". -->
+                    <local:AccentSplitButton x:Name="SvnCommitButton" AutomationProperties.Name="Commit"
+                                             Click="SvnCommit_Click"
+                                             ToolTipService.ToolTip="Pick the changed files, see each diff, write a message, and commit them straight to SVN. One commit per working copy. Asks first.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE73E;" FontSize="14" />
+                            <TextBlock Text="Commit" />
+                        </StackPanel>
+                        <local:AccentSplitButton.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuFlyoutItem Text="Shelve the uncommitted changes" Click="ShelveAll_Click"
+                                                ToolTipService.ToolTip="Take every change made directly in the checkout out of it and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file.">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE7B8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </local:AccentSplitButton.Flyout>
+                    </local:AccentSplitButton>
+                    <local:IconButton Glyph="&#xE895;" Text="Sync"
+                        x:Name="SyncButton" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout, then take a new snapshot into svn/&lt;name&gt;. Branches are not touched, rebase them when you want the new base." />
+                </StackPanel>
+            </Grid>
+
+            <!-- Second row: everything the checkout can do, on the row itself. The bar moves what will not
+                 fit into the overflow on its own and takes it back when the window widens, so the "..." is
+                 a consequence of the width rather than a decision about what matters. Order is what that
+                 decision becomes: the bar folds from the end, so the last ones here are the first to go.
+                 Labels are short for the same reason - the tooltip carries the sentence. -->
+            <CommandBar x:Name="Actions" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,2,0,0"
+                        IsDynamicOverflowEnabled="True">
+                <!-- First, and so the last one the bar ever folds away: a checkout is opened to start work
+                     in a worktree, and every other button here is about one that already exists. -->
+                <AppBarButton Label="New worktree" Click="NewBranch_Click"
+                              ToolTipService.ToolTip="A git branch from the latest snapshot, and a worktree folder for it. Work there with plain git, or let an agent.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE8F4;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton x:Name="ShelfButton" Label="Shelved changes" Click="Shelf_Click">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="SVN log" Click="SvnLog_Click"
+                              ToolTipService.ToolTip="The SVN history of the checkout root and every external, with changed paths and diffs.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE81C;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Merge" Click="Merge_Click"
+                              ToolTipService.ToolTip="Take changes from another branch of the same repository: all of them, or a few revisions. They land as local changes here, to read and commit like any other.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE8AB;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton x:Name="FolderButton" Label="Open folder" Click="OpenCheckout_Click">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xED25;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Server branch" Click="ServerBranch_Click"
+                              ToolTipService.ToolTip="Copy this branch on the SVN server, one revision per repository. Each external follows, keeps its branch, or gets a name of its own. A dry run comes first.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE753;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Import" Click="Import_Click"
+                              ToolTipService.ToolTip="Put back a branch another machine exported. It is rebuilt on this checkout's snapshot, so both sides only have to point at the same SVN repository.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE8E5;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton x:Name="BackupButton" Label="Backup" Click="Backup_Click">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Edit checkout" Click="Edit_Click"
+                              ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
+                </AppBarButton>
+            </CommandBar>
+
+            <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        </StackPanel>
+
+        <local:EmptyState x:Name="NoRoot" Grid.Row="1" Visibility="Collapsed" Glyph="&#xED25;" Title="No root is open"
+                          Text="A root is the folder that holds .sg and your checkouts. Open one, make one here, or run 'sg init' in a terminal.">
+            <local:EmptyState.Action>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <local:IconButton Glyph="&#xED25;" Text="Open root" Click="OpenRoot_Click" Style="{StaticResource AccentButtonStyle}"
+                        ToolTipService.ToolTip="Pick a folder that already holds .sg." />
+                    <local:IconButton Glyph="&#xE8F4;" Text="New root" Click="NewRoot_Click"
+                        ToolTipService.ToolTip="Runs sg init on a folder, then offers to register the first SVN checkout." />
+                </StackPanel>
+            </local:EmptyState.Action>
+        </local:EmptyState>
+
+        <!-- No cap of its own: the cap is on the grid around this and the toolbar both. Sideways scrolling
+             stays off, or the panel is measured against an endless width and a card that folds away makes
+             the column narrower. -->
+        <ScrollViewer x:Name="Scroll" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="4" Padding="0,0,0,16">
+
+                <!-- Bars where the worktree cards will be, for the first read of a root. -->
+                <local:Skeleton x:Name="OverviewSkeleton" RowCount="5" Badges="False" Visibility="Collapsed" Padding="8,4"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" />
+
+                <TextBlock x:Name="WorktreesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,0,0,4" Visibility="Collapsed" />
+                <local:EmptyState x:Name="NoWorktrees" Visibility="Collapsed" Glyph="&#xE8F4;" Title="No worktrees yet" Margin="0,16,0,16"
+                                  Text="A worktree is a folder with a git branch born from this checkout's snapshot. Work there, then push it back to SVN as one commit per repository.">
+                    <local:EmptyState.Action>
+                        <local:IconButton Glyph="&#xE8F4;" Text="New worktree" Click="NewBranch_Click" Style="{StaticResource AccentButtonStyle}" />
+                    </local:EmptyState.Action>
+                </local:EmptyState>
+
+                <ItemsControl x:Name="WorktreeList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="local:WorktreeRow">
+                            <!-- Closed, the card is the branch, its badges, what to do about them, and the button that
+                                 does it. Open, it is every other thing a worktree can do. A worktree with nothing to
+                                 say keeps all of that but steps back, so the card that is asking is the one the eye lands on. -->
+                            <controls:SettingsExpander Margin="0,0,0,4" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" Opacity="{x:Bind CardOpacity, Mode=OneWay}">
+                                <controls:SettingsExpander.HeaderIcon>
+                                    <FontIcon Glyph="{x:Bind NextGlyph, Mode=OneWay}" Foreground="{x:Bind NextBrush, Mode=OneWay}" />
+                                </controls:SettingsExpander.HeaderIcon>
+                                <controls:SettingsExpander.Header>
+                                    <TextBlock Text="{x:Bind Branch}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                               TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Branch}" />
+                                </controls:SettingsExpander.Header>
+                                <controls:SettingsExpander.Description>
+                                    <!-- The badges say what is true. This says what to do about it.
+                                         One line, trimmed, never wrapped: it is the width left over after the
+                                         badges, and the badges change. A wrapping line turned every chip that
+                                         arrived - the size walk's "12.4 GB copied", the idle chip - into a second
+                                         line on that card and a shove downwards for every card under it. The
+                                         sentence is short by construction, and the tooltip has all of it. -->
+                                    <TextBlock Text="{x:Bind NextAction, Mode=OneWay}" Foreground="{x:Bind NextTextBrush, Mode=OneWay}"
+                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                               ToolTipService.ToolTip="{x:Bind NextAction, Mode=OneWay}" />
+                                </controls:SettingsExpander.Description>
+                                <!-- The right of the header: the badges that say what is true, then exactly one button, the one
+                                     NextAction names. The card measures its header at no width limit, so a row that wraps
+                                     cannot live there; here the width is its own and a badge never lands on the line below. -->
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <local:StatusChip Severity="Neutral" Glyph="&#xE74D;" Text="nothing to push, idle" Visibility="{x:Bind ReclaimVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="Nothing here is waiting to be pushed and nobody has touched it for weeks. Removing it gives the disk space back; what was pushed stays in SVN." />
+                                    <!-- Beside the reclaim chip because both are about the disk rather than about
+                                         the work: this one says the shared folders were copied in full, and that a
+                                         junction or a ReFS clone would have cost nothing. -->
+                                    <local:StatusChip Severity="{x:Bind CopiedSeverity, Mode=OneWay}" Glyph="&#xE8C8;" Text="{x:Bind CopiedText, Mode=OneWay}"
+                                                      Visibility="{x:Bind CopiedVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="{x:Bind CopiedTip, Mode=OneWay}" />
+                                    <local:StatusChip Severity="Caution" Glyph="&#xE896;" Text="{x:Bind BehindText, Mode=OneWay}" Visibility="{x:Bind BehindVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="The snapshot moved since this branch was made or last rebased. Rebase to build on the latest SVN state." />
+                                    <local:StatusChip Severity="Critical" Glyph="&#xE7BA;" Text="{x:Bind ConflictText, Mode=OneWay}" Visibility="{x:Bind ResolveVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="A rebase or an import stopped on conflicts. Use Resolve to pick a version for each file, then continue." />
+                                    <local:StatusChip Severity="Critical" Glyph="&#xE898;" Text="not pushed yet" Visibility="{x:Bind PendingVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="A push stopped half way. The branch keeps the part that did not reach SVN. Fix the cause and push again." />
+                                    <local:StatusChip Severity="Neutral" Glyph="&#xE7B8;" Text="{x:Bind ShelvedText, Mode=OneWay}" Visibility="{x:Bind ShelvedVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="Changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back." />
+                                    <!-- Whether the backup repository holds this branch. Neutral when it does, because a
+                                         backup that is current is not news; a colour when commits are waiting or none ever went. -->
+                                    <local:StatusChip Severity="{x:Bind BackupSeverity, Mode=OneWay}" Glyph="&#xE74E;" Text="{x:Bind BackupText, Mode=OneWay}"
+                                                      Visibility="{x:Bind BackupVisibility, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind BackupTip, Mode=OneWay}" />
+                                    <local:StatusChip Severity="Attention" Glyph="&#xE70F;" Text="{x:Bind DirtyText, Mode=OneWay}" Visibility="{x:Bind DirtyVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="The worktree has changes that are not committed. Commit or discard them before a rebase or a push." />
+                                    <local:StatusChip Severity="Critical" Glyph="&#xEA39;" Text="folder missing" Visibility="{x:Bind MissingVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="The worktree folder is gone from disk. Remove the branch, or restore the folder." />
+                                    <local:IconButton Glyph="{x:Bind PrimaryGlyph, Mode=OneWay}" Text="{x:Bind PrimaryText, Mode=OneWay}" Style="{x:Bind PrimaryStyle, Mode=OneWay}"
+                                                      Tag="{x:Bind}" Click="Primary_Click" ToolTipService.ToolTip="{x:Bind PrimaryTip, Mode=OneWay}" />
+                                </StackPanel>
+                                <controls:SettingsExpander.Items>
+                                    <controls:SettingsCard Header="{x:Bind Distance, Mode=OneWay}" Description="{x:Bind Path}">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE8B7;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <TextBlock Text="{x:Bind SizeText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                   ToolTipService.ToolTip="What this worktree costs on disk. Folders shared with the checkout, like libs/prebuilt, are not counted when they are junctions or ReFS clones: those bytes belong to the checkout. A full copy counts." />
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Commit" Description="Pick changed files, see each diff, write a message, and commit to the git branch. Nothing goes to SVN."
+                                                           IsClickEnabled="True" Tag="{x:Bind}" Click="Commit_Click">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE73E;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Shelved changes" Description="{x:Bind ShelvedDescription, Mode=OneWay}"
+                                                           IsClickEnabled="True" Tag="{x:Bind}" Click="WorktreeShelf_Click">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE7B8;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Log" Description="The commits on the branch and the snapshots under it, with files and diffs."
+                                                           IsClickEnabled="True" Tag="{x:Bind}" Click="Log_Click">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE81C;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Push to SVN" Description="Review the commits and files, then send the branch to SVN: sync, rebase, one svn commit per repository. Asks before it commits."
+                                                           IsClickEnabled="True" IsEnabled="{x:Bind PushEnabled, Mode=OneWay}" Tag="{x:Bind}" Click="Push_Click">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE898;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                    </controls:SettingsCard>
+                                    <!-- Every action button in this card is one width. They sit at the right edge of
+                                         their rows, so buttons of their own widths lined up on the right and nowhere
+                                         else: six left edges down one column, each a few pixels off the last. The
+                                         width is the widest word here with room around it, and MinWidth rather than
+                                         Width so a longer label or a larger font still fits rather than being cut. -->
+                                    <controls:SettingsCard Header="Rebase" Description="Put the branch on top of the latest snapshot. A conflict opens the resolver."
+                                                           Visibility="{x:Bind RebaseVisibility, Mode=OneWay}">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE8AB;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Rebase" Tag="{x:Bind}" Click="Rebase_Click" />
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Resolve conflicts" Description="Whatever stopped here, a rebase or an import: pick a version per file, then continue, skip that one, or put it all back."
+                                                           Visibility="{x:Bind ResolveVisibility, Mode=OneWay}" IsClickEnabled="True" Tag="{x:Bind}" Click="Resolve_Click">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE90F;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Open" Description="The worktree folder in Explorer, a terminal in it, or the editor set in Settings.">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xED25;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <local:IconButton MinWidth="124" Glyph="&#xED25;" Text="Folder" Tag="{x:Bind}" Click="Open_Click" ToolTipService.ToolTip="Open the worktree folder in Explorer." />
+                                            <local:IconButton MinWidth="124" Glyph="&#xE756;" Text="Terminal" Tag="{x:Bind}" Click="Terminal_Click" ToolTipService.ToolTip="Start Windows Terminal in the worktree. This is where an agent runs." />
+                                            <local:IconButton MinWidth="124" Glyph="&#xE70F;" Text="Editor" Tag="{x:Bind}" Click="Editor_Click" ToolTipService.ToolTip="Open the worktree in the editor set in Settings, or the Windows default for a folder." />
+                                        </StackPanel>
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Export the branch"
+                                                           Description="Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xEDE1;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <local:IconButton MinWidth="124" Glyph="&#xEDE1;" Text="Export" Tag="{x:Bind}" Click="Export_Click"
+                                                          ToolTipService.ToolTip="Write the branch to a file. The far side puts it back with Import a branch, or with sg import." />
+                                    </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Remove worktree and branch" Description="Delete the worktree folder and the git branch. Asks first. What was pushed stays in SVN.">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE74D;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <local:IconButton MinWidth="124" Glyph="&#xE74D;" Text="Remove" Tag="{x:Bind}" Click="Remove_Click" />
+                                    </controls:SettingsCard>
+                                </controls:SettingsExpander.Items>
+                            </controls:SettingsExpander>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+      </Grid>
+
+      <!-- Full width on purpose: it is a log, and the lines in it are longer than the page is capped at. -->
+      <local:StatusStrip x:Name="Pane" Grid.Row="1" />
+    </Grid>
+</local:SgPage>

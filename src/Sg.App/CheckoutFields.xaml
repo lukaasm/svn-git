@@ -1,0 +1,34 @@
+<UserControl
+    x:Class="Sg.App.CheckoutFields"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <StackPanel Spacing="10">
+        <!-- Where the checkout comes from: a working copy svn already made, or a URL svn is about to. -->
+        <RadioButtons x:Name="Source" MaxColumns="2" SelectedIndex="0" SelectionChanged="Source_Changed">
+            <x:String>A working copy on disk</x:String>
+            <x:String>Check out from an SVN URL</x:String>
+        </RadioButtons>
+        <TextBox x:Name="UrlBox" Header="SVN URL" PlaceholderText="https://svn.example.com/svn/monorepo/branches/main" Visibility="Collapsed"
+                 ToolTipService.ToolTip="A branch, a trunk, or any folder in a repository. Externals come with it." />
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox x:Name="FolderBox" Header="Checkout folder" PlaceholderText="D:\work\monorepo" />
+            <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse" Click="Browse_Click" VerticalAlignment="Bottom"
+                    ToolTipService.ToolTip="Pick the working copy that svn checked out. It must not already have a .git in it." />
+        </Grid>
+
+        <!-- Answered while the path is typed, not after the long step fails. -->
+        <InfoBar x:Name="Check" IsClosable="False" IsOpen="False" Severity="Error" />
+
+        <TextBox x:Name="NameBox" Header="Name (optional)" PlaceholderText="same as the folder name"
+                 ToolTipService.ToolTip="The snapshot ref becomes svn/&lt;name&gt;. It has to be a valid git branch name." />
+        <local:PathPicker x:Name="SkipPick" Header="Never store these folders"
+                          ToolTipService.ToolTip="Big build output belongs here: it never enters the git store." />
+        <local:PathPicker x:Name="JunctionPick" Header="Share these folders with every worktree"
+                          ToolTipService.ToolTip="A worktree gets them from the checkout instead of from git: as a junction, a ReFS clone, or a full copy. The box below says which." />
+        <local:SharedModeBox x:Name="SharedBox" Header="Worktrees get those folders as"
+                             ToolTipService.ToolTip="A junction shares one folder with every worktree. A ReFS clone or a full copy gives each worktree its own. The clone costs nothing until it is written, and needs the checkout and the worktrees on one ReFS volume." />
+        <local:PathPicker x:Name="OptionalPick" Header="Folders a minimal branch leaves out"
+                          ToolTipService.ToolTip="'sg branch x --minimal' skips these, which makes a much smaller worktree." />
+    </StackPanel>
+</UserControl>

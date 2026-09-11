@@ -1,0 +1,18 @@
+<UserControl
+    x:Class="Sg.App.Skeleton"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    IsHitTestVisible="False"
+    VerticalAlignment="Top">
+    <UserControl.Resources>
+        <Storyboard x:Name="Pulse" RepeatBehavior="Forever" AutoReverse="True">
+            <DoubleAnimation Storyboard.TargetName="Rows" Storyboard.TargetProperty="Opacity" From="0.35" To="1.0" Duration="0:0:0.8">
+                <DoubleAnimation.EasingFunction>
+                    <SineEase EasingMode="EaseInOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+        </Storyboard>
+    </UserControl.Resources>
+    <!-- Padding matches a list row's, so the bars stand exactly where the rows will. -->
+    <StackPanel x:Name="Rows" Padding="{StaticResource RowPadding}" Opacity="0.6" />
+</UserControl>

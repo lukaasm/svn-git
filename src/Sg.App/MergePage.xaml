@@ -1,0 +1,82 @@
+<local:SgPage
+    x:Class="Sg.App.MergePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- A merge that landed sends the user on to the checkout changes, and its result outlives the reload. -->
+        <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+
+        <Grid Grid.Row="1" RowDefinitions="Auto,Auto,*,Auto">
+            <!-- Runs from the first server call. Before it, the two round trips that fill the two combo
+                 boxes happened under a page that looked finished and empty. -->
+            <ProgressBar x:Name="BusyBar" Style="{StaticResource LoadingBar}" Canvas.ZIndex="1" Margin="0,-8,0,0" />
+            <!-- Where it goes and where it comes from. A merge stays inside one repository, so the branches
+                 on offer are the siblings of whichever working copy is picked here. -->
+            <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8" Margin="0,0,0,8">
+                <TextBlock Text="Into" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                <ComboBox x:Name="TargetBox" Grid.Column="1" HorizontalAlignment="Stretch" SelectionChanged="Target_Changed"
+                          DisplayMemberPath="Label" ToolTipService.ToolTip="The working copy the changes land in: the checkout root, or one of its externals." />
+                <TextBlock Grid.Column="2" Text="From" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                <ComboBox x:Name="SourceBox" Grid.Column="3" HorizontalAlignment="Stretch" SelectionChanged="Source_Changed"
+                          DisplayMemberPath="Name" ToolTipService.ToolTip="The branch of the same repository the changes come from." />
+            </Grid>
+
+            <InfoBar x:Name="ProblemBar" Grid.Row="1" Severity="Warning" IsClosable="False" IsOpen="False" Margin="0,0,0,8" />
+
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="LeftCol" Width="560" MinWidth="320" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="*" MinWidth="400" />
+                </Grid.ColumnDefinitions>
+
+                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" RowSpacing="6">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBlock x:Name="RevisionsHeader" Text="Revisions on that branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <Button x:Name="ClearPickButton" Grid.Column="1" Content="Pick none" Click="ClearPick_Click" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False"
+                                ToolTipService.ToolTip="Go back to merging everything this branch has not got yet, instead of named revisions." />
+                    </Grid>
+                    <TextBlock Grid.Row="1" x:Name="PickHint" Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                               Text="Pick nothing and the merge takes everything this branch has not got. Pick revisions, with Ctrl or Shift, and it takes only those." />
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
+                        <Grid>
+                            <local:RowListView x:Name="Revisions" SelectionMode="Extended" SelectionChanged="Revisions_SelectionChanged"
+                                               ItemTemplate="{StaticResource RevisionRowTemplate}" />
+                            <local:Skeleton x:Name="RevisionsSkeleton" RowCount="8" Badges="False" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
+
+                <Grid Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="6">
+                    <TextBlock x:Name="OutcomeHeader" Text="What a merge would do" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <Border Grid.Row="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <local:DiffView x:Name="Diff" Margin="1" />
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,8,0,0">
+                <local:IconButton Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the branches and their revisions again. F5 does the same." />
+                <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is undone by leaving." />
+                <local:IconButton Grid.Column="2" x:Name="TestButton" Glyph="&#xE9D9;" Text="Test merge" Click="Test_Click"
+                                  ToolTipService.ToolTip="Run the merge without writing anything, and list what it would change. Safe to press at any time." />
+                <local:IconButton Grid.Column="3" x:Name="TakeOutButton" Glyph="&#xE7A7;" Text="Take back out" Click="TakeOut_Click" IsEnabled="False"
+                                  ToolTipService.ToolTip="Undo the picked revisions in this working copy, the way TortoiseSVN reverts changes from a revision. It is the same merge run backwards, and it lands as local changes to commit." />
+                <TextBlock Grid.Column="4" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <Button Grid.Column="5" x:Name="MergeButton" Style="{StaticResource AccentButtonStyle}" Click="Merge_Click" AutomationProperties.Name="Merge"
+                        ToolTipService.ToolTip="Bring the changes into the checkout. They land as local changes there; nothing is committed until you commit them.">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE8AB;" FontSize="14" />
+                        <TextBlock x:Name="MergeLabel" Text="Merge" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Grid>
+
+        <local:StatusStrip x:Name="Pane" Grid.Row="2" Margin="0,8,0,0" />
+    </Grid>
+</local:SgPage>

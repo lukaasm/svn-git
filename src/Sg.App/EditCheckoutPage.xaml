@@ -1,0 +1,91 @@
+<local:SgPage
+    x:Class="Sg.App.EditCheckoutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+    <Grid RowDefinitions="*,Auto,Auto" RowSpacing="8">
+        <ScrollViewer Grid.Row="0" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="4" MaxWidth="1000" Padding="0,0,0,16">
+                <TextBlock Text="Name and folders" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,4,0,4" />
+                <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,4"
+                           Text="These are sg's own settings. Nothing here reaches SVN, and nothing re-reads the checkout. Renaming moves the snapshot ref svn/&lt;name&gt; and re-points every branch born from it." />
+                <controls:SettingsCard Header="Display name" Description="How the pane and every page name this checkout.">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE8B7;" />
+                    </controls:SettingsCard.HeaderIcon>
+                    <TextBox x:Name="NameBox" Width="260" />
+                </controls:SettingsCard>
+                <controls:SettingsExpander Header="Folders" IsExpanded="True"
+                                           Description="Which folders sg leaves alone, shares with every worktree and how, or leaves out of a minimal branch.">
+                    <controls:SettingsExpander.HeaderIcon>
+                        <FontIcon Glyph="&#xED25;" />
+                    </controls:SettingsExpander.HeaderIcon>
+                    <local:IconButton Glyph="&#xE74E;" Text="Save"
+                        x:Name="SaveButton" Style="{StaticResource AccentButtonStyle}" Click="Save_Click"
+                        ToolTipService.ToolTip="Write the name and the folders to sg.json and rebuild the ignore rules. The checkout on disk is not touched." />
+                    <controls:SettingsExpander.Items>
+                        <controls:SettingsCard ContentAlignment="Vertical" HorizontalContentAlignment="Stretch">
+                            <StackPanel Spacing="12">
+                                <!-- Three lists, three columns: each is a few lines, and stacked they cost the page a screen. -->
+                                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                                    <local:PathPicker x:Name="SkipPick" Header="Never store these folders"
+                                                      ToolTipService.ToolTip="Big build output belongs here: it never enters the git store." />
+                                    <local:PathPicker x:Name="JunctionPick" Grid.Column="1" Header="Share these folders with every worktree"
+                                                      ToolTipService.ToolTip="A worktree gets them from the checkout instead of from git: as a junction, a ReFS clone, or a full copy. A shared folder is always skipped too." />
+                                    <local:PathPicker x:Name="OptionalPick" Grid.Column="2" Header="Folders a minimal branch leaves out"
+                                                      ToolTipService.ToolTip="'sg branch x --minimal' skips these, which makes a much smaller worktree." />
+                                </Grid>
+                                <!-- The default for new branches. The branch dialog offers the same choice per branch. -->
+                                <local:SharedModeBox x:Name="SharedBox" Header="New worktrees get the shared folders as" MaxWidth="480" HorizontalAlignment="Left"
+                                                     ToolTipService.ToolTip="A junction shares one folder with every worktree. A ReFS clone or a full copy gives each worktree its own. The clone costs nothing until it is written, and needs the checkout and the worktrees on one ReFS volume. Worktrees that already exist keep what they have." />
+                            </StackPanel>
+                        </controls:SettingsCard>
+                    </controls:SettingsExpander.Items>
+                </controls:SettingsExpander>
+
+                <TextBlock Text="Externals" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
+                <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,4"
+                           Text="Point an external at another branch on this machine only. This is svn switch on that external's own working copy: the svn:externals property is left alone, so nothing is committed and nobody else sees it. Sync afterwards and the snapshot records the switched content." />
+                <Border Style="{StaticResource Card}">
+                    <StackPanel Spacing="10">
+                        <Grid>
+                            <local:RowListView x:Name="Externals" SelectionMode="Single" SelectionChanged="External_SelectionChanged">
+                                <local:RowListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:ExternalRow">
+                                        <Grid ColumnDefinitions="180,Auto,*" ColumnSpacing="10" ToolTipService.ToolTip="{x:Bind Tip}">
+                                            <TextBlock Text="{x:Bind Rel}" Style="{StaticResource RowMono}" />
+                                            <local:StatusChip Grid.Column="1" Severity="Attention" Glyph="&#xE8AB;" Text="switched"
+                                                              Visibility="{x:Bind SwitchedVisibility}" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind Url}" Style="{StaticResource RowMonoDim}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </local:RowListView.ItemTemplate>
+                            </local:RowListView>
+                            <local:EmptyState x:Name="NoExternals" Visibility="Collapsed" Glyph="&#xE8B7;" Title="No externals"
+                                              Text="This checkout is one working copy. There is nothing to point elsewhere." Padding="16" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <ComboBox x:Name="BranchBox" Header="Point the selected external at" IsEnabled="False" IsEditable="True"
+                                      HorizontalAlignment="Stretch" PlaceholderText="pick a branch, or type a URL"
+                                      SelectionChanged="Branch_SelectionChanged"
+                                      ToolTipService.ToolTip="The branches that exist beside this external's own, read from the server. Anything else you type is used as a URL." />
+                            <Button x:Name="RevertButton" Grid.Column="1" Content="Back to declared" Click="Revert_Click" IsEnabled="False" VerticalAlignment="Bottom"
+                                    ToolTipService.ToolTip="Switch it back to the URL svn:externals declares, which is what everyone else has." />
+                            <local:IconButton Grid.Column="2" Glyph="&#xE8AB;" Text="Switch"
+                                x:Name="SwitchButton" Click="Switch_Click" IsEnabled="False" VerticalAlignment="Bottom"
+                                ToolTipService.ToolTip="Runs svn switch on this external only. It downloads the difference, and leaves the property and the server alone." />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
+            <TextBlock x:Name="Result" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <local:StatusStrip x:Name="Pane" Grid.Row="2" />
+    </Grid>
+</local:SgPage>

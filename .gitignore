@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+Desktop.ini
+src/Sg.App/Assets/monaco/

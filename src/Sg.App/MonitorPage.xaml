@@ -1,0 +1,144 @@
+<local:SgPage
+    x:Class="Sg.App.MonitorPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <Grid>
+
+        <!-- Nothing watched means no tree, no revisions and no diff: the page is the one sentence
+             and the two ways to start watching. -->
+        <local:EmptyState x:Name="NothingWatched" Visibility="Collapsed" Glyph="&#xE7BA;" Title="Nothing watched yet"
+                          Text="Watch any SVN URL and get a toast when it moves. Your checkouts come in as one category each: the root and every external.">
+            <local:EmptyState.Action>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <local:IconButton Glyph="&#xE8B7;" Text="Add my checkouts" Click="AddCheckouts_Click" Style="{StaticResource AccentButtonStyle}" />
+                    <local:IconButton Glyph="&#xE710;" Text="Add repository" Click="Add_Click" />
+                </StackPanel>
+            </local:EmptyState.Action>
+        </local:EmptyState>
+
+        <Grid x:Name="Filled" RowDefinitions="Auto,*">
+        <CommandBar Grid.Row="0" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" OverflowButtonVisibility="Collapsed" Margin="-8,0,0,0">
+            <AppBarButton Label="Add repository" Click="Add_Click" ToolTipService.ToolTip="Watch an SVN URL: a trunk, a branch, or any folder in a repository.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Add my checkouts" Click="AddCheckouts_Click" ToolTipService.ToolTip="Watch the root and every external of each registered checkout, one category per checkout.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE8B7;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Edit" Click="Edit_Click" ToolTipService.ToolTip="Change the name, URL, category, interval, or notification of the selected repository.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE70F;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Remove" Click="Remove_Click" ToolTipService.ToolTip="Stop watching the selected repository. Asks first.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarSeparator />
+            <AppBarButton x:Name="CheckNowButton" Label="Check now" Click="CheckNow_Click" ToolTipService.ToolTip="Ask the server about every watched repository right now.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE72C;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Mark read" Click="MarkRead_Click" ToolTipService.ToolTip="You have seen the new commits of the selected repository. The badge goes away. Clicking a commit marks it and the older ones read too.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE73E;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Mark all read" Click="MarkAllRead_Click" ToolTipService.ToolTip="Clear every badge.">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE8FB;" /></AppBarButton.Icon>
+            </AppBarButton>
+        </CommandBar>
+
+        <Grid x:Name="Body" Grid.Row="1" Padding="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <!-- This page lives behind the navigation pane, so its width is the overview's minus the
+                     pane, not a window of its own. The minimums have to add up inside that: 180 + 10 + 640.
+                     They did not, and the third column of the grid below was pushed off the right edge. -->
+                <ColumnDefinition x:Name="TreeCol" Width="220" MinWidth="170" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="*" MinWidth="700" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="4">
+                <Grid>
+                    <local:RowListView x:Name="Tree" SelectionMode="Single" SelectionChanged="Tree_SelectionChanged">
+                        <local:RowListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:MonitorNode">
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="{x:Bind Indent}">
+                                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="{StaticResource RowIconSize}" VerticalAlignment="Center" Foreground="{x:Bind IconBrush}" />
+                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource RowText}" FontWeight="{x:Bind Weight}" />
+                                    <local:StatusChip Severity="Attention" Glyph="&#xE7E7;" Count="{x:Bind Unread}" Visibility="{x:Bind UnreadVisibility}" />
+                                    <ProgressRing Width="12" Height="12" MinWidth="12" MinHeight="12" IsActive="True" Visibility="{x:Bind CheckingVisibility}" VerticalAlignment="Center" />
+                                    <FontIcon Glyph="&#xE7BA;" FontSize="{StaticResource RowIconSize}" Visibility="{x:Bind ErrorVisibility}" VerticalAlignment="Center"
+                                              Foreground="{ThemeResource SystemFillColorCriticalBrush}" ToolTipService.ToolTip="{x:Bind Error}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </local:RowListView.ItemTemplate>
+                    </local:RowListView>
+                </Grid>
+            </Border>
+
+            <Thumb x:Name="TreeSplitter" Grid.Column="1" Style="{StaticResource Splitter}" />
+
+            <!-- Right of the tree: the name and state of the picked repository, then everything it has to show.
+                 A repository with nothing new has no revision to read, no message and no diff, so none of
+                 that is on screen: the space is the one sentence, under the header that still says which one. -->
+            <Grid Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="6">
+                <StackPanel Spacing="2">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock x:Name="ItemHeader" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Pick a repository" VerticalAlignment="Center" />
+                        <ProgressRing x:Name="CheckingRing" Width="14" Height="14" MinWidth="14" MinHeight="14" IsActive="True" Visibility="Collapsed" VerticalAlignment="Center"
+                                      ToolTipService.ToolTip="Asking the server." />
+                    </StackPanel>
+                    <TextBlock x:Name="ItemState" Style="{StaticResource Secondary}" />
+                </StackPanel>
+
+                <Grid x:Name="Detail" Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <!-- Both share what the column above gives them, so neither can push the other out:
+                             330 + 10 + 360 is exactly its minimum. The diff needs the 360: its header carries
+                             the path, the word Monaco and three toggles, and below that it was clipped. -->
+                        <ColumnDefinition x:Name="ListCol" Width="*" MinWidth="330" />
+                        <ColumnDefinition Width="10" />
+                        <ColumnDefinition Width="*" MinWidth="360" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- The message takes the height it needs, up to a cap; the revisions and the paths share the rest. -->
+                    <Grid Grid.Column="0" RowDefinitions="*,Auto,Auto,Auto,*" RowSpacing="6">
+                        <Border Grid.Row="0" Style="{StaticResource Card}" Padding="4">
+                            <Grid>
+                                <!-- Tapped as well as SelectionChanged: the row the page picks for you is the one
+                                     you press first, and SelectionChanged does not fire for a row that is already
+                                     selected, so that one commit could never be marked read. -->
+                                <local:RowListView x:Name="Revisions" SelectionChanged="Revisions_SelectionChanged"
+                                                   Tapped="Revisions_Tapped" ItemTemplate="{StaticResource RevisionRowTemplate}" />
+                                <local:Skeleton x:Name="RevisionsSkeleton" RowCount="8" Badges="False" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                        <TextBlock Grid.Row="1" Text="Message" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
+                        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="12,8" MaxHeight="180">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="DetailHead" Style="{StaticResource Secondary}" IsTextSelectionEnabled="True" />
+                                    <TextBlock x:Name="DetailMessage" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,6,0,0">
+                            <TextBlock x:Name="PathsHeader" Text="Changed paths" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                            <TextBox x:Name="PathsFilter" Grid.Column="1" PlaceholderText="Filter paths  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
+                                     ToolTipService.ToolTip="Show only the rows whose action or path contains this text." />
+                        </Grid>
+                        <Border Grid.Row="4" Style="{StaticResource Card}" Padding="4">
+                            <local:RowTreeView x:Name="Paths" ItemTemplate="{StaticResource FileTreeTemplate}" />
+                        </Border>
+                    </Grid>
+
+                    <Thumb x:Name="ListSplitter" Grid.Column="1" Style="{StaticResource Splitter}" />
+
+                    <Border Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <local:DiffView x:Name="Diff" Margin="1" />
+                    </Border>
+                </Grid>
+
+                <local:EmptyState x:Name="NoRevisions" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE73E;" Title="Nothing new"
+                                  Text="No unread commits here. New ones show up when the next check finds them." />
+            </Grid>
+        </Grid>
+        </Grid>
+    </Grid>
+</local:SgPage>

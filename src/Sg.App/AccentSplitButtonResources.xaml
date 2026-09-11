@@ -1,0 +1,75 @@
+<ResourceDictionary
+    x:Class="Sg.App.AccentSplitButtonResources"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        The accent SplitButton WinUI does not ship. The framework has an accent style for Button and none
+        for SplitButton, so a page whose primary action is a split button would read as a secondary one.
+
+        These are the keys the stock SplitButton template looks up, pointed at the accent brushes. They are
+        written as ThemeResource inside theme dictionaries rather than copied in code: a brush copied out of
+        the app's resources is the colour of the theme that was on at the time, and replacing an entry in a
+        ResourceDictionary does not make an already-templated control read it again. Windows switched under
+        an open page left the button one theme behind, and inverted - a black label on a pale accent.
+
+        SplitButtonForegroundSecondary is the chevron half. The template sets it apart from the label's own
+        Foreground, so leaving it out gave one button two text colours: a white label beside a 62%-black
+        arrow on the same blue face.
+    -->
+    <ResourceDictionary.ThemeDictionaries>
+
+        <ResourceDictionary x:Key="Default">
+            <StaticResource x:Key="SplitButtonBackground" ResourceKey="AccentFillColorDefaultBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundPointerOver" ResourceKey="AccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundPressed" ResourceKey="AccentFillColorTertiaryBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonForeground" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundPointerOver" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="TextOnAccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonForegroundSecondary" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundSecondaryPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrush" ResourceKey="AccentControlElevationBorderBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushPointerOver" ResourceKey="AccentControlElevationBorderBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushPressed" ResourceKey="AccentFillColorTertiaryBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+            <StaticResource x:Key="SplitButtonBackground" ResourceKey="AccentFillColorDefaultBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundPointerOver" ResourceKey="AccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundPressed" ResourceKey="AccentFillColorTertiaryBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonForeground" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundPointerOver" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="TextOnAccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonForegroundSecondary" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
+            <StaticResource x:Key="SplitButtonForegroundSecondaryPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrush" ResourceKey="AccentControlElevationBorderBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushPointerOver" ResourceKey="AccentControlElevationBorderBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushPressed" ResourceKey="AccentFillColorTertiaryBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+        </ResourceDictionary>
+
+        <!-- High contrast has one accent and it is the system's. Pointing at the accent brushes here would
+             paint a themed button into a scheme the user chose for legibility. -->
+        <ResourceDictionary x:Key="HighContrast">
+            <StaticResource x:Key="SplitButtonBackground" ResourceKey="SystemColorHighlightColorBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundPointerOver" ResourceKey="SystemColorHighlightColorBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundPressed" ResourceKey="SystemColorHighlightColorBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="SplitButtonForeground" ResourceKey="SystemColorHighlightTextColorBrush" />
+            <StaticResource x:Key="SplitButtonForegroundPointerOver" ResourceKey="SystemColorHighlightTextColorBrush" />
+            <StaticResource x:Key="SplitButtonForegroundPressed" ResourceKey="SystemColorHighlightTextColorBrush" />
+            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="SystemColorGrayTextColorBrush" />
+            <StaticResource x:Key="SplitButtonForegroundSecondary" ResourceKey="SystemColorHighlightTextColorBrush" />
+            <StaticResource x:Key="SplitButtonForegroundSecondaryPressed" ResourceKey="SystemColorHighlightTextColorBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrush" ResourceKey="SystemColorButtonTextColorBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushPointerOver" ResourceKey="SystemColorButtonTextColorBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushPressed" ResourceKey="SystemColorButtonTextColorBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="SystemColorGrayTextColorBrush" />
+        </ResourceDictionary>
+
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

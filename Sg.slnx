@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Sg.App/Sg.App.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/Sg.Core/Sg.Core.csproj" />
+    <Project Path="src/sg/sg.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Sg.Core.Tests/Sg.Core.Tests.csproj" />
+  </Folder>
+</Solution>

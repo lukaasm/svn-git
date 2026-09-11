@@ -1,0 +1,88 @@
+<local:SgPage
+    x:Class="Sg.App.SvnLogPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <!-- The strip along the bottom is where a server that refuses says so. Without it this page was the
+         only diff page in the app with nowhere to put an error, and a failed svn log left a skeleton
+         pulsing under "reading the server..." with the reason written into another page's log. -->
+    <Grid RowDefinitions="*,Auto">
+
+        <!-- Nothing to bring in means no revisions to read, no paths and no diff: the page is the one
+             sentence, and the sync it still offers. -->
+        <local:EmptyState x:Name="NoRevisions" Visibility="Collapsed" Glyph="&#xE73E;" Title="Up to date with the server">
+            <local:EmptyState.Action>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <local:IconButton Glyph="&#xE895;" Text="Sync now" x:Name="EmptySync" Visibility="Collapsed" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click"
+                        ToolTipService.ToolTip="svn update the checkout and take a new snapshot. This page closes and sg does the work." />
+                    <local:IconButton Glyph="&#xE72C;" Text="Reload" Click="Reload_Click" ToolTipService.ToolTip="Read the log from the server again." />
+                    <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
+                </StackPanel>
+            </local:EmptyState.Action>
+        </local:EmptyState>
+
+        <Grid x:Name="Filled" RowDefinitions="Auto,*">
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+                <NumberBox x:Name="Limit" Header="Revisions per working copy" Value="100" Minimum="10" Maximum="2000" SpinButtonPlacementMode="Compact" Width="220"
+                           ToolTipService.ToolTip="How many revisions to read from the server for each working copy." />
+                <local:IconButton Glyph="&#xE72C;" Text="Reload"
+                    VerticalAlignment="Bottom" Click="Reload_Click" ToolTipService.ToolTip="Read the log from the server again." />
+                <!-- Only when the page opened to answer "what would a sync bring in?". -->
+                <local:IconButton Glyph="&#xE895;" Text="Sync now"
+                    x:Name="SyncButton" Visibility="Collapsed" VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout and take a new snapshot. This page closes and sg does the work." />
+            </StackPanel>
+
+            <Grid x:Name="Body" Grid.Row="1" Padding="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="LeftCol" Width="560" MinWidth="320" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="*" MinWidth="400" />
+                </Grid.ColumnDefinitions>
+
+                <!-- The message takes the height it needs, up to a cap; the revisions and the paths share the rest. -->
+                <!-- The revisions take twice what the changed paths do: a log is hundreds of lines long
+                     and one revision touches a handful of files, so an even split starved the list
+                     that the page is for. -->
+                <Grid Grid.Column="0" RowDefinitions="Auto,2*,Auto,Auto,Auto,*" RowSpacing="6">
+                    <StackPanel Spacing="2">
+                        <TextBlock x:Name="RevisionsHeader" Text="Revisions, newest first" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock x:Name="WcState" Style="{StaticResource Secondary}" />
+                    </StackPanel>
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4">
+                        <Grid>
+                            <local:RowListView x:Name="Revisions" SelectionChanged="Revisions_SelectionChanged" ItemTemplate="{StaticResource RevisionRowTemplate}" />
+                            <local:Skeleton x:Name="RevisionsSkeleton" RowCount="8" Badges="False" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Grid.Row="2" Text="Message" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
+                    <Border Grid.Row="3" Style="{StaticResource Card}" Padding="12,8" MaxHeight="180">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="DetailHead" Style="{StaticResource Secondary}" IsTextSelectionEnabled="True" />
+                                <TextBlock x:Name="DetailMessage" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+
+                    <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,6,0,0">
+                        <TextBlock x:Name="PathsHeader" Text="Changed paths" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <TextBox x:Name="PathsFilter" Grid.Column="1" PlaceholderText="Filter paths  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
+                                 ToolTipService.ToolTip="Show only the rows whose action or path contains this text." />
+                    </Grid>
+                    <Border Grid.Row="5" Style="{StaticResource Card}" Padding="4">
+                        <local:RowTreeView x:Name="Paths" ItemTemplate="{StaticResource FileTreeTemplate}" />
+                    </Border>
+                </Grid>
+
+                <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
+
+                <Border Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                    <local:DiffView x:Name="Diff" Margin="1" />
+                </Border>
+            </Grid>
+        </Grid>
+
+        <local:StatusStrip x:Name="Pane" Grid.Row="1" Margin="0,8,0,0" />
+    </Grid>
+</local:SgPage>

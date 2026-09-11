@@ -1,0 +1,47 @@
+<UserControl
+    x:Class="Sg.App.DiffView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowDefinitions="Auto,Auto,Auto,*">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Padding="12,6,8,6" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <!-- NoWrap on purpose: the caption style wraps, and a narrow pane broke the path one letter a line.
+                 It sits straight in the star column, not in a panel: a panel would offer it all the width it
+                 asked for, and the path ran under the buttons instead of ending in an ellipsis. -->
+            <TextBlock x:Name="TitleText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                       TextWrapping="NoWrap" FontFamily="Cascadia Mono, Consolas" Text="select a file to see its diff" Margin="0,0,8,0"
+                       ToolTipService.ToolTip="{x:Bind TitleText.Text, Mode=OneWay}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <TextBlock x:Name="ModeText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="loading" />
+                <ToggleButton x:Name="WhitespaceToggle" Content="Ignore space" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False" Click="WhitespaceToggle_Click"
+                              ToolTipService.ToolTip="Stop showing a line as changed when only the space at its ends moved. It changes what you read, not what a block holds: a block still carries every byte git or svn put in it." />
+                <!-- Only a single file's diff has unchanged parts to hide; a patch is already only changes. -->
+                <ToggleButton x:Name="CollapsedToggle" Content="Collapsed" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False" Click="CollapsedToggle_Click"
+                              ToolTipService.ToolTip="Hide the parts of the file nothing changed in, keeping a few lines around each change. Press a hidden band to open it." />
+                <ToggleButton x:Name="InlineToggle" Content="Inline" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False" Click="InlineToggle_Click"
+                              ToolTipService.ToolTip="Show the diff as one column with removed and added lines, instead of side by side." />
+            </StackPanel>
+        </Grid>
+
+        <!-- What can be done to the file on show. It gets a row of its own, under the path, because the path
+             is what a reader looks for first and six buttons beside it left nothing of it. Off screen
+             entirely on a page that only reads, and on a patch over many files, where none of it applies. -->
+        <Grid x:Name="ActionRow" Grid.Row="1" Visibility="Collapsed" Padding="12,0,8,6" ColumnSpacing="8"
+              ColumnDefinitions="Auto,Auto,Auto,*" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <StackPanel x:Name="Extras" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center" />
+            <StackPanel x:Name="Actions" Grid.Column="1" Orientation="Horizontal" Spacing="6" />
+            <!-- Only while the text in the editor is ahead of the file on disk. -->
+            <Border x:Name="DirtyChip" Grid.Column="2" Visibility="Collapsed" VerticalAlignment="Center" CornerRadius="4" Padding="6,1"
+                    Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                    ToolTipService.ToolTip="The editor holds changes that are not on disk yet. Ctrl+S writes them.">
+                <TextBlock Text="unsaved" FontSize="11" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+            </Border>
+        </Grid>
+
+        <ProgressBar x:Name="LoadingBar" Grid.Row="2" Style="{StaticResource LoadingBar}" />
+        <WebView2 x:Name="Web" Grid.Row="3" />
+        <ScrollViewer x:Name="FallbackScroll" Grid.Row="3" Visibility="Collapsed" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="Fallback" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" Margin="8" />
+        </ScrollViewer>
+    </Grid>
+</UserControl>

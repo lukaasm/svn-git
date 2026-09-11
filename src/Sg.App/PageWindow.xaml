@@ -1,0 +1,16 @@
+<Window
+    x:Class="Sg.App.PageWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App"
+    Title="sg">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+    <!-- One page in a window of its own: what the Explorer menu opens. The title bar carries the
+         page's title and subtitle, and a back button once the page has opened another over itself. -->
+    <Grid RowDefinitions="Auto,*">
+        <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="sg" Subtitle="" IsBackButtonVisible="False" BackRequested="Back_Click" />
+        <local:NavHost x:Name="Host" Grid.Row="1" Margin="16,4,16,16" />
+    </Grid>
+</Window>

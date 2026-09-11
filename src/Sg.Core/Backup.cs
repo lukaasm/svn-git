@@ -194,13 +194,17 @@ public sealed class BackupItem
     public string Thin = "";
     /// <summary>Commits above the snapshot. A branch with none sends its marker alone.</summary>
     public int Commits;
-    /// <summary>"pushed", "up to date", "would push", "rejected" or "failed".</summary>
+    /// <summary>"pushed", "up to date", "would push", "would reconcile", "behind", "rejected" or "failed".</summary>
     public string State = "";
+    /// <summary>It went up over an older copy another machine had left there.</summary>
+    public bool Reconciled;
     public string? Why;
 
     public bool Pushed => State == "pushed";
     public bool Rejected => State == "rejected";
     public bool Failed => State == "failed";
+    /// <summary>The remote holds a newer version than this one, so backing up would send an older copy. Restore brings it here.</summary>
+    public bool Behind => State == "behind";
 }
 
 public sealed class BackupResult
@@ -211,6 +215,8 @@ public sealed class BackupResult
     public List<string> RemoteOnly = new();
     public int Pushed => Items.Count(i => i.Pushed);
     public int Rejected => Items.Count(i => i.Rejected);
+    /// <summary>Names the remote holds a newer version of than here: a restore, not a push, is the move.</summary>
+    public int Behind => Items.Count(i => i.Behind);
     public bool Ok => Items.All(i => !i.Rejected && !i.Failed);
 }
 
@@ -253,6 +259,8 @@ public sealed class RestoreResult
     public string? Stopped;
     public List<string> Conflicted = new();
     public string? Why;
+    /// <summary>A branch of this name was here already and force wrote over it.</summary>
+    public bool Replaced;
     /// <summary>The shelf the uncommitted changes came back as, when they came back.</summary>
     public string? WipShelf;
     /// <summary>And they were written into the folder, so the shelf is gone again.</summary>
@@ -356,6 +364,16 @@ public static class Backup
         var pending = new List<(BackupItem Item, string? Lease)>();
 
         var sources = Sources(root, cfg);
+
+        // The refs the remote holds a version of that this root did not push last - another machine, or
+        // another root. Fetched in one call so their lineage can be read, and reconciled by it below.
+        var foreign = sources
+            .Select(s => (S: s, Ref: RemoteRef(cfg, s.Kind, s.Name)))
+            .Where(x => remote.TryGetValue(x.Ref, out var have) && have != git.RefSha(PushedRef(x.S.Kind, x.S.Name)))
+            .ToList();
+        if (foreign.Count > 0)
+            git.FetchRefs(cfg.Url, foreign.Select(x => "+" + x.Ref + ":" + FetchedRef(x.S.Kind, x.S.Name)));
+
         foreach (var s in sources)
         {
             var item = new BackupItem { Kind = s.Kind, Name = s.Name, RemoteRef = RemoteRef(cfg, s.Kind, s.Name) };
@@ -374,15 +392,45 @@ public static class Backup
                 item.Why = e.Message;
                 continue;
             }
-            if (remote.TryGetValue(item.RemoteRef, out var have) && have == item.Thin)
+            remote.TryGetValue(item.RemoteRef, out var have);
+            if (have == item.Thin)
             {
                 item.State = "up to date";
                 if (last != item.Thin) git.UpdateRef(pushedRef, item.Thin);
                 if (!check && s.Kind == "branch") git.Config(KeyBackedUp(s.Name), Now());
                 continue;
             }
-            item.State = check ? "would push" : "pending";
-            pending.Add((item, last));
+
+            // Nothing there, or the version this root last pushed: a plain push under the lease. Force
+            // writes over whatever is there, so it too goes straight to the push. Otherwise another machine
+            // wrote it, and which side is ahead decides between overwriting and waiting.
+            if (have == null || have == last || force)
+            {
+                item.State = check ? "would push" : "pending";
+                pending.Add((item, have ?? last));
+                continue;
+            }
+            switch (Reconcile(git, s.Tip, have))
+            {
+                case Verdict.Ahead:
+                    // The remote's is an ancestor of the tip here, so the push carries it forward. The
+                    // lease is what was just read, so a race between the look and the push still rejects.
+                    item.Reconciled = true;
+                    item.State = check ? "would reconcile" : "pending";
+                    pending.Add((item, have));
+                    break;
+                case Verdict.Behind:
+                    item.State = "behind";
+                    item.Why = "the backup holds a newer version of this than the one here - it came from another machine. "
+                               + "Restore it to bring that work here; backing up would only send an older copy over it.";
+                    break;
+                default:
+                    item.State = "rejected";
+                    item.Why = "the remote holds a version of this that did not come from here, and neither is an ancestor "
+                               + "of the other - another machine has different work under this name. "
+                               + "Restore it if it is the one to keep, back up under a prefix, or --force to write over it.";
+                    break;
+            }
         }
 
         // A folder whose changes went up earlier and is clean now: the wip on the remote would bring back
@@ -425,6 +473,31 @@ public static class Backup
     }
 
     static string Now() => DateTimeOffset.Now.ToString("o", CultureInfo.InvariantCulture);
+
+    enum Verdict { Ahead, Behind, Diverged }
+
+    /// <summary>
+    /// Which side is ahead, the tip here or the version already on the remote, read by the real commits
+    /// their thin histories stand for. Ahead: the remote's real commit is an ancestor of the tip here, so
+    /// a push carries it forward and is safe to write. Behind: the tip here is an ancestor of the remote's,
+    /// so the remote is the newer one and a restore is the move. Diverged: neither is an ancestor of the
+    /// other, or the remote cannot be read - a push would drop one side, so it waits for a restore or a
+    /// --force. The remote's real commit is read only when it is still in this store; when it is not - two
+    /// machines whose commits never met over SVN - that alone is a divergence.
+    /// </summary>
+    static Verdict Reconcile(Git git, string tip, string remoteThin)
+    {
+        List<ThinCommit> chain;
+        try { chain = Thin.Chain(git, remoteThin); }
+        catch (SgException) { return Verdict.Diverged; }
+        if (chain.Count == 0 || chain[0].Kind != ThinKind.Marker || chain[0].Version > Thin.Version) return Verdict.Diverged;
+        var changes = chain.Where(c => c.Kind == ThinKind.Change).ToList();
+        var source = changes.Count > 0 ? changes[^1].Source : chain[0].Source;
+        if (source == null || !git.HasCommit(source)) return Verdict.Diverged;
+        if (git.IsAncestor(source, tip)) return Verdict.Ahead;
+        if (git.IsAncestor(tip, source)) return Verdict.Behind;
+        return Verdict.Diverged;
+    }
 
     sealed record Source(string Kind, string Name, string Tip, string Snapshot, string? Branch);
 
@@ -597,7 +670,7 @@ public static class Backup
     /// at, one at a time, keeping the ones that went in when one stops. The uncommitted changes come
     /// back through the shelf, and the branch's shelves are made again against the restored tip.
     /// </summary>
-    public static RestoreResult Restore(SgRoot root, string name, string? asBranch = null, string? intoCheckout = null, bool wip = false)
+    public static RestoreResult Restore(SgRoot root, string name, string? asBranch = null, string? intoCheckout = null, bool wip = false, bool force = false)
     {
         var cfg = Require(root);
         var git = root.Git;
@@ -641,7 +714,13 @@ public static class Backup
         if (target.Length == 0) throw new SgException("give the branch a name with --name.");
         var into = intoCheckout != null ? root.Checkout(intoCheckout) : Export.MatchCheckout(root, meta) ?? throw new SgException(Export.NoMatch(root, meta));
         if (git.RefSha("refs/heads/" + target) != null)
-            throw new SgException($"branch exists here: {target}. Restore it under another name with --name.");
+        {
+            if (!force) throw new SgException($"branch exists here: {target}. Restore it under another name with --name, or force to write over it.");
+            // Force writes over the branch and its worktree with what the backup holds, uncommitted
+            // changes in it and all. Removing it first lets the rest of restore make it the usual way.
+            Ops.Remove(root, target, force: true);
+            res.Replaced = true;
+        }
         var snapshot = git.RefSha(root.SnapshotRef(into)) ?? throw new SgException($"no snapshot of {into.Name} yet. Run: sg sync {into.Name}");
 
         res.Branch = target;

@@ -46,6 +46,8 @@ public sealed partial class MainWindow : Window
     /// <summary>One backup a few seconds after the last of a run of changes, rather than one per change.</summary>
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _backupSoon;
     bool _backingUp;
+    /// <summary>Names a backup conflict or a newer-remote was already toasted for: a lasting state is said once, not every timer tick.</summary>
+    HashSet<string> _backupAlerted = new(StringComparer.Ordinal);
     UpdateCheck? _update;
     bool _updating;
 
@@ -271,15 +273,23 @@ public sealed partial class MainWindow : Window
                 : await Runner.Run(Pane, "backup", () => Backup.Run(root));
             if (res == null) return null;
             var rejected = res.Items.Where(i => i.Rejected).Select(i => i.Name).ToList();
-            if (!quiet || res.Pushed > 0 || rejected.Count > 0 || res.Items.Any(i => i.Failed))
+            var behind = res.Items.Where(i => i.Behind).Select(i => i.Name).ToList();
+            if (!quiet || res.Pushed > 0 || rejected.Count > 0 || behind.Count > 0 || res.Items.Any(i => i.Failed))
                 Pane.Append($"{DateTime.Now:HH:mm}  " + BackupPage.Sentence(res));
-            if (rejected.Count > 0)
-            {
-                Pane.Append(res.Items.First(i => i.Rejected).Why ?? "");
-                if (quiet)
-                    Notifications.Show("Backup refused for " + string.Join(", ", rejected),
-                        "The backup holds a version that did not come from here. Open Backup on the checkout to restore it, or back up under a folder of this machine's own.");
-            }
+            if (rejected.Count > 0) Pane.Append(res.Items.First(i => i.Rejected).Why ?? "");
+
+            // A conflict and a newer-remote are lasting states, not fresh events: the timer would raise the
+            // same toast every few minutes. Toast a name once, when it first appears, and again only if it clears and returns.
+            var alert = rejected.Concat(behind).ToHashSet(StringComparer.Ordinal);
+            var freshReject = rejected.Where(n => !_backupAlerted.Contains(n)).ToList();
+            var freshBehind = behind.Where(n => !_backupAlerted.Contains(n)).ToList();
+            _backupAlerted = alert;
+            if (quiet && freshReject.Count > 0)
+                Notifications.Show("Backup conflict for " + string.Join(", ", freshReject),
+                    "Another machine has different work under this name. Open Backup on the checkout to restore it, overwrite it, or back up under this machine's own prefix.");
+            else if (quiet && freshBehind.Count > 0)
+                Notifications.Show("A newer backup for " + string.Join(", ", freshBehind),
+                    "The backup holds newer work than this machine has for it. Open Backup on the checkout to restore it here.");
             await RefreshAsync();
             return res;
         }

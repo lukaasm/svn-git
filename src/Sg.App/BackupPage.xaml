@@ -129,8 +129,12 @@
             <TextBlock Grid.Column="2" Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
             <ComboBox x:Name="IntoBox" Grid.Column="3" HorizontalAlignment="Stretch" SelectionChanged="Into_Changed"
                       ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the backup names." />
-            <CheckBox x:Name="WipBox" Grid.Column="4" Content="With its uncommitted changes" IsChecked="True" VerticalAlignment="Center"
-                      ToolTipService.ToolTip="The changes that were not committed when the backup was made come back too, through the shelf: written into the worktree when they merge, left on the shelf when one does not." />
+            <StackPanel Grid.Column="4" Orientation="Vertical" VerticalAlignment="Center">
+                <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True"
+                          ToolTipService.ToolTip="The changes that were not committed when the backup was made come back too, through the shelf: written into the worktree when they merge, left on the shelf when one does not." />
+                <CheckBox x:Name="ForceBox" Content="Overwrite if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
+                          ToolTipService.ToolTip="A branch of this name already here is written over with the backup version - its worktree reset to it, any uncommitted changes in it dropped. Off, restore refuses a name that is taken." />
+            </StackPanel>
         </Grid>
 
         <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">

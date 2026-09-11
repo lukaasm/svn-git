@@ -349,11 +349,18 @@ wrote would have passed the lease on the next push, which is the one thing the l
    present. Otherwise - a rebase, a squash, a push to SVN that reset the branch - the rewrite starts at the
    marker. It is deterministic, so the part that did not change makes the same objects again and the pack is thin.
 3. One `git push --porcelain` for everything, each ref under `--force-with-lease=<ref>:<last pushed sha>`, empty
-   when nothing was ever pushed, so the ref must not exist. The remote holding something else means another root or
-   another machine wrote there: that ref is reported rejected and the rest still go, and the exit code is 10.
-   `--force` takes it over. A rewrite from the marker is what the lease is for; nothing local is ever overwritten
-   by a push.
-4. The wip commits and the shelves go in the same push. A worktree with no commits of its own and nothing
+   when nothing was ever pushed, so the ref must not exist. A rewrite from the marker is what the lease is for;
+   nothing local is ever overwritten by a push.
+4. A ref the remote holds a version of that this root did not push last - another machine, or another root under
+   no prefix - is reconciled rather than refused outright. Those refs are fetched in one call, and the real commit
+   the remote's thin history stands for (the `sg-source` of its last change) is read against the tip here. If that
+   commit is still in this store and an ancestor of the tip, the remote is an older copy of the same history and the
+   push carries it forward, under a lease on what was just read so a race still rejects; it is reported `reconciled`.
+   If the tip here is the ancestor instead, the remote is the newer one: nothing is sent and the ref is reported
+   `behind`, for a restore to bring that work here. Only when neither is an ancestor of the other - or the remote's
+   commit is not in this store, two machines whose commits never met over SVN - is it a real divergence: that ref is
+   reported `rejected`, the rest still go, and the exit code is 10. `--force` writes over whatever is there.
+5. The wip commits and the shelves go in the same push. A worktree with no commits of its own and nothing
    uncommitted pushes the marker alone, so the remote knows the worktree exists and restore can make it again.
 
 `sg backup` never deletes on the remote. A branch removed with `sg rm` stays there until `sg backup prune`, which
@@ -362,9 +369,12 @@ on the remote only. `sg status` says per worktree when it was last backed up and
 `--json` carries the same.
 
 The app runs it on a timer - Settings, "Back up every N minutes", 15 by default, 0 turns it off - and a few seconds
-after coming back from any page that may have changed a branch, and after a rebase. A worktree card carries a chip:
-"backed up 3 min ago", "2 commits not backed up", or "not backed up", grey when the backup is current and amber when
-it is not. "Backup" on the checkout toolbar opens the page: what the remote holds, Restore, Back up now, Prune.
+after coming back from any page that may have changed a branch, and after a rebase. A worktree card carries a small
+badge on the left of the branch name - grey when the backup is current, amber when commits wait or none ever went -
+with the words ("backed up 3 min ago", "2 commits not backed up", "not backed up") in its tooltip and on the Backup
+page, so a changing sentence never grows the header row. A conflict or a newer-remote is a lasting state, not a fresh
+event, so the timer raises its toast once when a name first hits it, not every tick. "Backup" on the checkout toolbar
+opens the page: what the remote holds, Restore, Back up now, Prune.
 
 **Restoring.** `sg backup list` fetches the refs and says what is there: each branch, the checkout it was cut from
 as URL and revision, its commits, whether a wip and shelves exist, and when. Drift against the checkouts here is
@@ -373,7 +383,8 @@ reported as import reports it. `sg backup restore <branch>`:
 1. Fetch the thin branch into `refs/sg/backup/heads/<branch>`. Match the checkout by the marker's URL the way
    import matches an export - as written, then with the reaching taken off, then by the path; `--into` says
    otherwise. Refuse a thin history whose trailers this sg does not read, and a branch that exists here unless
-   `--name` gives another.
+   `--name` gives another or `--force` writes over it. Force removes the branch and its worktree first, uncommitted
+   changes in it and all, then makes it again from the backup: the way to take the newer version a divergent backup holds.
 2. When every `sg-source` sha is still in the store, the branch is set to the last one and nothing is replayed:
    the store still has the real commits, only the ref was gone. This is `sg rm` undone.
 3. Otherwise make the branch the way `sg branch` does, then merge each change commit onto the tip so far with
@@ -394,8 +405,11 @@ store is the protection against that, as it is today.
 **Tests.** The fixture gets a bare git repository as the URL. A backup of a branch that touched `game.cpp` leaves
 the remote with no blob of `engine.cpp` and an empty tree on the marker. A second fixture root with a checkout of
 the same repository restores it to the same files; after the second root syncs past a server commit, restore
-merges and reports the drift. A rebase pushes with the lease; a ref written on the remote by hand makes the next
-backup refuse with exit 10. Wip and shelves go up and come back. Prune lists before it deletes.
+merges and reports the drift. A rebase pushes with the lease. A remote rolled back to an older commit of the same
+history is reconciled and written forward with no force; a second machine's own branch of the same name, on commits
+this store never saw, diverges and is refused with exit 10 until `--force`; a remote left holding a strict
+descendant of the tip here is reported behind and nothing is sent. `--force` on restore writes over a branch that
+is already here. Wip and shelves go up and come back. Prune lists before it deletes.
 
 ## Hard parts
 

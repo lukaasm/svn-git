@@ -82,13 +82,15 @@ static class Cli
                                                       put one back here, against a checkout of the same repository
                                                       --show only reads the file and says what is in it
             sg backup [--check] [--force]             every branch, the uncommitted changes and the shelves, to the backup
-                                                      repository as thin histories. --check only says what would go.
-                                                      Exit code 10 when the remote holds a version that did not come from here
+                                                      repository as thin histories. --check only says what would go. An older
+                                                      copy another machine left is written over; a newer one waits for a restore.
+                                                      Exit code 10 when the remote holds work that has diverged from here
             sg backup set <url> [--prefix <p>] [--no-uncommitted]
                                                       where backups go. A prefix keeps two machines apart in one repository
             sg backup list                            what the remote holds, and how far each checkout here has drifted
-            sg backup restore <branch> [--name <b>] [--into <c>] [--wip]
-                                                      make the branch here again. --wip brings its uncommitted changes back too
+            sg backup restore <branch> [--name <b>] [--into <c>] [--wip] [--force]
+                                                      make the branch here again. --wip brings its uncommitted changes back too;
+                                                      --force writes over a branch of that name already here
             sg backup prune [--yes]                   what is on the remote and not here; --yes deletes it
             sg status [--full] [--json]               checkouts, worktrees, what needs a rebase or a push
             sg server-branch <name> [--from <checkout>] [--dry-run] [--no-checkout] [-m <message>]
@@ -745,8 +747,9 @@ static class Cli
             case "restore":
             {
                 var name = a.Arg(1, "the branch to restore");
-                var r = Backup.Restore(root, name, a.Get("--name"), a.Get("--into"), a.Has("--wip"));
+                var r = Backup.Restore(root, name, a.Get("--name"), a.Get("--into"), a.Has("--wip"), a.Has("--force"));
                 if (json) { Json(r); return r.Ok ? 0 : 1; }
+                if (r.Replaced) Console.WriteLine($"wrote over the branch {r.Branch} that was here");
                 if (r.Branch.Length == 0)
                 {
                     Console.WriteLine($"the local edits of {r.Checkout} came back" + (r.WipWritten ? " into " + r.Path : " as shelf " + r.WipShelf));
@@ -786,6 +789,7 @@ static class Cli
                 Console.WriteLine((check ? "backup check: " : "backup: ") + r.Url);
                 foreach (var i in r.Items)
                     Console.WriteLine($"  {i.State,-11} {i.Kind,-7} {i.Name,-28}" + (i.Kind == "branch" ? $" {i.Commits} commit(s)" : "")
+                                      + (i.Reconciled ? "  (over an older copy from another machine)" : "")
                                       + (i.Why != null ? "\n              " + i.Why : ""));
                 foreach (var o in r.RemoteOnly) Console.WriteLine("  remote only " + o + "   (sg backup prune)");
                 if (r.Items.Count == 0) Console.WriteLine("  nothing here to back up");

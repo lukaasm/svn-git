@@ -317,14 +317,15 @@ public sealed class BackupTests : IDisposable
     }
 
     [Fact]
-    public void Lease_RefusesAVersionThatDidNotComeFromHere_UnlessForced()
+    public void Reconcile_WritesOverAnOlderCopyOnTheRemote_WithNoForce()
     {
         f.Setup();
         var wt = MakeBranch("feature-x");
         Backup.Set(f.Root, Remote());
         Assert.True(Backup.Run(f.Root).Ok);
 
-        // Another machine writes the branch: the ref now points somewhere this root never pushed.
+        // The remote is rolled back to a commit this branch still sits above: an older copy of the same
+        // history, the shape a second machine that is behind leaves. The tip here is ahead of it.
         var older = RemoteGit("rev-parse", "refs/heads/feature-x~1").Trim();
         RemoteGit("update-ref", "refs/heads/feature-x", older);
 
@@ -332,14 +333,90 @@ public sealed class BackupTests : IDisposable
         f.Root.Git.Ok(wt, "commit", "-q", "-am", "third: one more line");
         var r = Backup.Run(f.Root);
         var item = Item(r, "branch", "feature-x");
-        Assert.True(item.Rejected, item.State + " " + item.Why);
-        Assert.Contains("another", item.Why);
-        Assert.Equal(older, RemoteGit("rev-parse", "refs/heads/feature-x").Trim());
+        Assert.True(r.Ok, item.State + " " + item.Why);
+        Assert.Equal("pushed", item.State);
+        Assert.True(item.Reconciled);
+        Assert.Equal(item.Thin, RemoteGit("rev-parse", "refs/heads/feature-x").Trim());
+    }
 
-        var forced = Backup.Run(f.Root, force: true);
+    [Fact]
+    public void Divergence_IsRejected_UnlessForced()
+    {
+        f.Setup();
+        MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        // The other PC has its own branch of the same name, on commits this store has never seen. Neither
+        // side is an ancestor of the other, so a backup would drop one of them: it is refused, exit 10.
+        var far = Far();
+        var fwt = Ops.Branch(far.Root, "feature-x", far.Co).Path;
+        Fixture.Put(fwt, "schmetterling/engine.cpp", "int engine = 99; // the other PC's own work\n");
+        far.Root.Git.Ok(fwt, "add", "-A");
+        far.Root.Git.Ok(fwt, "commit", "-q", "-m", "the other PC");
+
+        var r = Backup.Run(far.Root);
+        var item = Item(r, "branch", "feature-x");
+        Assert.True(item.Rejected, item.State + " " + item.Why);
+        Assert.False(r.Ok);
+        Assert.Contains("different work", item.Why);
+        Assert.False(item.Reconciled);
+
+        var forced = Backup.Run(far.Root, force: true);
         var taken = Item(forced, "branch", "feature-x");
         Assert.Equal("pushed", taken.State);
         Assert.Equal(taken.Thin, RemoteGit("rev-parse", "refs/heads/feature-x").Trim());
+    }
+
+    [Fact]
+    public void RemoteNewer_IsReportedAsBehind_NotPushedOver()
+    {
+        f.Setup();
+        var wt = MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        Fixture.Put(wt, "fort/dev/new/file.txt", "brand new\nand a line\n");
+        f.Root.Git.Ok(wt, "commit", "-q", "-am", "third: one more line");
+        var newer = Item(Backup.Run(f.Root), "branch", "feature-x").Thin;
+
+        // This root loses its memory of the push and rewinds a commit: the remote now holds a strict
+        // descendant of the tip here, so a push would send an older copy. Backup says behind, sends nothing.
+        f.Root.Git.DeleteRef(Backup.PushedRef("branch", "feature-x"));
+        f.Root.Git.ResetHard(wt, "HEAD~1");
+
+        var r = Backup.Run(f.Root);
+        var item = Item(r, "branch", "feature-x");
+        Assert.True(r.Ok, item.State + " " + item.Why);
+        Assert.True(item.Behind, item.State);
+        Assert.Equal(1, r.Behind);
+        Assert.Equal(newer, RemoteGit("rev-parse", "refs/heads/feature-x").Trim());
+    }
+
+    [Fact]
+    public void ForceRestore_WritesOverABranchThatIsHere()
+    {
+        f.Setup();
+        MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        var far = Far();
+        var first = Backup.Restore(far.Root, "feature-x");
+        Assert.True(first.Ok, first.Why);
+
+        // The branch drifts on the far side - a commit that is not in the backup, and an uncommitted edit.
+        Fixture.Put(first.Path, "schmetterling/engine.cpp", "int engine = 123; // drifted away\n");
+        far.Root.Git.Ok(first.Path, "commit", "-q", "-am", "far drift");
+        Fixture.Put(first.Path, "fort/dev/new/file.txt", "uncommitted, dropped on overwrite\n");
+
+        // Without force, a name that is here is refused. With force, the branch and its worktree are the backup again.
+        Assert.Throws<SgException>(() => Backup.Restore(far.Root, "feature-x"));
+        var again = Backup.Restore(far.Root, "feature-x", force: true);
+        Assert.True(again.Ok, again.Why);
+        Assert.True(again.Replaced);
+        Assert.Equal("int engine = 2;\n", Read(again.Path, "schmetterling/engine.cpp"));
+        Assert.Equal("brand new\n", Read(again.Path, "fort/dev/new/file.txt"));
+        Assert.Equal(2, far.Root.Git.CountCommits(far.Root.SnapshotRef(far.Co), "refs/heads/feature-x"));
     }
 
     [Fact]

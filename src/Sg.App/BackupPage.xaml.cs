@@ -165,18 +165,25 @@ public sealed partial class BackupPage : SgPage
         var entry = _picked;
         var name = NameBox.Text.Trim();
         var taken = name.Length > 0 && Session.Root?.Git.RefSha("refs/heads/" + name) != null;
-        RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && !taken;
-        RestoreLabel.Text = entry == null ? "Restore" : $"Restore {entry.Commits} commit(s)";
+        var force = ForceBox.IsChecked == true;
+        RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force);
+        RestoreLabel.Text = entry == null ? "Restore" : force && taken ? $"Overwrite with {entry.Commits} commit(s)" : $"Restore {entry.Commits} commit(s)";
         Summary.Text = entry == null ? "Pick a branch."
             : entry.Unreadable != null ? entry.Unreadable
             : Into == null && entry.Checkout.Length == 0 ? $"No checkout here points at {entry.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."
             : name.Length == 0 ? "Give the branch a name."
-            : taken ? $"{name} is already a branch here. Give it another name."
+            : taken && !force ? $"{name} is already a branch here. Tick Overwrite to write over it, or give it another name."
+            : taken ? $"{name} here is written over with the backup version. Its worktree is reset and any uncommitted changes in it are dropped."
             : $"{name} will be made on {Into.Name}, and its worktree with it.";
     }
 
     void Name_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_binding) SyncButton();
+    }
+
+    void Force_Changed(object sender, RoutedEventArgs e)
     {
         if (!_binding) SyncButton();
     }
@@ -196,21 +203,28 @@ public sealed partial class BackupPage : SgPage
         var name = NameBox.Text.Trim();
         var wip = WipBox.IsChecked == true && entry.HasWip;
         var root = Session.Require();
+        var force = ForceBox.IsChecked == true;
+        var overwrite = force && root.Git.RefSha("refs/heads/" + name) != null;
 
-        if (!await Dialogs.Confirm(this, "Restore " + name,
+        var confirmed = overwrite
+            ? await Dialogs.Confirm(this, "Overwrite " + name,
+                $"A branch {name} is already here. Write over it with the backup version?\n\n"
+                + $"Its worktree at {root.WorktreePathFor(name)} is reset to what the backup holds, and any uncommitted changes in it are dropped. "
+                + $"{entry.Commits} commit(s) are merged onto the snapshot this checkout has now" + (wip ? ", and the uncommitted changes come back after them" : "")
+                + ". Nothing goes to SVN.", "Overwrite")
+            : await Dialogs.Confirm(this, "Restore " + name,
                 $"Make the branch {name} on {co.Name}, and a worktree folder for it at {root.WorktreePathFor(name)}?\n\n"
                 + $"{entry.Commits} commit(s) are merged onto the snapshot this checkout has now"
-                + (wip ? ", and the uncommitted changes come back after them" : "") + ". Nothing goes to SVN.",
-                "Restore"))
-            return;
+                + (wip ? ", and the uncommitted changes come back after them" : "") + ". Nothing goes to SVN.", "Restore");
+        if (!confirmed) return;
 
         var res = await Busy.During(sender, () => Runner.Run(Pane, "restore " + name,
-            () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip)), restoreEnabled: false);
+            () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip, force)), restoreEnabled: false);
         if (res == null) { SyncButton(); return; }
 
         var lines = new List<string>();
         lines.Add(res.Ok
-            ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}." + (res.Relinked ? " The store still had them, so nothing was replayed." : "")
+            ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}." + (res.Replaced ? " It wrote over the branch that was here." : "") + (res.Relinked ? " The store still had them, so nothing was replayed." : "")
               + (res.Drift.Count == 0 ? "" : $" They were merged across {res.Drift.Count} revision(s) that had moved on.")
             : $"{res.Applied} of {res.Commits} commit(s) went in. \"{res.Stopped}\" would not merge, so it and everything after it are not on the branch."
               + (res.Why == null ? "" : "\n" + res.Why.Split('\n')[0]));
@@ -249,12 +263,15 @@ public sealed partial class BackupPage : SgPage
     public static string Sentence(BackupResult res)
     {
         var up = res.Items.Count(i => i.State == "up to date");
+        var reconciled = res.Items.Count(i => i.Pushed && i.Reconciled);
+        var behind = res.Items.Where(i => i.Behind).Select(i => i.Name).ToList();
         var rejected = res.Items.Where(i => i.Rejected).Select(i => i.Name).ToList();
         var failed = res.Items.Where(i => i.Failed).Select(i => i.Name).ToList();
         var parts = new List<string>();
-        if (res.Pushed > 0) parts.Add(res.Pushed + " sent");
+        if (res.Pushed > 0) parts.Add(res.Pushed + " sent" + (reconciled > 0 ? $" ({reconciled} over an older copy from another machine)" : ""));
         if (up > 0) parts.Add(up + " already there");
-        if (rejected.Count > 0) parts.Add("refused for " + string.Join(", ", rejected) + " (the remote holds a version that did not come from here)");
+        if (behind.Count > 0) parts.Add("newer on the remote for " + string.Join(", ", behind) + " (restore to bring it here)");
+        if (rejected.Count > 0) parts.Add("diverged for " + string.Join(", ", rejected) + " (another machine has different work under this name)");
         if (failed.Count > 0) parts.Add("failed for " + string.Join(", ", failed));
         if (parts.Count == 0) parts.Add("nothing here to back up");
         return "Backup: " + string.Join(", ", parts) + ".";

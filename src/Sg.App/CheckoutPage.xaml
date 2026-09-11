@@ -155,8 +155,16 @@
                                     <FontIcon Glyph="{x:Bind NextGlyph, Mode=OneWay}" Foreground="{x:Bind NextBrush, Mode=OneWay}" />
                                 </controls:SettingsExpander.HeaderIcon>
                                 <controls:SettingsExpander.Header>
-                                    <TextBlock Text="{x:Bind Branch}" Style="{StaticResource BodyStrongTextBlockStyle}"
-                                               TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Branch}" />
+                                    <!-- A small badge on the left of the name is the whole backup story on the card: grey
+                                         when the backup is current, amber when commits wait or none ever went. The words
+                                         are in its tooltip and on the Backup page, so the header row is not a place a
+                                         changing sentence can push the button off the line. -->
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <local:StatusChip VerticalAlignment="Center" Glyph="&#xE74E;" Severity="{x:Bind BackupSeverity, Mode=OneWay}"
+                                                          Visibility="{x:Bind BackupVisibility, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind BackupTip, Mode=OneWay}" />
+                                        <TextBlock Text="{x:Bind Branch}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                   TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Branch}" />
+                                    </StackPanel>
                                 </controls:SettingsExpander.Header>
                                 <controls:SettingsExpander.Description>
                                     <!-- The badges say what is true. This says what to do about it.
@@ -189,10 +197,8 @@
                                                       ToolTipService.ToolTip="A push stopped half way. The branch keeps the part that did not reach SVN. Fix the cause and push again." />
                                     <local:StatusChip Severity="Neutral" Glyph="&#xE7B8;" Text="{x:Bind ShelvedText, Mode=OneWay}" Visibility="{x:Bind ShelvedVisibility, Mode=OneWay}"
                                                       ToolTipService.ToolTip="Changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back." />
-                                    <!-- Whether the backup repository holds this branch. Neutral when it does, because a
-                                         backup that is current is not news; a colour when commits are waiting or none ever went. -->
-                                    <local:StatusChip Severity="{x:Bind BackupSeverity, Mode=OneWay}" Glyph="&#xE74E;" Text="{x:Bind BackupText, Mode=OneWay}"
-                                                      Visibility="{x:Bind BackupVisibility, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind BackupTip, Mode=OneWay}" />
+                                    <!-- The backup badge is on the left of the branch name now, not here: it is a lasting
+                                         property of the branch, not one of the things to do about it that this row lists. -->
                                     <local:StatusChip Severity="Attention" Glyph="&#xE70F;" Text="{x:Bind DirtyText, Mode=OneWay}" Visibility="{x:Bind DirtyVisibility, Mode=OneWay}"
                                                       ToolTipService.ToolTip="The worktree has changes that are not committed. Commit or discard them before a rebase or a push." />
                                     <local:StatusChip Severity="Critical" Glyph="&#xEA39;" Text="folder missing" Visibility="{x:Bind MissingVisibility, Mode=OneWay}"

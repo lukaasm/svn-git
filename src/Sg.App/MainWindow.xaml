@@ -39,7 +39,8 @@
                             AutomationProperties.Name="More" ToolTipService.ToolTip="More: open another root, or make a new one.">
                         <FontIcon Glyph="&#xE712;" FontSize="16" />
                         <Button.Flyout>
-                            <MenuFlyout Placement="Bottom">
+                            <!-- The roots opened before follow these two, filled in when the menu opens. -->
+                            <MenuFlyout x:Name="RootFlyout" Placement="Bottom" Opening="RootFlyout_Opening">
                                 <MenuFlyoutItem Text="Open root" Click="OpenRoot_Click"
                                                 ToolTipService.ToolTip="Pick a folder that already holds .sg.">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xED25;" /></MenuFlyoutItem.Icon>
@@ -64,6 +65,8 @@
                                 ToolTipService.ToolTip="Pick a folder that already holds .sg." />
                             <local:IconButton Glyph="&#xE8F4;" Text="New root" Click="NewRoot_Click" HorizontalAlignment="Stretch"
                                 ToolTipService.ToolTip="Runs sg init on a folder, then offers to register the first SVN checkout." />
+                            <!-- The roots opened before, one button each, so the way back into one is one press. -->
+                            <StackPanel x:Name="RecentRoots" Spacing="4" Margin="0,8,0,0" />
                         </StackPanel>
                     </local:EmptyState.Action>
                 </local:EmptyState>

@@ -8,6 +8,22 @@ namespace Sg.App;
 public sealed class AppSettings
 {
     public string? LastRoot { get; set; }
+
+    /// <summary>
+    /// The roots opened before, newest first, so switching between two is a pick from a list rather
+    /// than a walk through the folder picker each time. The one open is first.
+    /// </summary>
+    public List<string> RecentRoots { get; set; } = new();
+
+    public const int MaxRecentRoots = 8;
+
+    /// <summary>Puts a root at the top of the list, without a second copy of it further down.</summary>
+    public void RememberRoot(string path)
+    {
+        RecentRoots.RemoveAll(r => string.Equals(r, path, StringComparison.OrdinalIgnoreCase));
+        RecentRoots.Insert(0, path);
+        if (RecentRoots.Count > MaxRecentRoots) RecentRoots.RemoveRange(MaxRecentRoots, RecentRoots.Count - MaxRecentRoots);
+    }
     public string MonacoUrl { get; set; } = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs";
     public bool Verbose { get; set; }
     /// <summary>How often the overview asks the server for new commits. 0 turns it off.</summary>
@@ -96,6 +112,7 @@ public static class Session
         if (r == null) return false;
         Root = r;
         Settings.LastRoot = r.RootPath;
+        Settings.RememberRoot(r.RootPath);
         Settings.Save();
         return true;
     }

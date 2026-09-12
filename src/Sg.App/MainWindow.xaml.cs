@@ -532,6 +532,7 @@ public sealed partial class MainWindow : Window
         var checkouts = Session.Root?.Config.Checkouts.Count ?? 0;
         // No root: the pane itself says so and offers the two ways in; the dots would only repeat them.
         PaneEmpty.Visibility = Session.Root == null ? Visibility.Visible : Visibility.Collapsed;
+        if (Session.Root == null) FillRecentRoots();
         RootMenu.Visibility = Session.Root == null ? Visibility.Collapsed : Visibility.Visible;
         AddCheckoutButton.IsEnabled = Session.Root != null;
         ToolTipService.SetToolTip(AddCheckoutTip, Session.Root != null
@@ -800,11 +801,57 @@ public sealed partial class MainWindow : Window
     {
         var path = await WindowHelper.PickFolder(this);
         if (path == null) return;
+        await OpenRootAtAsync(path);
+    }
+
+    /// <summary>Reads the root at a path, or the one above it. The picker and the list of recent roots both end here.</summary>
+    internal async Task OpenRootAtAsync(string path)
+    {
         if (!Session.Open(path)) Pane.Append("no sg root found at or above " + path);
         _current = null;
         Remote.Clear();
         await RefreshAsync();
     }
+
+    /// <summary>
+    /// The roots opened before, under Open root and New root in the pane's menu. Filled in as the menu
+    /// opens, so a root opened a minute ago is on it. The one open is left off: it is the whole window.
+    /// A root whose folder is gone is left off too, but not forgotten; an unplugged drive is back tomorrow.
+    /// </summary>
+    void RootFlyout_Opening(object sender, object e)
+    {
+        var flyout = (MenuFlyout)sender;
+        while (flyout.Items.Count > 2) flyout.Items.RemoveAt(flyout.Items.Count - 1);
+        var others = RecentRootsToOffer();
+        if (others.Count == 0) return;
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        foreach (var path in others)
+        {
+            var item = new MenuFlyoutItem { Text = RootName(path), Icon = new FontIcon { Glyph = "" } };
+            ToolTipService.SetToolTip(item, "Open " + path);
+            item.Click += async (_, _) => await OpenRootAtAsync(path);
+            flyout.Items.Add(item);
+        }
+    }
+
+    /// <summary>The same list on the empty pane, one button each, where there is no menu yet.</summary>
+    void FillRecentRoots()
+    {
+        RecentRoots.Children.Clear();
+        foreach (var path in RecentRootsToOffer())
+        {
+            var b = new IconButton { Glyph = "", Text = RootName(path), HorizontalAlignment = HorizontalAlignment.Stretch };
+            ToolTipService.SetToolTip(b, "Open " + path);
+            b.Click += async (_, _) => await OpenRootAtAsync(path);
+            RecentRoots.Children.Add(b);
+        }
+    }
+
+    static string RootName(string path) => Path.GetFileName(path.TrimEnd('\\', '/')) is { Length: > 0 } name ? name : path;
+
+    List<string> RecentRootsToOffer() => Session.Settings.RecentRoots
+        .Where(r => !string.Equals(r, Session.Root?.RootPath, StringComparison.OrdinalIgnoreCase) && Directory.Exists(r))
+        .ToList();
 
     void AddCheckout_Click(object sender, RoutedEventArgs e)
     {

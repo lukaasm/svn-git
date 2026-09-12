@@ -225,6 +225,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public int Ahead { get; set; }
     public string Branch { get; set; } = "";
     public string Path { get; set; } = "";
+    /// <summary>The folder button before the name says where it goes.</summary>
+    public string OpenTip => "Open " + Path + " in your file manager.";
     public string Base { get; set; } = "";
     public string Detail { get; set; } = "";
     public bool Dirty { get; set; }

@@ -39,6 +39,7 @@ public sealed partial class SettingsPage : SgPage
         Startup.IsOn = Shell.IsStartup();
         ShowMenuState();
         ShowNotifyState();
+        ShowBuild(null);
         _filling = false;
         // One write per pause in the typing. Save writes both files whole, so writing it per letter is
         // what the debounce is for; waiting for the box to lose focus is what lost the text entirely.
@@ -47,6 +48,36 @@ public sealed partial class SettingsPage : SgPage
         EditorCommand.TextChanged += (_, _) => Type();
         BackupUrl.TextChanged += (_, _) => Type();
         BackupPrefix.TextChanged += (_, _) => Type();
+    }
+
+    /// <summary>
+    /// The build installed, read off build.json next to sg.exe, and what GitHub said when asked. A
+    /// debug build run from its own folder shows the installed one: that is the build.json there is.
+    /// </summary>
+    void ShowBuild(Sg.Core.UpdateCheck? check)
+    {
+        var dir = Updates.InstallDir();
+        var local = Sg.Core.Updater.ReadStamp(dir);
+        var text = local != null
+            ? $"{local}, in {dir}."
+            : $"No build.json next to sg.exe in {dir}: a build made by hand, or one older than the stamp.";
+        if (check != null)
+            text += check.Newer
+                ? $" GitHub has {check.Remote}, which is newer: Update and restart is in the pane."
+                : $" GitHub has {check.Remote}. This is the newest.";
+        BuildCard.Description = text;
+    }
+
+    async void CheckBuild_Click(object sender, RoutedEventArgs e)
+    {
+        var check = await Busy.During(sender, Updates.CheckAsync);
+        if (check == null)
+        {
+            ShowBuild(null);
+            BuildCard.Description += " GitHub could not be asked; the log says why.";
+            return;
+        }
+        ShowBuild(check);
     }
 
     readonly Microsoft.UI.Xaml.DispatcherTimer _typing = new() { Interval = TimeSpan.FromMilliseconds(400) };

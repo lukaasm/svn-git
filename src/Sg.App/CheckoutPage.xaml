@@ -174,6 +174,12 @@
                                          are in its tooltip and on the Backup page, so the header row is not a place a
                                          changing sentence can push the button off the line. -->
                                     <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <!-- The folder itself, one press from the name: the place the work is, before
+                                             anything that is said about it. The same Open the card's rows offer. -->
+                                        <Button Style="{StaticResource QuietButton}" Tag="{x:Bind}" Click="Open_Click" Padding="4" MinHeight="0" MinWidth="0"
+                                                VerticalAlignment="Center" AutomationProperties.Name="Open folder" ToolTipService.ToolTip="{x:Bind OpenTip}">
+                                            <FontIcon Glyph="&#xED25;" FontSize="14" />
+                                        </Button>
                                         <local:StatusChip VerticalAlignment="Center" Glyph="&#xE74E;" Severity="{x:Bind BackupSeverity, Mode=OneWay}"
                                                           Visibility="{x:Bind BackupVisibility, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind BackupTip, Mode=OneWay}" />
                                         <TextBlock Text="{x:Bind Branch}" Style="{StaticResource BodyStrongTextBlockStyle}"

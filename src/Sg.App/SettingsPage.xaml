@@ -119,6 +119,20 @@
                 </controls:SettingsCard>
 
                 <TextBlock Text="This app" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
+                <!-- Which build this is, said here because nowhere else in the app said it: the pane's
+                     Update and restart appears only once a newer one is found, and a crash report was
+                     the only other place the number went. -->
+                <controls:SettingsCard x:Name="BuildCard" Header="Installed build">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE946;" />
+                    </controls:SettingsCard.HeaderIcon>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <HyperlinkButton Content="Release notes" NavigateUri="https://github.com/lukaasm/svn-git/releases/tag/latest-build"
+                                         ToolTipService.ToolTip="The rolling latest-build release on GitHub, which every sg update installs from." />
+                        <local:IconButton x:Name="CheckBuild" Glyph="&#xE895;" Text="Check now" Click="CheckBuild_Click"
+                                          ToolTipService.ToolTip="Ask GitHub for the newest build now, instead of waiting for the timer above." />
+                    </StackPanel>
+                </controls:SettingsCard>
                 <controls:SettingsCard Header="Editor command"
                                        Description="Program that 'Open in editor' runs on a worktree folder, for example code or cursor. Empty uses the Windows default for a folder.">
                     <controls:SettingsCard.HeaderIcon>

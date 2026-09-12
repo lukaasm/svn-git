@@ -370,8 +370,8 @@ on the remote only. `sg status` says per worktree when it was last backed up and
 
 The app runs it on a timer - Settings, "Back up every N minutes", 15 by default, 0 turns it off - and a few seconds
 after coming back from any page that may have changed a branch, and after a rebase. A worktree card carries a small
-badge on the left of the branch name - grey when the backup is current, amber when commits wait or none ever went -
-with the words ("backed up 3 min ago", "2 commits not backed up", "not backed up") in its tooltip and on the Backup
+badge after the branch name - green when the backup holds the tip, amber when commits wait for it, red when nothing
+of this branch ever went - with the words ("backed up 3 min ago", "2 commits not backed up", "not backed up") in its tooltip and on the Backup
 page, so a changing sentence never grows the header row. A conflict or a newer-remote is a lasting state, not a fresh
 event, so the timer raises its toast once when a name first hits it, not every tick. "Backup" on the checkout toolbar
 opens the page: what the remote holds, Restore, Back up now, Prune.

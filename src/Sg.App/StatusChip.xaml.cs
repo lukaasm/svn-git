@@ -20,9 +20,10 @@ public enum ChipSeverity
 }
 
 /// <summary>
-/// The one badge in the app: a glyph in the colour of its severity, an optional count, an optional label.
-/// A plain coloured circle only says "something"; the glyph says which something, and says it again for
-/// anyone who cannot separate the colours.
+/// The one badge in the app, drawn the way the platform draws an InfoBadge: a solid pill in the colour of
+/// its severity with the glyph and the count on it in the on-accent foreground. A plain coloured dot only
+/// says "something"; the glyph says which something, and says it again for anyone who cannot separate the
+/// colours. The optional label sits beside the pill, not in it, in the caption text of the page.
 /// </summary>
 public sealed partial class StatusChip : UserControl
 {
@@ -48,7 +49,7 @@ public sealed partial class StatusChip : UserControl
     public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
         nameof(Text), typeof(string), typeof(StatusChip), new PropertyMetadata("", Changed));
 
-    /// <summary>The words next to the glyph. Empty where there is no room for them, as in the pane.</summary>
+    /// <summary>The words beside the pill. Empty where there is no room for them, as in the pane.</summary>
     public string Text
     {
         get => (string)GetValue(TextProperty);
@@ -76,17 +77,19 @@ public sealed partial class StatusChip : UserControl
 
     void Apply()
     {
-        var (fill, background) = Severity switch
+        // The fills the platform's own Attention, Success, Caution, Critical and Informational badge styles use.
+        var fill = Severity switch
         {
-            ChipSeverity.Attention => ("SystemFillColorAttentionBrush", "SystemFillColorAttentionBackgroundBrush"),
-            ChipSeverity.Caution => ("SystemFillColorCautionBrush", "SystemFillColorCautionBackgroundBrush"),
-            ChipSeverity.Critical => ("SystemFillColorCriticalBrush", "SystemFillColorCriticalBackgroundBrush"),
-            ChipSeverity.Success => ("SystemFillColorSuccessBrush", "SystemFillColorSuccessBackgroundBrush"),
-            _ => ("TextFillColorSecondaryBrush", "SystemFillColorNeutralBackgroundBrush"),
+            ChipSeverity.Attention => "SystemFillColorAttentionBrush",
+            ChipSeverity.Caution => "SystemFillColorCautionBrush",
+            ChipSeverity.Critical => "SystemFillColorCriticalBrush",
+            ChipSeverity.Success => "SystemFillColorSuccessBrush",
+            _ => "SystemFillColorSolidNeutralBrush",
         };
-        Pill.Background = Res(background, "SubtleFillColorSecondaryBrush");
-        Icon.Foreground = Res(fill);
-        CountText.Foreground = Res(fill);
+        Pill.Background = Res(fill, "AccentFillColorDefaultBrush");
+        var onFill = Res("TextOnAccentFillColorPrimaryBrush");
+        Icon.Foreground = onFill;
+        CountText.Foreground = onFill;
         Icon.Glyph = Glyph;
         Icon.Visibility = Glyph.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         CountText.Text = Count.ToString();

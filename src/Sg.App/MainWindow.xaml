@@ -7,7 +7,9 @@
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
-    <Grid RowDefinitions="Auto,*">
+    <!-- Anything dropped on the window from Explorer: a folder is a working copy to add, an export file
+         is a branch to import. The caption under the pointer says which before the drop. -->
+    <Grid RowDefinitions="Auto,*" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
         <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="sg" Subtitle="" />
 
         <!-- The shape of Windows Settings: checkouts in the pane, a back button over it, and on the

@@ -13,7 +13,8 @@ public sealed partial class AddCheckoutPage : SgPage
     /// <summary>True when a checkout was registered, so the overview knows to read the root again.</summary>
     public bool Added { get; private set; }
 
-    public AddCheckoutPage()
+    /// <summary>folder is a working copy already picked, by a drop on the window; null starts the page empty.</summary>
+    public AddCheckoutPage(string? folder = null)
     {
         InitializeComponent();
         Session.Log.Sink = Pane;
@@ -22,6 +23,7 @@ public sealed partial class AddCheckoutPage : SgPage
         Fields.Owner = this;
         Fields.Root = Session.Root;
         Fields.Changed += Sync;
+        if (folder != null) Fields.SetFolder(folder);
         Fields.Revalidate();
     }
 

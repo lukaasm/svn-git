@@ -169,10 +169,9 @@
                                      The sentence that used to run under the name is the first row inside the card, so
                                      the closed card is one line. -->
                                 <controls:SettingsExpander.Header>
-                                    <!-- A small badge on the left of the name is the whole backup story on the card: grey
-                                         when the backup is current, amber when commits wait or none ever went. The words
-                                         are in its tooltip and on the Backup page, so the header row is not a place a
-                                         changing sentence can push the button off the line. -->
+                                    <!-- The folder, the name, and a small badge that is the whole backup story on the
+                                         card. The words are in its tooltip and on the Backup page, so the header row is
+                                         not a place a changing sentence can push the button off the line. -->
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <!-- The folder itself, one press from the name: the place the work is, before
                                              anything that is said about it. The same Open the card's rows offer. -->
@@ -180,10 +179,12 @@
                                                 VerticalAlignment="Center" AutomationProperties.Name="Open folder" ToolTipService.ToolTip="{x:Bind OpenTip}">
                                             <FontIcon Glyph="&#xED25;" FontSize="14" />
                                         </Button>
-                                        <local:StatusChip VerticalAlignment="Center" Glyph="&#xE74E;" Severity="{x:Bind BackupSeverity, Mode=OneWay}"
-                                                          Visibility="{x:Bind BackupVisibility, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind BackupTip, Mode=OneWay}" />
                                         <TextBlock Text="{x:Bind Branch}" Style="{StaticResource BodyStrongTextBlockStyle}"
                                                    TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Branch}" />
+                                        <!-- After the name: green when the backup holds the tip, amber when commits wait
+                                             for it, red when nothing of this branch ever went. The words are in its tooltip. -->
+                                        <local:StatusChip VerticalAlignment="Center" Glyph="&#xE74E;" Severity="{x:Bind BackupSeverity, Mode=OneWay}"
+                                                          Visibility="{x:Bind BackupVisibility, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind BackupTip, Mode=OneWay}" />
                                     </StackPanel>
                                 </controls:SettingsExpander.Header>
                                 <!-- The right of the header: a chip per fact, each a glyph and a number with the words one

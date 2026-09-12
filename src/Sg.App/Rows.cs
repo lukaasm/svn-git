@@ -259,7 +259,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         : NotBackedUp == 0 ? "backed up" + Ago(BackedUp)
         : NotBackedUp == 1 ? "1 commit not backed up"
         : NotBackedUp + " commits not backed up";
-    public ChipSeverity BackupSeverity => NotBackedUp == 0 ? ChipSeverity.Neutral : ChipSeverity.Caution;
+    /// <summary>Green when the backup holds the tip, amber when commits wait, red when nothing of this branch ever went.</summary>
+    public ChipSeverity BackupSeverity => NotBackedUp == 0 ? ChipSeverity.Success : NotBackedUp > 0 ? ChipSeverity.Caution : ChipSeverity.Critical;
     public string BackupTip => NotBackedUp == 0
         ? "The backup repository holds every commit of this branch"
           + (BackedUp is { } t ? $", last confirmed {t.LocalDateTime:yyyy-MM-dd HH:mm}" : "") + ". Uncommitted changes go with the next backup."

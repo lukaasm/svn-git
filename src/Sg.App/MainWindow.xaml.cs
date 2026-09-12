@@ -792,6 +792,56 @@ public sealed partial class MainWindow : Window
     CheckoutRow? RowOf(CheckoutConfig co) =>
         Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow).FirstOrDefault(r => r?.Name == co.Name);
 
+    // ---- drops from Explorer ----
+
+    /// <summary>
+    /// What a drop would do, said under the pointer before it happens. Only the shape of the item is
+    /// known here: whether it is a folder, and whether a file ends in the export extension. Whether the
+    /// folder is a working copy is the Add checkout page's question, asked once it is dropped.
+    /// </summary>
+    void Window_DragOver(object sender, DragEventArgs e)
+    {
+        e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.None;
+        if (Session.Root == null || !e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return;
+        // The items themselves are an async read, which DragOver cannot wait for; the caption comes
+        // from the one thing the view says synchronously, and the drop reads the rest.
+        e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Link;
+        e.DragUIOverride.Caption = "Add as a checkout, or import a branch";
+        e.DragUIOverride.IsCaptionVisible = true;
+        e.DragUIOverride.IsGlyphVisible = false;
+    }
+
+    async void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (Session.Root == null || !e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return;
+        var deferral = e.GetDeferral();
+        try
+        {
+            var items = await e.DataView.GetStorageItemsAsync();
+            var item = items.FirstOrDefault();
+            if (item == null) return;
+            var path = item.Path;
+            if (Directory.Exists(path))
+            {
+                Host.Go(() => new AddCheckoutPage(path), "add-checkout");
+                return;
+            }
+            if (path.EndsWith(Export.Extension, StringComparison.OrdinalIgnoreCase))
+            {
+                var co = _current;
+                Host.Go(() =>
+                {
+                    var p = new ImportPage(path) { Checkout = co?.Name };
+                    p.Left += () => _ = RefreshAsync();
+                    return p;
+                }, "import:" + path);
+                return;
+            }
+            Pane.Append($"{path} is neither a folder nor a {Export.Extension} file, so there is nothing to do with it here.");
+        }
+        finally { deferral.Complete(); }
+    }
+
     // ---- pane and checkout actions ----
 
     async void OpenRoot_Click(object sender, RoutedEventArgs e) => await OpenRootAsync();

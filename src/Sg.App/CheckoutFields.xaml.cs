@@ -65,6 +65,14 @@ public sealed partial class CheckoutFields : UserControl
 
     public string Url => UrlBox.Text.Trim();
     public string Folder => FolderBox.Text.Trim();
+
+    /// <summary>A folder handed in from outside, dropped on the window say, as if it had been typed.</summary>
+    public void SetFolder(string path)
+    {
+        FolderBox.Text = path;
+        _folderTyped = true;
+        Revalidate();
+    }
     public string Name => NameBox.Text.Trim();
     public List<string> Skip => SkipPick.Paths;
     public List<string> Junctions => JunctionPick.Paths;

@@ -183,7 +183,7 @@ Push shows its six pre-checks before you press the button: worktree clean, no re
 change types SVN takes, paths sg may write, and no local edit in the checkout on the same file. All passing is one line;
 any failing one names the paths. `sg push --check` prints the same list and exits 10 when one fails.
 
-Keyboard: `Ctrl+F` filter the files, `Ctrl+Shift+F` filter the commits on Log and Push, `Ctrl+Enter` commit or push, `F7` and `Shift+F7` next and previous change in the diff,
+Keyboard: `Ctrl+K` go to any checkout, worktree or page by name, `Ctrl+F` filter the files, `Ctrl+Shift+F` filter the commits on Log and Push, `Ctrl+Enter` commit or push, `F7` and `Shift+F7` next and previous change in the diff,
 `F5` refresh the overview, `Esc` close the window unless you are typing. The list is in Settings.
 
 ## Shelves

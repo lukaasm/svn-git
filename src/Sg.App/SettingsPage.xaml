@@ -172,6 +172,7 @@
                     <controls:SettingsExpander.Items>
                         <controls:SettingsCard Header="Ctrl+F" Description="Jump to the filter box over a file list" />
                         <controls:SettingsCard Header="Ctrl+Shift+F" Description="Jump to the filter box over a commit list, on Log and Push" />
+                        <controls:SettingsCard Header="Ctrl+K" Description="Go to any checkout, worktree or page by typing part of its name, in the main window" />
                         <controls:SettingsCard Header="Ctrl+Enter" Description="Commit, or push, when the button is enabled" />
                         <controls:SettingsCard Header="F7" Description="Next change in the diff. Shift+F7 for the previous one" />
                         <controls:SettingsCard Header="F5" Description="Read every checkout and worktree again, in the overview" />

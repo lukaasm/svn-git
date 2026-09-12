@@ -51,6 +51,10 @@
                                                 ToolTipService.ToolTip="Runs sg init on a folder, then offers to register the first SVN checkout.">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F4;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Go to" Click="GoTo_Click" KeyboardAcceleratorTextOverride="Ctrl+K"
+                                                ToolTipService.ToolTip="Any checkout, worktree or page, by typing part of its name.">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE721;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>

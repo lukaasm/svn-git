@@ -83,6 +83,7 @@ public sealed partial class MainWindow : Window
         _backupSoon.Tick += (_, _) => _ = BackupAsync(quiet: true);
         Nav.Loaded += (_, _) => DispatcherQueue.TryEnqueue(EnglishChrome);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = RefreshAllAsync());
+        Shortcuts.Add(this, VirtualKey.K, VirtualKeyModifiers.Control, () => _ = QuickJump.ShowAsync(this, JumpEntries()));
         MonitorService.Changed += UpdateMonitorBadge;
         // Opening or closing the pane swaps which of the two unread markers is on show.
         Nav.PaneOpened += (_, _) => UpdateMonitorBadge();
@@ -792,6 +793,59 @@ public sealed partial class MainWindow : Window
     CheckoutRow? RowOf(CheckoutConfig co) =>
         Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow).FirstOrDefault(r => r?.Name == co.Name);
 
+    // ---- Ctrl+K: everywhere the window can go, as a list ----
+
+    async void GoTo_Click(object sender, RoutedEventArgs e) => await QuickJump.ShowAsync(this, JumpEntries());
+
+    /// <summary>
+    /// Every place Ctrl+K can reach, from what the window holds right now: each checkout and the pages
+    /// under it, each worktree and its pages, the app's own pages, and the roots opened before.
+    /// </summary>
+    List<QuickJump.Entry> JumpEntries()
+    {
+        var list = new List<QuickJump.Entry>();
+        var rows = Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow).Where(r => r != null).Select(r => r!).ToList();
+        foreach (var row in rows)
+        {
+            var co = row;
+            list.Add(new QuickJump.Entry(co.Name, "checkout", "", () => ShowOverview(co), co.Path));
+            list.Add(new QuickJump.Entry(co.Name + ": Sync", "svn update and a new snapshot", "", () => { ShowOverview(co); SyncOrPreview(co.Config); }));
+            list.Add(new QuickJump.Entry(co.Name + ": Changes in the checkout", "edits made directly in the checkout", "", () => ShowSvnChanges(co)));
+            list.Add(new QuickJump.Entry(co.Name + ": SVN log", "the history of the checkout and its externals", "", () => ShowSvnLog(co)));
+            list.Add(new QuickJump.Entry(co.Name + ": Merge", "changes from another branch of the repository", "", () => ShowMerge(co)));
+            list.Add(new QuickJump.Entry(co.Name + ": Shelved changes", "what was put aside from the checkout", "",
+                () => GoUnder(co, () => new ShelfPage(co.Config), "shelf:" + co.Name)));
+            list.Add(new QuickJump.Entry(co.Name + ": Backup", "what the backup holds, and a branch back from it", "",
+                () => GoUnder(co, () => new BackupPage(), "backup", () => _ = RefreshAsync())));
+        }
+        foreach (var w in _status?.Worktrees ?? new List<WorktreeStatus>())
+        {
+            var wt = w;
+            var row = rows.FirstOrDefault(r => r.Name.Equals(wt.Base, StringComparison.OrdinalIgnoreCase));
+            var where = $"worktree of {wt.Base}";
+            list.Add(new QuickJump.Entry(wt.Branch, where, "", () => { ShowOverview(row); Overview.Expand(wt.Branch); }, wt.Path));
+            list.Add(new QuickJump.Entry(wt.Branch + ": Commit", where, "",
+                () => GoUnder(row, () => new CommitPage(wt.Path) { Branch = wt.Branch }, "commit:" + wt.Path)));
+            list.Add(new QuickJump.Entry(wt.Branch + ": Log", where, "",
+                () => GoUnder(row, () => new LogPage(wt.Path) { Branch = wt.Branch }, "log:" + wt.Path)));
+            list.Add(new QuickJump.Entry(wt.Branch + ": Push to SVN", where, "",
+                () => GoUnder(row, () => new PushPage(wt.Path) { Branch = wt.Branch }, "push:" + wt.Path)));
+            list.Add(new QuickJump.Entry(wt.Branch + ": Shelved changes", where, "",
+                () => GoUnder(row, () => new ShelfPage(null, wt.Path, wt.Branch) { Branch = wt.Branch }, "shelf:" + wt.Path)));
+            list.Add(new QuickJump.Entry(wt.Branch + ": Open folder", wt.Path, "", () => Session.OpenInExplorer(wt.Path)));
+        }
+        list.Add(new QuickJump.Entry("Project monitor", "SVN URLs watched for new commits", "", () => ShowMonitor(null)));
+        list.Add(new QuickJump.Entry("Settings", "the app, the bridge, the backup", "", ShowSettings));
+        list.Add(new QuickJump.Entry("Log window", "every git and svn command the app ran", "", () => OutputWindow.Show()));
+        list.Add(new QuickJump.Entry("New worktree", "a branch from the latest snapshot", "", () => _ = NewBranchAsync(_current?.Config)));
+        foreach (var path in RecentRootsToOffer())
+        {
+            var root = path;
+            list.Add(new QuickJump.Entry("Open root " + RootName(root), root, "", () => _ = OpenRootAtAsync(root)));
+        }
+        return list;
+    }
+
     // ---- drops from Explorer ----
 
     /// <summary>
@@ -871,7 +925,7 @@ public sealed partial class MainWindow : Window
     void RootFlyout_Opening(object sender, object e)
     {
         var flyout = (MenuFlyout)sender;
-        while (flyout.Items.Count > 2) flyout.Items.RemoveAt(flyout.Items.Count - 1);
+        while (flyout.Items.Count > 3) flyout.Items.RemoveAt(flyout.Items.Count - 1);
         var others = RecentRootsToOffer();
         if (others.Count == 0) return;
         flyout.Items.Add(new MenuFlyoutSeparator());

@@ -487,7 +487,9 @@ public sealed partial class PushPage : SgPage
             // LoadAsync can fill it from the commits that are left. Both commit pages already do this.
             if (r.AllCommitted || onPurpose) { MessageDialog.Remember(msg); Message.Text = ""; }
             if (!WindowHelper.IsForeground(this))
-                Notifications.Show(r.AllCommitted || onPurpose ? "Push done" : "Push stopped half way", ResultBar.Message);
+                Notifications.Show(r.AllCommitted || onPurpose ? "Push done" : "Push stopped half way", ResultBar.Message,
+                    Notifications.Action("log", ("path", _worktree)),
+                    new Notifications.ToastButton("Open the log", Notifications.Action("log", ("path", _worktree))));
             await LoadAsync();
         }, restoreEnabled: false);
     }

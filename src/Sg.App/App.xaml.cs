@@ -29,7 +29,7 @@ public partial class App : Application
     {
         _queue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         Args = Environment.GetCommandLineArgs().Skip(1).ToArray();
-        var (action, path, toastId) = Parse(Args);
+        var (action, path, toast) = Parse(Args);
         Session.Open(path ?? Environment.CurrentDirectory);
         // Before any window is made, so the first list of files is drawn in the right colours rather
         // than in sg's and then repainted.
@@ -39,7 +39,8 @@ public partial class App : Application
         catch (Exception) { /* single instance not available, every launch is its own process */ }
 
         var hidden = action == "tray";
-        var window = OpenFor(hidden ? "overview" : action, path, toastId, activate: !hidden);
+        // Started by a toast, pressed after sg had closed: what its button asked for is what gets opened.
+        var window = toast != null ? HandleToast(toast) : OpenFor(hidden ? "overview" : action, path, activate: !hidden);
         // A crash dialog needs a window to live in, and this is the first one there is.
         Crash.Owner(window);
         MonitorService.Start(window.DispatcherQueue);
@@ -86,9 +87,9 @@ public partial class App : Application
                 if (argv.Length > 0 && (argv[0].EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || argv[0].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))) argv = argv.Skip(1).ToArray();
                 // The windows read flags like --select off Args, and this launch is the one that asked.
                 Args = argv;
-                var (action, path, toastId) = Parse(argv);
+                var (action, path, _) = Parse(argv);
                 if (path != null) Session.Open(path);
-                OpenFor(action == "tray" ? "overview" : action, path, toastId, activate: action != "tray");
+                OpenFor(action == "tray" ? "overview" : action, path, activate: action != "tray");
             }
             else if (a.Kind == ExtendedActivationKind.AppNotification && a.Data is AppNotificationActivatedEventArgs na)
                 HandleToast(na.Arguments);
@@ -97,11 +98,48 @@ public partial class App : Application
         catch (Exception) { ShowMain(); }
     }
 
-    static void HandleToast(IDictionary<string, string> args)
+    /// <summary>
+    /// A toast was pressed, or a button on one. Every toast names an action and what it is about, and
+    /// this is the one place that reads them, whether sg was running or Windows just started it for the
+    /// press. What a window can only do once it has read the root goes through its start action, the
+    /// way the Explorer menu's "sync" does, so the cold start and the warm one land in the same code.
+    /// </summary>
+    static Window HandleToast(IDictionary<string, string> args)
     {
-        if (args.TryGetValue("action", out var act) && act == "monitor")
-            ShowMonitor(args.TryGetValue("id", out var id) ? id : null);
-        else ShowMain();
+        string? Get(string key) => args.TryGetValue(key, out var v) ? v : null;
+        var action = Get("action") ?? "";
+        var checkout = Get("checkout");
+        var co = checkout == null ? null
+            : Session.Root?.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(checkout, StringComparison.OrdinalIgnoreCase));
+        switch (action)
+        {
+            case "monitor":
+                ShowMonitor(Get("id"));
+                return _main!;
+            case "log" when Get("path") is { } path:
+                return OpenFor("log", path, activate: true);
+            case "applog":
+            {
+                var main = EnsureMain(null, null);
+                WindowHelper.Show(main);
+                return OutputWindow.Show();
+            }
+            case "sync" or "backup" or "update" or "overview":
+            {
+                if (_main == null)
+                {
+                    var main = EnsureMain(action == "overview" ? null : action, co?.Path);
+                    WindowHelper.Show(main);
+                    return main;
+                }
+                _main.FromToast(action, co?.Name);
+                WindowHelper.Show(_main);
+                return _main;
+            }
+            default:
+                ShowMain();
+                return _main!;
+        }
     }
 
     /// <summary>The project monitor is a page of the overview, so a toast brings the overview up and turns it to that page.</summary>
@@ -112,36 +150,36 @@ public partial class App : Application
         WindowHelper.Show(main);
     }
 
-    static (string Action, string? Path, string? ToastId) Parse(string[] argv)
+    /// <summary>
+    /// The command line, or the arguments of the toast that started this process. Windows starts an
+    /// app for a toast press with an argument that begins with four dashes and nothing readable after
+    /// it; what the toast carried is asked for separately, and comes back as Toast.
+    /// </summary>
+    static (string Action, string? Path, IDictionary<string, string>? Toast) Parse(string[] argv)
     {
         var fromToast = argv.Length > 0 && argv[0].StartsWith("----");
         var action = argv.Length > 0 && !fromToast ? argv[0].ToLowerInvariant() : "overview";
         var path = argv.Length > 1 && !fromToast ? argv[1].TrimEnd('"') : null;
         if (action == "--tray") action = "tray";
-        string? toastId = null;
+        IDictionary<string, string>? toast = null;
         if (fromToast)
         {
             try
             {
                 var activated = AppInstance.GetCurrent().GetActivatedEventArgs();
-                if (activated.Kind == ExtendedActivationKind.AppNotification
-                    && activated.Data is AppNotificationActivatedEventArgs na
-                    && na.Arguments.TryGetValue("action", out var a) && a == "monitor")
-                {
-                    action = "monitor";
-                    na.Arguments.TryGetValue("id", out toastId);
-                }
+                if (activated.Kind == ExtendedActivationKind.AppNotification && activated.Data is AppNotificationActivatedEventArgs na)
+                    toast = na.Arguments;
             }
             catch (Exception) { /* plain launch */ }
         }
-        return (action, path, toastId);
+        return (action, path, toast);
     }
 
     /// <summary>
     /// Opens what an action asks for. The Explorer menu's actions get a window of their own around
     /// their page, the Tortoise way; the overview is made once and hidden into the tray instead of closed.
     /// </summary>
-    static Window OpenFor(string action, string? path, string? toastId, bool activate)
+    static Window OpenFor(string action, string? path, bool activate)
     {
         // "git worktree list" and "git config --get" are two blocking processes, and only the actions that
         // are about a folder need them. This runs on the launch path and again on every redirect, where a
@@ -209,7 +247,7 @@ public partial class App : Application
             case "monitor":
             {
                 var main = EnsureMain(null, null);
-                main.ShowMonitor(toastId);
+                main.ShowMonitor(null);
                 window = main;
                 break;
             }

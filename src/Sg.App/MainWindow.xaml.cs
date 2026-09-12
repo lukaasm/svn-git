@@ -221,7 +221,8 @@ public sealed partial class MainWindow : Window
         UpdateItem.Visibility = Visibility.Visible;
         if (!first) return;
         Pane.Append($"{DateTime.Now:HH:mm}  update: {check.Remote} is ready to install.");
-        Notifications.Show("A newer sg build is ready", check.Remote + ". Open sg and press 'Update and restart'.");
+        Notifications.Show("A newer sg build is ready", check.Remote + ". Update and restart installs it.",
+            Notifications.Action("overview"), new Notifications.ToastButton("Update and restart", Notifications.Action("update")));
     }
 
     // ---- backups ----
@@ -286,10 +287,14 @@ public sealed partial class MainWindow : Window
             _backupAlerted = alert;
             if (quiet && freshReject.Count > 0)
                 Notifications.Show("Backup conflict for " + string.Join(", ", freshReject),
-                    "Another machine has different work under this name. Open Backup on the checkout to restore it, overwrite it, or back up under this machine's own prefix.");
+                    "Another machine has different work under this name. Open Backup on the checkout to restore it, overwrite it, or back up under this machine's own prefix.",
+                    Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
+                    new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
             else if (quiet && freshBehind.Count > 0)
                 Notifications.Show("A newer backup for " + string.Join(", ", freshBehind),
-                    "The backup holds newer work than this machine has for it. Open Backup on the checkout to restore it here.");
+                    "The backup holds newer work than this machine has for it. Open Backup on the checkout to restore it here.",
+                    Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
+                    new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
             await RefreshAsync();
             return res;
         }
@@ -400,7 +405,9 @@ public sealed partial class MainWindow : Window
             {
                 Pane.Append($"{DateTime.Now:HH:mm}  server: {result.Commits} new commit(s) for {name}. Sync when ready.");
                 var parts = string.Join(", ", result.Entries.Where(x => x.Behind).Select(x => $"{(x.Rel.Length == 0 ? "root" : x.Rel)} r{x.Snapshot}→r{x.Server}"));
-                Notifications.Show($"{result.Commits} new SVN commit(s) for {name}", parts + ". Sync when ready.");
+                Notifications.Show($"{result.Commits} new SVN commit(s) for {name}", parts + ".",
+                    Notifications.Action("overview", ("checkout", name)),
+                    new Notifications.ToastButton("Sync", Notifications.Action("sync", ("checkout", name))));
             }
         var root = Session.Root;
         var status = await Runner.Quiet(Pane, () => Ops.Status(root, checkSvn: false));
@@ -709,9 +716,34 @@ public sealed partial class MainWindow : Window
             case "server-checkout":
                 await ServerCheckoutAsync(_current?.Config);
                 break;
+            // The two a toast's button can start when sg is not running. Sync above is the third.
+            case "backup":
+                Host.Go(() => new BackupPage { Checkout = _current?.Name }, "backup");
+                break;
+            case "update":
+                await UpdateAsync();
+                break;
             case "push" or "commit" or "log":
                 Pane.Append(path + " is not inside a worktree, so there is nothing to " + _startAction);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// What a toast's button asks for, with the window already up. The checkout is named rather than
+    /// held: the toast may be pressed long after the pane was rebuilt under it.
+    /// </summary>
+    internal void FromToast(string action, string? checkout)
+    {
+        var row = checkout == null ? null
+            : Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow)
+                .FirstOrDefault(r => r != null && r.Name.Equals(checkout, StringComparison.OrdinalIgnoreCase));
+        if (row != null) { _current = row; ShowOverview(row); }
+        switch (action)
+        {
+            case "sync" when row != null: SyncOrPreview(row.Config); break;
+            case "backup": Host.Go(() => new BackupPage { Checkout = row?.Name }, "backup"); break;
+            case "update": _ = UpdateAsync(); break;
         }
     }
 
@@ -826,9 +858,11 @@ public sealed partial class MainWindow : Window
                        + (r.Conflicts > 0 ? $", {r.Conflicts} svn conflict(s) in the checkout" : "")
                        + (r.KeptSwitched.Count > 0 ? $", kept {string.Join(", ", r.KeptSwitched)} switched" : "");
             Pane.Append(line);
-            if (!WindowHelper.IsForeground(this)) Notifications.Show("Sync done", line);
+            if (!WindowHelper.IsForeground(this)) Notifications.Show("Sync done", line, Notifications.Action("overview", ("checkout", co.Name)));
         }
-        else if (!WindowHelper.IsForeground(this)) Notifications.Show("Sync failed", co.Name + ": see the log in sg.");
+        else if (!WindowHelper.IsForeground(this))
+            Notifications.Show("Sync failed", co.Name + ": see the log in sg.", Notifications.Action("overview", ("checkout", co.Name)),
+                new Notifications.ToastButton("Show the log", Notifications.Action("applog")));
         Remote.Remove(co.Name);
         RemoteErrors.Remove(co.Name);
         await RefreshAsync();

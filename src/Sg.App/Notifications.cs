@@ -49,10 +49,25 @@ public static class Notifications
             : "Registered with Windows, and the switch here is off.";
     }
 
-    public static void Show(string title, string body, IDictionary<string, string>? args = null)
+    /// <summary>One button on a toast: its word, and the arguments pressing it hands the app.</summary>
+    public sealed record ToastButton(string Label, IDictionary<string, string> Args);
+
+    /// <summary>The arguments a toast or a button carries: an action, and what it is about.</summary>
+    public static Dictionary<string, string> Action(string action, params (string Key, string Value)[] more)
+    {
+        var d = new Dictionary<string, string> { ["action"] = action };
+        foreach (var (k, v) in more) d[k] = v;
+        return d;
+    }
+
+    /// <summary>
+    /// args is what pressing the toast itself does; buttons are the things to do about it without
+    /// opening sg first. A toast that said "Sync when ready" used to be a note to go and find the button.
+    /// </summary>
+    public static void Show(string title, string body, IDictionary<string, string>? args = null, params ToastButton[] buttons)
     {
         if (!_registered || !Session.Settings.Notify) return;
-        Send(title, body, args);
+        Send(title, body, args, buttons);
     }
 
     /// <summary>
@@ -66,7 +81,7 @@ public static class Notifications
         if (!_registered) return "Not registered with Windows. " + (LastError ?? "Windows did not say why.");
         Send("sg notifications work",
             "This is a test. A real one names the repository and its newest commit.",
-            new Dictionary<string, string> { ["action"] = "monitor" });
+            Action("monitor"), new ToastButton("Open the monitor", Action("monitor")));
         if (LastError != null) return LastError;
         try
         {
@@ -81,12 +96,18 @@ public static class Notifications
         }
     }
 
-    static void Send(string title, string body, IDictionary<string, string>? args)
+    static void Send(string title, string body, IDictionary<string, string>? args, params ToastButton[] buttons)
     {
         try
         {
             var b = new AppNotificationBuilder().AddText(title).AddText(body);
             if (args != null) foreach (var (k, v) in args) b.AddArgument(k, v);
+            foreach (var button in buttons)
+            {
+                var ab = new AppNotificationButton(button.Label);
+                foreach (var (k, v) in button.Args) ab.AddArgument(k, v);
+                b.AddButton(ab);
+            }
             AppNotificationManager.Default.Show(b.BuildNotification());
             LastError = null;
         }

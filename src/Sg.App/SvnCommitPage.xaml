@@ -45,7 +45,7 @@
                         <Button Content="All" Click="All_Click" ToolTipService.ToolTip="Check every change, unversioned files too." />
                         <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
                         <local:IconButton Glyph="&#xE7A7;" Text="Discard"
-                            Click="Revert_Click" ToolTipService.ToolTip="Throw away the checked changes. Versioned files go back to BASE, unversioned files get deleted. Asks first." />
+                            Click="Revert_Click" ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. Asks first, and Undo on the bar brings them back for a week." />
                         <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
                             Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file." />
                     </StackPanel>

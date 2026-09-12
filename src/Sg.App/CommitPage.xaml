@@ -49,7 +49,7 @@
                         <local:IconButton Glyph="&#xE738;" Text="Unstage"
                             Click="Unstage_Click" ToolTipService.ToolTip="Take the checked files out of the index again. The files on disk are untouched." />
                         <local:IconButton Glyph="&#xE7A7;" Text="Discard"
-                            Click="Discard_Click" ToolTipService.ToolTip="Throw away the checked changes. Tracked files go back to the last commit, untracked files get deleted. Asks first." />
+                            Click="Discard_Click" ToolTipService.ToolTip="Put the checked files back the way the last commit has them; untracked files get deleted. Asks first, and Undo on the bar brings them back for a week." />
                         <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
                             Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run." />
                     </StackPanel>

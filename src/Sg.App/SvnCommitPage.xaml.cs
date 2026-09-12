@@ -62,7 +62,7 @@ public sealed partial class SvnCommitPage : SgPage
         if (changes.Count == 0) return;
         menu.Items.Add(new MenuFlyoutSeparator());
 
-        Add("Discard", "\uE7A7", "Throw away these changes. A versioned file goes back to BASE, an unversioned one is deleted. Asks first.",
+        Add("Discard", "\uE7A7", "Put these files back the way SVN has them; an unversioned one is deleted. Asks first, and Undo on the bar brings them back.",
             () => RevertAsync(changes.Select(c => c.Path).ToList()));
 
         var unversioned = changes.Where(c => c.Item == "unversioned").ToList();
@@ -224,17 +224,23 @@ public sealed partial class SvnCommitPage : SgPage
         // page has committed it anywhere, so what it takes out has no other copy left.
         if (!await Dialogs.Confirm(this, "Discard " + DiffBlocks.Label("discard", blocks).ToLowerInvariant(),
                 $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way SVN has them?\n\n"
-                + "The change goes, and SVN never saw it, so there is nothing to take it back from.", "Discard"))
+                + "The change is not in SVN. Undo on the bar over the page brings it back, for as long as the file is left as the discard leaves it.", "Discard"))
             return;
         var abs = PathUtil.Join(_co.Path, path);
         var before = _shownModified;
-        var ok = await Runner.Run(Pane, DiffBlocks.Label("discard", blocks).ToLowerInvariant() + " of " + path, () =>
+        var what = DiffBlocks.Label("discard", blocks).ToLowerInvariant() + " of " + path;
+        var written = await Runner.Run(Pane, what, () =>
         {
             var file = TextFile.Read(abs);
             if (file.Text != before) throw new SgException("the file changed on disk since this diff was read. Refresh, then pick the block again.");
-            TextFile.Write(abs, Patch.Reverse(file.Text, blocks), file.Encoding);
+            var after = Patch.Reverse(file.Text, blocks);
+            TextFile.Write(abs, after, file.Encoding);
+            return new { After = after, file.Encoding };
         });
-        if (ok) await LoadAsync(reselect: path);
+        if (written == null) return;
+        Discards.Announce(ResultBar, what, "The text it wrote over is kept until the bar is closed.",
+            Discards.Rewrite(Pane, abs, before, written.After, written.Encoding), () => LoadAsync(reselect: path));
+        await LoadAsync(reselect: path);
     }
 
     /// <summary>The editor's text goes to disk. The file must still hold what the diff was read from.</summary>
@@ -297,6 +303,7 @@ public sealed partial class SvnCommitPage : SgPage
             {
                 foreach (var g in r.Groups)
                     Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}" + (g.Revision.HasValue ? $" r{g.Revision}" : "") + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
+                ResultBar.ActionButton = null;
                 ResultBar.Severity = r.AllCommitted ? InfoBarSeverity.Success : InfoBarSeverity.Error;
                 ResultBar.Message = r.AllCommitted
                     ? $"Committed. Snapshot is now r{r.Sync?.Revision}."
@@ -313,8 +320,17 @@ public sealed partial class SvnCommitPage : SgPage
         if (paths.Count == 0) { await Dialogs.Info(this, "Nothing checked", "Check the changes to revert."); return; }
         var root = Session.Require();
         var what = paths.Count == 1 ? $"the changes in {paths[0]}" : $"{paths.Count} change(s) in the checkout";
-        if (!await Dialogs.Confirm(this, "Discard changes", $"Throw away {what}? Unversioned files get deleted. This cannot be undone.", "Discard")) return;
-        await Runner.Run(Pane, "svn revert", () => Ops.SvnRevert(root, _co, paths, deleteUnversioned: true));
+        if (!await Dialogs.Confirm(this, "Discard changes",
+                $"Put {what} back the way SVN has them? Unversioned files get deleted.\n\n"
+                + "They go onto the shelf first, so Undo on the bar over the page brings them back. A discard nobody asks back for is dropped after a week. "
+                + "A file whose svn property changed is reverted outright: a shelf cannot hold a property.",
+                "Discard")) return;
+        // The shelf is the discard: saving one reverts the files. What it cannot hold is reverted the old way.
+        var shelf = await Discards.ShelveAsync(Pane, _co.Path, paths,
+            rest => Ops.SvnRevert(root, _co, rest.ToList(), deleteUnversioned: true));
+        if (shelf != null)
+            Discards.Announce(ResultBar, what, $"They wait on the shelf as \"{shelf.Title}\" for a week, or until you drop them.",
+                Discards.Restore(Pane, shelf), () => LoadAsync());
         await LoadAsync();
     }
 
@@ -369,6 +385,7 @@ public sealed partial class SvnCommitPage : SgPage
             : $"Put {paths.Count} change(s) of {_co.Name} aside.";
         var r = await ShelfActions.SaveAsync(this, Pane, _co.Path, paths, what, ShelfActions.Suggest(paths));
         if (r == null) return;
+        ResultBar.ActionButton = null;
         ResultBar.Severity = InfoBarSeverity.Success;
         ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The checkout holds what SVN has for them again.";
         ResultBar.IsOpen = true;

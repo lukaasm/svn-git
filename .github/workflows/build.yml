@@ -46,6 +46,19 @@ jobs:
           Write-Host "subversion in $bin"
           svn --version --quiet
 
+      # The tests start a few thousand git and svn processes and write tens of thousands of small
+      # files, and Defender on the runner looks at every one of them. The runner is thrown away after
+      # the job, so there is nothing here to protect. Never fails the job: a runner that refuses is
+      # only slower.
+      - name: Keep Defender off the build and the tests
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE", "$env:TEMP", "$env:LOCALAPPDATA" -ErrorAction Stop
+            Add-MpPreference -ExclusionProcess "svn.exe", "svnadmin.exe", "svnmucc.exe", "git.exe", "dotnet.exe" -ErrorAction Stop
+            Write-Host "defender exclusions set"
+          } catch { Write-Host "defender exclusions not set: $($_.Exception.Message)" }
+
       - name: Test
         run: dotnet test tests/Sg.Core.Tests -c Release --nologo
 

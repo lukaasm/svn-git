@@ -86,16 +86,41 @@ public sealed class Fixture : IDisposable
         return "file:///" + dir.Replace('\\', '/');
     }
 
+    /// <summary>
+    /// The initial content of a repository, as one commit from one svnmucc process. files writes into
+    /// a staging folder and afterAdd sets properties on paths in it; both are turned into mkdir, put
+    /// and propsetf actions. A checkout, an add per top folder, a propset each and a commit was up to
+    /// six processes per repository, three repositories per test, and every test makes a fixture.
+    /// </summary>
     void Populate(string url, Action<string> files, Action<string>? afterAdd = null)
     {
-        var wc = Path.Combine(Base, "wc-" + Guid.NewGuid().ToString("N")[..6]);
-        Svn.Ok(null, "checkout", "--non-interactive", url, wc);
-        files(wc);
-        foreach (var top in Directory.GetFileSystemEntries(wc).Where(p => Path.GetFileName(p) != ".svn"))
-            Svn.Ok(wc, "add", "--non-interactive", Path.GetFileName(top));
-        afterAdd?.Invoke(wc);
-        Svn.Ok(wc, "commit", "--non-interactive", "-m", "initial content");
+        var stage = Path.Combine(Base, "stage-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(stage);
+        files(stage);
+        _props.Clear();
+        afterAdd?.Invoke(stage);
+        var args = new List<string> { "--non-interactive", "-U", url, "-m", "initial content" };
+        // A parent is made before what is under it: a child's path is always the longer one.
+        foreach (var dir in Directory.GetDirectories(stage, "*", SearchOption.AllDirectories).OrderBy(d => d.Length))
+            args.AddRange(["mkdir", Rel(stage, dir)]);
+        foreach (var file in Directory.GetFiles(stage, "*", SearchOption.AllDirectories))
+            args.AddRange(["put", file, Rel(stage, file)]);
+        var propFiles = new List<string>();
+        foreach (var (rel, name, value) in _props)
+        {
+            var f = Path.Combine(Base, "prop-" + Guid.NewGuid().ToString("N")[..6] + ".txt");
+            File.WriteAllText(f, value, Utf8);
+            propFiles.Add(f);
+            args.AddRange(["propsetf", name, f, rel]);
+        }
+        Proc.Run("svnmucc", args.ToArray(), null, Log).EnsureOk();
+        foreach (var f in propFiles) File.Delete(f);
     }
+
+    /// <summary>The properties afterAdd asked for, gathered for the one svnmucc call.</summary>
+    readonly List<(string Rel, string Name, string Value)> _props = new();
+
+    static string Rel(string root, string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
 
     void Copy(string from, string to) =>
         Svn.Ok(null, "copy", "--parents", "--non-interactive", "-m", "branch", from, to);
@@ -109,13 +134,8 @@ public sealed class Fixture : IDisposable
 
     public static void Put(string wc, string rel, string content) => File.WriteAllText(Ensure(wc, rel), content, Utf8);
 
-    void PropSet(string wc, string rel, string name, string value)
-    {
-        var f = Path.Combine(Base, "prop-" + Guid.NewGuid().ToString("N")[..6] + ".txt");
-        File.WriteAllText(f, value, Utf8);
-        Svn.Ok(wc, "propset", name, "-F", f, rel.Replace('/', Path.DirectorySeparatorChar));
-        File.Delete(f);
-    }
+    /// <summary>A property for the commit Populate is about to make. wc is the staging folder, and only the path matters.</summary>
+    void PropSet(string wc, string rel, string name, string value) => _props.Add((rel, name, value));
 
     public string Cat(string url) => Svn.Ok(null, "cat", "--non-interactive", url).StdOut;
     public string PropGet(string url, string prop) => Svn.Ok(null, "propget", prop, "--non-interactive", url).StdOut;

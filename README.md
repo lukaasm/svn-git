@@ -128,8 +128,14 @@ folders: junction, ReFS clone, or full copy. The clone choice is greyed out, wit
 and the worktrees are not on one ReFS volume. The second step is optional and can take minutes.
 A button that cannot do anything is disabled, and its tooltip says why.
 
-The overview asks the SVN server for new commits every few minutes and shows a toast when there are some.
-It asks GitHub for a newer sg build on its own schedule and shows an "Update and restart" bar when one is ready.
+The overview asks the SVN server for new commits every few minutes and shows a toast when there are some, with a Sync
+button on it. It asks GitHub for a newer sg build on its own schedule and shows an "Update and restart" bar when one is
+ready; that toast has the button too, a failed sync's toast opens the log, and a push's toast opens the branch's log.
+Settings says which build is installed, and Check now asks GitHub without waiting for the timer.
+
+The pane's menu lists the roots opened before, so switching between two is one press; the empty pane lists them as
+buttons. A folder dropped on the window opens Add checkout with it filled in, and a dropped export file opens Import.
+Ctrl+K, or Go to in the same menu, reaches any checkout, worktree or page by typing part of its name.
 
 Tray: closing the overview hides it into the notification area and the app keeps running, so the monitor keeps checking.
 Right click the tray icon for Open, Project monitor, Check now, Settings, Exit. Settings has "Start with Windows", which
@@ -164,6 +170,9 @@ purple R for renamed, orange C for a conflict, grey ? for a file version control
 group the rows by working copy, one header per SVN commit that would go out. Right click a row in Checkout changes for
 **Revert**, or in Commit for **Discard changes**. Click inside a change in the diff of a modified file and press
 **Revert chunk** to put that block back the way BASE (or HEAD) has it; the rest of the file stays, like TortoiseSVN.
+A discard can be undone: whole files go onto the shelf as "discarded <time>" first, a discarded block keeps the text it
+wrote over, and the bar over the page offers Undo. A discard shelf nobody asks back for is dropped after a week.
+The commit message box starts with the prefix the branch's last commit carried, "gui: " say, with the caret after it.
 In the Project monitor, clicking a commit marks it and the older ones as read; newer ones stay unread.
 Lists show grey bars while they load, a button that started a long operation shows a ring until it finishes, and rows
 cascade in instead of popping in.

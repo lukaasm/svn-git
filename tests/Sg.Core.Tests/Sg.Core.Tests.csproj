@@ -18,6 +18,12 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Every test spends its time waiting on git and svn processes, not on a core of its own, so twice
+       the cores run test classes side by side. The file has to sit next to the test dll to be read. -->
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sg.Core\Sg.Core.csproj" />
   </ItemGroup>

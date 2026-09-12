@@ -122,9 +122,14 @@ public static class Session
             .FirstOrDefault();
     }
 
+    /// <summary>
+    /// Opens a folder in whatever the shell opens folders with. Starting explorer.exe by name walked
+    /// past a file manager the user had put in its place, so the folder is handed to the shell as a
+    /// document instead and the shell picks the handler, the way a double click in a dialog does.
+    /// </summary>
     public static void OpenInExplorer(string path)
     {
-        try { Process.Start(new ProcessStartInfo("explorer.exe", "\"" + path + "\"") { UseShellExecute = true }); }
+        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
         catch { /* nothing to do */ }
     }
 

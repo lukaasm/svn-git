@@ -32,6 +32,13 @@ public sealed partial class PushPage : SgPage
     /// <summary>One preview per pause in the picking, not one per selection change.</summary>
     readonly DispatcherTimer _scopeDebounce = new() { Interval = TimeSpan.FromMilliseconds(140) };
 
+    /// <summary>Every commit of the preview, newest first. The list on screen is these through the filter.</summary>
+    List<CommitRow> _commitRows = new();
+    /// <summary>Where the push cuts: the index in _commitRows of the last commit going. -1 before the first preview.</summary>
+    int _cut = -1;
+    string _commitsTitle = "Commits on the branch";
+    readonly CommitFilter _commitFilter;
+
     public PushPage(string worktree)
     {
         InitializeComponent();
@@ -45,6 +52,8 @@ public sealed partial class PushPage : SgPage
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display, r => ((FileRow)r).Group);
         _filter.Picked += OnPicked;
         _filter.ExpectStats = true;
+        _commitFilter = new CommitFilter(CommitFilterBox, this);
+        _commitFilter.Changed += ShowCommits;
         _scopeDebounce.Tick += (_, _) => { _scopeDebounce.Stop(); _ = LoadAsync(); };
         Message.Minimum = Session.Root?.Config.MinMessageLength ?? 10;
         // The shared text is needed while any working copy still uses it, and each own text has the same rule.
@@ -106,20 +115,18 @@ public sealed partial class PushPage : SgPage
         WarnBar.ActionButton = p.NeedsRebase ? RebaseNowButton() : null;
         // Newest first, so the ones above the boundary are the ones that stay. The picked line is the
         // last one going, which puts the selection right on the edge between the two halves.
-        var rows = p.Commits.Select((c, i) =>
+        _commitRows = p.Commits.Select((c, i) =>
         {
             var row = CommitRow.From(c, snapshot: false);
             row.Staying = i < p.Commits.Count - p.Sending;
             return row;
         }).ToList();
-        _binding = true;
-        Commits.ItemsSource = rows;
-        Commits.SelectedIndex = rows.Count == 0 ? -1 : p.Commits.Count - p.Sending;
-        _binding = false;
-        AllCommitsButton.IsEnabled = p.Partial;
-        CommitsHeader.Text = p.Partial
+        _cut = _commitRows.Count == 0 ? -1 : p.Commits.Count - p.Sending;
+        _commitsTitle = p.Partial
             ? $"Commits on the branch, sending the oldest {p.Sending}"
             : "Commits on the branch";
+        ShowCommits();
+        AllCommitsButton.IsEnabled = p.Partial;
         PartialBar.Message = p.Partial
             ? $"{p.Commits.Count - p.Sending} commit(s) stay on the branch, over the new snapshot, ready for the next push."
             : "";
@@ -177,17 +184,37 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     void Commits_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_binding || Commits.ItemsSource is not List<CommitRow> rows) return;
-        var index = Commits.SelectedIndex;
+        if (_binding || Commits.SelectedItem is not CommitRow picked) return;
+        // Against every commit, not against the list on screen: with a filter on, the line under the
+        // picked one may be ten commits down the branch, and all ten go with it.
+        var index = _commitRows.IndexOf(picked);
         if (index < 0) return;
-        var sending = rows.Count - index;
-        var scope = sending >= rows.Count ? PushScope.Whole : PushScope.First(sending);
+        var sending = _commitRows.Count - index;
+        var scope = sending >= _commitRows.Count ? PushScope.Whole : PushScope.First(sending);
         if (scope == _scope) return;
         _scope = scope;
         // The preview is a git log, a git diff and an svn status over every path the branch changed.
         // Walking this list with the arrow keys used to start one of those per key press.
         _scopeDebounce.Stop();
         _scopeDebounce.Start();
+    }
+
+    /// <summary>
+    /// The commits as the filter leaves them. The cut is a commit, not a line number, so it survives
+    /// the filter: the last commit going is the picked line while it is on the list, and no line is
+    /// picked while the filter hides it, which changes nothing about what the push sends.
+    /// </summary>
+    void ShowCommits()
+    {
+        var shown = _commitFilter.Apply(_commitRows);
+        var cut = _cut >= 0 && _cut < _commitRows.Count ? _commitRows[_cut] : null;
+        _binding = true;
+        Commits.ItemsSource = shown;
+        Commits.SelectedItem = cut != null && shown.Contains(cut) ? cut : null;
+        _binding = false;
+        CommitsHeader.Text = _commitFilter.Active
+            ? _commitsTitle + ", " + CommitFilter.Showing(shown.Count, _commitRows.Count)
+            : _commitsTitle;
     }
 
     async void AllCommits_Click(object sender, RoutedEventArgs e)

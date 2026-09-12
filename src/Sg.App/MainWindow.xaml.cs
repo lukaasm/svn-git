@@ -643,7 +643,7 @@ public sealed partial class MainWindow : Window
             "Take changes from another branch of the same repository, all of them or a few revisions."));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Open folder", "", () => Session.OpenInExplorer(row.Path),
-            "Open the checkout folder in Explorer."));
+            "Open the checkout folder in your file manager."));
         return menu;
     }
 

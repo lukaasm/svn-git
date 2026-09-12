@@ -11,6 +11,8 @@
     <local:SgPage.Resources>
         <!-- The widest word a card button carries is "Resolve conflicts", with room around it. -->
         <x:Double x:Key="CardActionWidth">196</x:Double>
+        <!-- A card keeps 44 more to the right of its button: the chevron and the padding around it. The
+             checkout bar's right margin is that number, written where the margin is. -->
     </local:SgPage.Resources>
     <Grid RowDefinitions="*,Auto">
       <!-- One cap around the toolbar and the list together, so they are centred as one thing. Capping and
@@ -38,7 +40,10 @@
                 <TextBlock Grid.Column="4" x:Name="CoUrl" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 <!-- What the server says, and the one thing to do about it: the same two, in the same
                      order, that every worktree card puts on the right of its own header. -->
-                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <!-- Sync first and Commit last, so the loud button sits where every card puts its own, and the
+                     right margin is the width of a card's chevron column: the Commit here and the buttons on
+                     the cards under it share a left edge and a right edge. -->
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,44,0">
                     <ProgressRing x:Name="CoRemoteRing" Width="14" Height="14" MinWidth="14" MinHeight="14" IsActive="True" VerticalAlignment="Center"
                                   ToolTipService.ToolTip="Asking the SVN server for new commits." />
                     <local:StatusChip x:Name="CoRemoteBadge" Severity="Caution" Glyph="&#xE896;" Visibility="Collapsed"
@@ -51,7 +56,9 @@
                          with the checkout's own changes, and the right half is the other thing to do with
                          exactly those changes - put them aside. Shelving from here takes all of them,
                          which is the answer when the reason is "a push wants this file". -->
-                    <local:AccentSplitButton x:Name="SvnCommitButton" AutomationProperties.Name="Commit"
+                    <local:IconButton Glyph="&#xE895;" Text="Sync"
+                        x:Name="SyncButton" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout, then take a new snapshot into svn/&lt;name&gt;. Branches are not touched, rebase them when you want the new base." />
+                    <local:AccentSplitButton x:Name="SvnCommitButton" MinWidth="{StaticResource CardActionWidth}" AutomationProperties.Name="Commit"
                                              Click="SvnCommit_Click"
                                              ToolTipService.ToolTip="Pick the changed files, see each diff, write a message, and commit them straight to SVN. One commit per working copy. Asks first.">
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -69,8 +76,6 @@
                             </MenuFlyout>
                         </local:AccentSplitButton.Flyout>
                     </local:AccentSplitButton>
-                    <local:IconButton Glyph="&#xE895;" Text="Sync"
-                        x:Name="SyncButton" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout, then take a new snapshot into svn/&lt;name&gt;. Branches are not touched, rebase them when you want the new base." />
                 </StackPanel>
             </Grid>
 
@@ -285,12 +290,12 @@
                                             <FontIcon Glyph="&#xE90F;" />
                                         </controls:SettingsCard.HeaderIcon>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Open" Description="The worktree folder in Explorer, a terminal in it, or the editor set in Settings.">
+                                    <controls:SettingsCard Header="Open" Description="The worktree folder in your file manager, a terminal in it, or the editor set in Settings.">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xED25;" />
                                         </controls:SettingsCard.HeaderIcon>
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <local:IconButton MinWidth="124" Glyph="&#xED25;" Text="Folder" Tag="{x:Bind}" Click="Open_Click" ToolTipService.ToolTip="Open the worktree folder in Explorer." />
+                                            <local:IconButton MinWidth="124" Glyph="&#xED25;" Text="Folder" Tag="{x:Bind}" Click="Open_Click" ToolTipService.ToolTip="Open the worktree folder in your file manager: Explorer, or whatever has taken its place." />
                                             <local:IconButton MinWidth="124" Glyph="&#xE756;" Text="Terminal" Tag="{x:Bind}" Click="Terminal_Click" ToolTipService.ToolTip="Start Windows Terminal in the worktree. This is where an agent runs." />
                                             <local:IconButton MinWidth="124" Glyph="&#xE70F;" Text="Editor" Tag="{x:Bind}" Click="Editor_Click" ToolTipService.ToolTip="Open the worktree in the editor set in Settings, or the Windows default for a folder." />
                                         </StackPanel>

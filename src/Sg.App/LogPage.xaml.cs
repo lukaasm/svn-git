@@ -57,6 +57,8 @@ public sealed partial class LogPage : SgPage
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display);
         _filter.Picked += OnPicked;
         _filter.ExpectStats = true;
+        _commitFilter = new CommitFilter(CommitFilterBox, this);
+        _commitFilter.Changed += ShowCommits;
         _ = LoadAsync();
 
         static void Add(MenuFlyout menu, string name, string glyph, bool on, string label, string tip, Action run)
@@ -135,6 +137,9 @@ public sealed partial class LogPage : SgPage
 
     List<CommitRow> _branch = new();
     List<CommitRow> _snapshots = new();
+    readonly CommitFilter _commitFilter;
+    /// <summary>The list is being bound again, so an empty selection in the middle of it is not the user's doing.</summary>
+    bool _rebuilding;
 
     /// <summary>
     /// The snapshots under the branch are folded into one line until they are asked for. A branch sits
@@ -145,7 +150,19 @@ public sealed partial class LogPage : SgPage
 
     void ShowCommits()
     {
-        var list = new List<CommitRow>(_branch);
+        List<CommitRow> list;
+        if (_commitFilter.Active)
+        {
+            // A filter flattens the fold: a snapshot that matches is a line of its own, because the
+            // word typed may be an external's revision and that is exactly what a snapshot is titled with.
+            list = _commitFilter.Apply(_branch);
+            list.AddRange(_commitFilter.Apply(_snapshots));
+            CommitsHeader.Text = "Commits, " + CommitFilter.Showing(list.Count, _branch.Count + _snapshots.Count);
+            Bind(list);
+            return;
+        }
+        CommitsHeader.Text = "Commits on the branch, then the snapshots under it";
+        list = new List<CommitRow>(_branch);
         if (_snapshots.Count > 0)
         {
             var newest = _snapshots[0];
@@ -170,7 +187,22 @@ public sealed partial class LogPage : SgPage
             list.Add(header);
             if (_snapshotsOpen) list.AddRange(_snapshots);
         }
+        Bind(list);
+    }
+
+    /// <summary>
+    /// Puts a rebuilt list on screen. A new list has no selection, so the commit whose diff is on the
+    /// right is picked again when it is still on the list, and the right side is cleared when the
+    /// filter took it away: a diff of a commit that is not on the list would be a diff of nothing named.
+    /// </summary>
+    void Bind(List<CommitRow> list)
+    {
+        var keep = _currentSha.Length == 0 ? null : list.FirstOrDefault(r => r.Sha == _currentSha && !r.IsGroup);
+        _rebuilding = true;
         Commits.ItemsSource = list;
+        if (keep != null) Commits.SelectedItem = keep;
+        _rebuilding = false;
+        if (keep == null && _currentSha.Length > 0) NothingPicked();
         SyncRewriteButtons();
     }
 
@@ -203,17 +235,21 @@ public sealed partial class LogPage : SgPage
             : "Ctrl or Shift picks more than one.";
     }
 
-    /// <summary>The picked rows are one unbroken run of the list, with nothing left out in the middle.</summary>
+    /// <summary>
+    /// The picked rows are one unbroken run of the branch, with nothing left out in the middle. Against
+    /// the branch and not against the list on screen: with a filter on, two commits that sit next to
+    /// each other on the list may have a dozen between them that the filter hid.
+    /// </summary>
     bool Consecutive(List<CommitRow> picked)
     {
-        if (Commits.ItemsSource is not List<CommitRow> rows) return true;
-        var at = picked.Select(r => rows.IndexOf(r)).Where(i => i >= 0).OrderBy(i => i).ToList();
+        var at = picked.Select(r => _branch.IndexOf(r)).Where(i => i >= 0).OrderBy(i => i).ToList();
         if (at.Count != picked.Count) return false;
         return at[^1] - at[0] == at.Count - 1;
     }
 
     async void Commits_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_rebuilding) return;
         SyncRewriteButtons();
         // The details follow the line just clicked, which with several picked is the last one added.
         if ((e.AddedItems.LastOrDefault() ?? Commits.SelectedItem) is not CommitRow row)

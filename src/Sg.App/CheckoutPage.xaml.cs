@@ -101,7 +101,7 @@ public sealed partial class CheckoutPage : SgPage
         // path, so the toolbar takes the line the header does not have and keeps both in its tooltip.
         CoUrl.Text = row.Detail.Split('\n')[0];
         Tip(CoUrl, row.Detail);
-        Tip(FolderButton, "Open " + row.Path + " in Explorer.");
+        Tip(FolderButton, "Open " + row.Path + " in your file manager.");
         Tip(BackupButton, status.BackupUrl != null
             ? "What the backup repository holds, a branch back from it, and a backup now. " + status.BackupUrl
             : "No backup repository is set. Set its URL in Settings, and every branch, the uncommitted changes and the shelves go there as thin histories.");

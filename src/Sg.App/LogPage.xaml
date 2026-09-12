@@ -25,7 +25,12 @@
             <!-- The commits and the details take the height they need, up to a cap; the files get the rest.
                  A branch with seven commits used to leave half the column empty over a tree of seventy files. -->
             <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="6">
-                <TextBlock Text="Commits on the branch, then the snapshots under it" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBlock x:Name="CommitsHeader" Text="Commits on the branch, then the snapshots under it" Style="{StaticResource BodyStrongTextBlockStyle}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <TextBox x:Name="CommitFilterBox" Grid.Column="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12" MinWidth="200"
+                             ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. Every word typed has to be found. The snapshots are searched too." />
+                </Grid>
                 <!-- Both of these rewrite the branch's own commits, so neither touches a snapshot: those
                      are what SVN said, and the list refuses to pick one for them. -->
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">

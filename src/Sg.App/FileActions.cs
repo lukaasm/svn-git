@@ -45,7 +45,7 @@ public static class FileActions
             IsEnabled = parent != null && Directory.Exists(parent),
         };
         folder.Click += (_, _) => OpenFolder(path!);
-        ToolTipService.SetToolTip(folder, "Open the containing folder in Explorer, with the file selected.");
+        ToolTipService.SetToolTip(folder, "Show the file selected in its folder. A folder opens in your file manager.");
 
         var edit = new MenuFlyoutItem
         {
@@ -84,14 +84,21 @@ public static class FileActions
         catch (Exception ex) { Session.Log.Warn("cannot copy to the clipboard: " + ex.Message); }
     }
 
-    /// <summary>Explorer selects the file when it is there, and just opens the folder when it is not.</summary>
+    /// <summary>
+    /// A folder opens in whatever the shell opens folders with, the user's file manager included. A file
+    /// that is there is shown selected in its folder, which only Explorer knows how to do; one that is
+    /// gone opens the folder it was in.
+    /// </summary>
     public static void OpenFolder(string path)
     {
-        var exists = File.Exists(path) || Directory.Exists(path);
-        var target = exists ? path : Path.GetDirectoryName(path);
-        if (target == null) return;
-        var args = exists ? "/select,\"" + target + "\"" : "\"" + target + "\"";
-        Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true }, path);
+        if (Directory.Exists(path)) { Session.OpenInExplorer(path); return; }
+        if (File.Exists(path))
+        {
+            Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true }, path);
+            return;
+        }
+        var folder = Path.GetDirectoryName(path);
+        if (folder != null) Session.OpenInExplorer(folder);
     }
 
     public static void EditFile(string path) =>

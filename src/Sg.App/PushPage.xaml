@@ -37,9 +37,12 @@
                 <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
                     <!-- Pick where the push stops. The list is newest first, so picking a line sends
                          everything from the snapshot up to it and leaves the lines above it behind. -->
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                        <TextBlock x:Name="CommitsHeader" Text="Commits on the branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                        <Button x:Name="AllCommitsButton" Grid.Column="1" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock x:Name="CommitsHeader" Text="Commits on the branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBox x:Name="CommitFilterBox" Grid.Column="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12" MinWidth="200"
+                                 ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. It changes the list, never what gets pushed: the cut stays on the commit it was on." />
+                        <Button x:Name="AllCommitsButton" Grid.Column="2" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
                                 ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
                     </Grid>
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4" MaxHeight="260">

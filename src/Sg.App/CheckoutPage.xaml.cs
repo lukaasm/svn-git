@@ -90,6 +90,13 @@ public sealed partial class CheckoutPage : SgPage
         var co = status.Checkouts.First(c => c.Name == row.Name);
         CoName.Text = row.Name;
         CoRevision.Text = "r" + co.Revision;
+        // How long since the last sync, in the quiet voice; the exact time is one hover away. What the
+        // server has since then is the badge on the right, so this line says only when, not what.
+        CoSynced.Text = co.SnapshotTaken is { } taken ? "synced" + WorktreeRow.Ago(taken) : "never synced";
+        Tip(CoRevision, $"The snapshot svn/{row.Name} is at r{co.Revision}: the exact SVN state every branch of this checkout is built on.");
+        Tip(CoSynced, co.SnapshotTaken is { } t
+            ? $"The snapshot was taken {t.LocalDateTime:yyyy-MM-dd HH:mm}, the last time this checkout was synced. Sync takes a new one from the server."
+            : "No snapshot has been taken yet. Sync takes the first one.");
         // Detail is the URL and the path, one per line. The header over the page already writes the
         // path, so the toolbar takes the line the header does not have and keeps both in its tooltip.
         CoUrl.Text = row.Detail.Split('\n')[0];
@@ -474,6 +481,29 @@ public sealed partial class CheckoutPage : SgPage
 
     void OpenCommit(WorktreeRow row) =>
         Go(() => new CommitPage(row.Path) { Checkout = row.Base, Branch = row.Branch }, "commit:" + row.Path);
+
+    /// <summary>The left half of a card's Commit split button: the same page the plain button opened.</summary>
+    void WorktreeCommit_Click(SplitButton sender, SplitButtonClickEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row != null) OpenCommit(row);
+    }
+
+    /// <summary>
+    /// The right half: every uncommitted change in the worktree, out of it and onto the shelf, without
+    /// going to the page first. Nothing is picked from a list because the reason to do this from here is
+    /// that a rebase or a push wants the worktree clean, and half of it clean would not do.
+    /// </summary>
+    async void WorktreeShelveAll_Click(object sender, RoutedEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row == null) return;
+        var what = row.DirtyFiles == 0 ? $"the uncommitted changes in {row.Branch}" : $"the {row.DirtyFiles} change(s) in {row.Branch}";
+        var r = await ShelfActions.SaveAsync(this, Pane, row.Path, null, what, "worktree changes");
+        if (r == null) return;
+        _owner.BackupSoon();
+        await _owner.RefreshAsync();
+    }
 
     void OpenLog(WorktreeRow row) =>
         Go(() => new LogPage(row.Path) { Checkout = row.Base, Branch = row.Branch }, "log:" + row.Path);

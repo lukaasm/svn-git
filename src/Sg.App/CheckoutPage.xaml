@@ -8,6 +8,10 @@
          be selected at a time, so its name, its state and everything it can do are the page's own toolbar
          and stay put. The worktrees keep the shape Windows Settings gives a category: a card each, the one
          action on its right, and the rest behind its chevron. -->
+    <local:SgPage.Resources>
+        <!-- The widest word a card button carries is "Resolve conflicts", with room around it. -->
+        <x:Double x:Key="CardActionWidth">196</x:Double>
+    </local:SgPage.Resources>
     <Grid RowDefinitions="*,Auto">
       <!-- One cap around the toolbar and the list together, so they are centred as one thing. Capping and
            centring them separately looked identical and was not: the toolbar was centred in the page and
@@ -21,16 +25,20 @@
         <!-- The page toolbar. Two rows: what this checkout is and the one thing to do about it, then
              every other thing it can do. Both were a card that scrolled away with the worktrees. -->
         <StackPanel x:Name="CheckoutBar" Grid.Row="0" Visibility="Collapsed">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="10">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="10">
                 <FontIcon Glyph="&#xE8B7;" FontSize="16" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" x:Name="CoName" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="2" x:Name="CoRevision" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <!-- The URL, because the header over the page already writes the name and the path. -->
-                <TextBlock Grid.Column="3" x:Name="CoUrl" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <!-- When the snapshot was taken, which is when the checkout was last synced. The exact time
+                     and what a sync does are in its tooltip; the row only says how long ago. -->
+                <TextBlock Grid.Column="3" x:Name="CoSynced" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <TextBlock Grid.Column="4" x:Name="CoUrl" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 <!-- What the server says, and the one thing to do about it: the same two, in the same
                      order, that every worktree card puts on the right of its own header. -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <ProgressRing x:Name="CoRemoteRing" Width="14" Height="14" MinWidth="14" MinHeight="14" IsActive="True" VerticalAlignment="Center"
                                   ToolTipService.ToolTip="Asking the SVN server for new commits." />
                     <local:StatusChip x:Name="CoRemoteBadge" Severity="Caution" Glyph="&#xE896;" Visibility="Collapsed"
@@ -151,9 +159,10 @@
                                  does it. Open, it is every other thing a worktree can do. A worktree with nothing to
                                  say keeps all of that but steps back, so the card that is asking is the one the eye lands on. -->
                             <controls:SettingsExpander Margin="0,0,0,4" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" Opacity="{x:Bind CardOpacity, Mode=OneWay}">
-                                <controls:SettingsExpander.HeaderIcon>
-                                    <FontIcon Glyph="{x:Bind NextGlyph, Mode=OneWay}" Foreground="{x:Bind NextBrush, Mode=OneWay}" />
-                                </controls:SettingsExpander.HeaderIcon>
+                                <!-- No icon on the left: the chips on the right already wear the glyph and the colour of
+                                     every state, and a glyph that repeated the loudest of them was the same fact twice.
+                                     The sentence that used to run under the name is the first row inside the card, so
+                                     the closed card is one line. -->
                                 <controls:SettingsExpander.Header>
                                     <!-- A small badge on the left of the name is the whole backup story on the card: grey
                                          when the backup is current, amber when commits wait or none ever went. The words
@@ -166,22 +175,14 @@
                                                    TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Branch}" />
                                     </StackPanel>
                                 </controls:SettingsExpander.Header>
-                                <controls:SettingsExpander.Description>
-                                    <!-- The badges say what is true. This says what to do about it.
-                                         One line, trimmed, never wrapped: it is the width left over after the
-                                         badges, and the badges change. A wrapping line turned every chip that
-                                         arrived - the size walk's "12.4 GB copied", the idle chip - into a second
-                                         line on that card and a shove downwards for every card under it. The
-                                         sentence is short by construction, and the tooltip has all of it. -->
-                                    <TextBlock Text="{x:Bind NextAction, Mode=OneWay}" Foreground="{x:Bind NextTextBrush, Mode=OneWay}"
-                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
-                                               ToolTipService.ToolTip="{x:Bind NextAction, Mode=OneWay}" />
-                                </controls:SettingsExpander.Description>
-                                <!-- The right of the header: the badges that say what is true, then exactly one button, the one
-                                     NextAction names. The card measures its header at no width limit, so a row that wraps
-                                     cannot live there; here the width is its own and a badge never lands on the line below. -->
+                                <!-- The right of the header: a chip per fact, each a glyph and a number with the words one
+                                     hover away, then exactly one button, the thing to do about them. Every fact is on the
+                                     card once. A chip that said "4 uncommitted files" under a line that said "4 files not
+                                     committed" beside a button that said Commit was one fact three times over, and the
+                                     row ran out of width for it. The card measures its header at no width limit, so a
+                                     row that wraps cannot live there; here the width is its own. -->
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <local:StatusChip Severity="Neutral" Glyph="&#xE74D;" Text="nothing to push, idle" Visibility="{x:Bind ReclaimVisibility, Mode=OneWay}"
+                                    <local:StatusChip Severity="Neutral" Glyph="&#xE74D;" Visibility="{x:Bind ReclaimVisibility, Mode=OneWay}"
                                                       ToolTipService.ToolTip="Nothing here is waiting to be pushed and nobody has touched it for weeks. Removing it gives the disk space back; what was pushed stays in SVN." />
                                     <!-- Beside the reclaim chip because both are about the disk rather than about
                                          the work: this one says the shared folders were copied in full, and that a
@@ -189,25 +190,52 @@
                                     <local:StatusChip Severity="{x:Bind CopiedSeverity, Mode=OneWay}" Glyph="&#xE8C8;" Text="{x:Bind CopiedText, Mode=OneWay}"
                                                       Visibility="{x:Bind CopiedVisibility, Mode=OneWay}"
                                                       ToolTipService.ToolTip="{x:Bind CopiedTip, Mode=OneWay}" />
-                                    <local:StatusChip Severity="Caution" Glyph="&#xE896;" Text="{x:Bind BehindText, Mode=OneWay}" Visibility="{x:Bind BehindVisibility, Mode=OneWay}"
-                                                      ToolTipService.ToolTip="The snapshot moved since this branch was made or last rebased. Rebase to build on the latest SVN state." />
-                                    <local:StatusChip Severity="Critical" Glyph="&#xE7BA;" Text="{x:Bind ConflictText, Mode=OneWay}" Visibility="{x:Bind ResolveVisibility, Mode=OneWay}"
-                                                      ToolTipService.ToolTip="A rebase or an import stopped on conflicts. Use Resolve to pick a version for each file, then continue." />
-                                    <local:StatusChip Severity="Critical" Glyph="&#xE898;" Text="not pushed yet" Visibility="{x:Bind PendingVisibility, Mode=OneWay}"
+                                    <local:StatusChip Severity="Caution" Glyph="&#xE896;" Count="{x:Bind Behind, Mode=OneWay}" Visibility="{x:Bind BehindVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="{x:Bind BehindTip, Mode=OneWay}" />
+                                    <local:StatusChip Severity="Critical" Glyph="&#xE7BA;" Count="{x:Bind Conflicts, Mode=OneWay}" Visibility="{x:Bind ResolveVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="{x:Bind ConflictTip, Mode=OneWay}" />
+                                    <local:StatusChip Severity="Critical" Glyph="&#xE898;" Visibility="{x:Bind PendingVisibility, Mode=OneWay}"
                                                       ToolTipService.ToolTip="A push stopped half way. The branch keeps the part that did not reach SVN. Fix the cause and push again." />
-                                    <local:StatusChip Severity="Neutral" Glyph="&#xE7B8;" Text="{x:Bind ShelvedText, Mode=OneWay}" Visibility="{x:Bind ShelvedVisibility, Mode=OneWay}"
-                                                      ToolTipService.ToolTip="Changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back." />
-                                    <!-- The backup badge is on the left of the branch name now, not here: it is a lasting
+                                    <local:StatusChip Severity="Neutral" Glyph="&#xE7B8;" Count="{x:Bind Shelves, Mode=OneWay}" Visibility="{x:Bind ShelvedVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="{x:Bind ShelvedTip, Mode=OneWay}" />
+                                    <!-- The backup badge is on the left of the branch name, not here: it is a lasting
                                          property of the branch, not one of the things to do about it that this row lists. -->
-                                    <local:StatusChip Severity="Attention" Glyph="&#xE70F;" Text="{x:Bind DirtyText, Mode=OneWay}" Visibility="{x:Bind DirtyVisibility, Mode=OneWay}"
-                                                      ToolTipService.ToolTip="The worktree has changes that are not committed. Commit or discard them before a rebase or a push." />
-                                    <local:StatusChip Severity="Critical" Glyph="&#xEA39;" Text="folder missing" Visibility="{x:Bind MissingVisibility, Mode=OneWay}"
+                                    <local:StatusChip Severity="Attention" Glyph="&#xE70F;" Count="{x:Bind DirtyFiles, Mode=OneWay}" Visibility="{x:Bind DirtyVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="{x:Bind DirtyTip, Mode=OneWay}" />
+                                    <!-- Green when a push is the thing to do, plain while something else comes first. -->
+                                    <local:StatusChip Severity="{x:Bind AheadSeverity, Mode=OneWay}" Glyph="&#xE898;" Count="{x:Bind Ahead, Mode=OneWay}" Visibility="{x:Bind AheadVisibility, Mode=OneWay}"
+                                                      ToolTipService.ToolTip="{x:Bind AheadTip, Mode=OneWay}" />
+                                    <local:StatusChip Severity="Critical" Glyph="&#xEA39;" Visibility="{x:Bind MissingVisibility, Mode=OneWay}"
                                                       ToolTipService.ToolTip="The worktree folder is gone from disk. Remove the branch, or restore the folder." />
-                                    <local:IconButton Glyph="{x:Bind PrimaryGlyph, Mode=OneWay}" Text="{x:Bind PrimaryText, Mode=OneWay}" Style="{x:Bind PrimaryStyle, Mode=OneWay}"
+                                    <!-- One width for the button on every card, whatever word is on it, so the buttons line up
+                                         down the right edge and the chips end on one line: a Commit that was wider than the
+                                         Push to SVN under it pushed its own chips left of its neighbours'. -->
+                                    <!-- Commit is a split button, like the checkout's own: the left half opens the commit
+                                         page and the right half shelves the same changes without it. Every other primary
+                                         action is a plain button, so the card holds both and shows the one its state calls for. -->
+                                    <local:AccentSplitButton MinWidth="{StaticResource CardActionWidth}" Visibility="{x:Bind SplitVisibility, Mode=OneWay}" Tag="{x:Bind}" Click="WorktreeCommit_Click"
+                                                             AutomationProperties.Name="Commit" ToolTipService.ToolTip="{x:Bind PrimaryTip, Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="14" />
+                                            <TextBlock Text="Commit" />
+                                        </StackPanel>
+                                        <local:AccentSplitButton.Flyout>
+                                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                <MenuFlyoutItem Text="Shelve the uncommitted changes" Tag="{x:Bind}" Click="WorktreeShelveAll_Click"
+                                                                ToolTipService.ToolTip="Take every uncommitted change out of the worktree and keep it, to put back later. The branch is left clean for a rebase or a push.">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon Glyph="&#xE7B8;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                            </MenuFlyout>
+                                        </local:AccentSplitButton.Flyout>
+                                    </local:AccentSplitButton>
+                                    <local:IconButton MinWidth="{StaticResource CardActionWidth}" Glyph="{x:Bind PrimaryGlyph, Mode=OneWay}" Text="{x:Bind PrimaryText, Mode=OneWay}" Style="{x:Bind PrimaryStyle, Mode=OneWay}"
+                                                      Visibility="{x:Bind PlainVisibility, Mode=OneWay}"
                                                       Tag="{x:Bind}" Click="Primary_Click" ToolTipService.ToolTip="{x:Bind PrimaryTip, Mode=OneWay}" />
                                 </StackPanel>
                                 <controls:SettingsExpander.Items>
-                                    <controls:SettingsCard Header="{x:Bind Distance, Mode=OneWay}" Description="{x:Bind Path}">
+                                    <controls:SettingsCard Header="{x:Bind NextAction, Mode=OneWay}" Description="{x:Bind Path}">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE8B7;" />
                                         </controls:SettingsCard.HeaderIcon>

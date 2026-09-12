@@ -20,7 +20,27 @@ namespace Sg.App;
 /// </summary>
 public sealed class AccentSplitButton : SplitButton
 {
-    public AccentSplitButton() => Resources.MergedDictionaries.Add(new AccentSplitButtonResources());
+    public AccentSplitButton()
+    {
+        Resources.MergedDictionaries.Add(new AccentSplitButtonResources());
+        IsEnabledChanged += (_, _) => { if (IsEnabled) Retemplate(); };
+    }
+
+    /// <summary>
+    /// The stock template greys a disabled SplitButton through the two Buttons inside it: their Disabled
+    /// state paints the disabled background and foreground onto their own root grid and presenter. In
+    /// WinUI a state setter that took a ThemeResource is not taken back when the state is left, so the
+    /// button that was disabled while the checkout was read came back enabled and still wearing the
+    /// disabled paint: a see-through face and grey words on a button that worked. Building the template
+    /// again makes the inner buttons fresh, in Normal from the start.
+    /// </summary>
+    void Retemplate()
+    {
+        var template = Template;
+        if (template == null) return;
+        Template = null;
+        Template = template;
+    }
 }
 
 /// <summary>

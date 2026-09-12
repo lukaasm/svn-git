@@ -40,6 +40,8 @@ public sealed class CheckoutStatus
     public string Url = "";
     public long Revision;
     public string Snapshot = "";
+    /// <summary>When the snapshot was taken: the last sync. Null before the first one.</summary>
+    public DateTimeOffset? SnapshotTaken;
     public int? LocalEdits;
     /// <summary>Sets of local changes put aside from this checkout, waiting to be taken back.</summary>
     public int Shelves;
@@ -1020,6 +1022,7 @@ public static class Ops
             if (refs.TryGetValue(root.SnapshotRef(co), out var snap))
             {
                 cs.Snapshot = snap.Sha;
+                cs.SnapshotTaken = snap.Committed;
                 var meta = SnapshotMeta.Parse(snap.Message);
                 cs.Revision = meta.Revision;
                 cs.Externals = meta.Externals.Select(kv => new ExternalInfo(kv.Key, kv.Value, "")).ToList();

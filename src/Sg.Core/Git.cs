@@ -26,8 +26,8 @@ public enum Replay
 /// <summary>Where a stopped replay got to: patch 3 of 20, and the subject of the one it stopped on.</summary>
 public sealed record ReplayProgress(int At, int Of, string Subject);
 
-/// <summary>A ref read in bulk: its commit and that commit's whole message.</summary>
-public sealed record RefInfo(string Sha, string Message)
+/// <summary>A ref read in bulk: its commit, that commit's whole message, and when it was committed.</summary>
+public sealed record RefInfo(string Sha, string Message, DateTimeOffset? Committed = null)
 {
     public string Subject
     {
@@ -165,16 +165,18 @@ public sealed class Git
     /// </summary>
     public Dictionary<string, RefInfo> RefIndex(params string[] prefixes)
     {
-        var a = new List<string> { "for-each-ref", "--format=%(refname)%1f%(objectname)%1f%(contents)%1e" };
+        var a = new List<string> { "for-each-ref", "--format=%(refname)%1f%(objectname)%1f%(committerdate:unix)%1f%(contents)%1e" };
         a.AddRange(prefixes);
         var r = Ok(null, a.ToArray());
         var res = new Dictionary<string, RefInfo>(StringComparer.Ordinal);
         foreach (var record in r.StdOut.Split('\x1e'))
         {
-            // Three fields at most, so a separator inside a commit message stays part of the message.
-            var p = record.TrimStart('\n', '\r').Split('\x1f', 3);
-            if (p.Length < 3 || p[0].Length == 0) continue;
-            res[p[0]] = new RefInfo(p[1], p[2]);
+            // Four fields at most, so a separator inside a commit message stays part of the message.
+            var p = record.TrimStart('\n', '\r').Split('\x1f', 4);
+            if (p.Length < 4 || p[0].Length == 0) continue;
+            // A tag or a tree has no committer, and the field comes back empty for it.
+            DateTimeOffset? when = long.TryParse(p[2], out var unix) ? DateTimeOffset.FromUnixTimeSeconds(unix) : null;
+            res[p[0]] = new RefInfo(p[1], p[3], when);
         }
         return res;
     }

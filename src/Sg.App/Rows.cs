@@ -196,7 +196,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// <summary>Big enough to be worth a word. Under the threshold a copy is cheaper than the sentence about it.</summary>
     public Visibility CopiedVisibility => _copied >= DiskUsage.CopyWarnBytes ? Visibility.Visible : Visibility.Collapsed;
 
-    public string CopiedText => DiskUsage.Human(_copied) + " copied";
+    /// <summary>The amount alone. The glyph says it is a copy and the tooltip says of what.</summary>
+    public string CopiedText => DiskUsage.Human(_copied);
 
     /// <summary>
     /// Caution while there is something to do about it, Neutral when there is not. This volume cannot
@@ -264,7 +265,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
             ? "This branch has never been sent to the backup repository. The timer sends it, or open Backup on the checkout."
             : "Commits on this branch that the backup does not hold yet. The timer sends them, or open Backup on the checkout.";
 
-    static string Ago(DateTimeOffset? when)
+    /// <summary>" just now", " 5 min ago", " 3 h ago", " 4 days ago", with the leading space; empty for null.</summary>
+    internal static string Ago(DateTimeOffset? when)
     {
         if (when == null) return "";
         var d = DateTimeOffset.Now - when.Value;
@@ -287,13 +289,14 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// </summary>
     static readonly string[] Painted =
     {
-        nameof(CardOpacity), nameof(NextGlyph), nameof(NextBrush), nameof(NextAction), nameof(NextTextBrush),
-        nameof(BehindText), nameof(BehindVisibility), nameof(ConflictText), nameof(ResolveVisibility),
-        nameof(PendingVisibility), nameof(ShelvedText), nameof(ShelvedVisibility), nameof(ShelvedDescription),
-        nameof(DirtyText), nameof(DirtyVisibility), nameof(MissingVisibility), nameof(RebaseVisibility),
+        nameof(CardOpacity), nameof(NextAction),
+        nameof(Behind), nameof(BehindTip), nameof(BehindVisibility), nameof(Conflicts), nameof(ConflictTip), nameof(ResolveVisibility),
+        nameof(PendingVisibility), nameof(Shelves), nameof(ShelvedTip), nameof(ShelvedVisibility), nameof(ShelvedDescription),
+        nameof(DirtyFiles), nameof(DirtyTip), nameof(DirtyVisibility), nameof(MissingVisibility), nameof(RebaseVisibility),
+        nameof(Ahead), nameof(AheadTip), nameof(AheadSeverity), nameof(AheadVisibility),
         nameof(BackupText), nameof(BackupVisibility), nameof(BackupSeverity), nameof(BackupTip),
         nameof(PrimaryGlyph), nameof(PrimaryText), nameof(PrimaryStyle), nameof(PrimaryTip),
-        nameof(Distance), nameof(PushEnabled), nameof(PushStyle),
+        nameof(SplitVisibility), nameof(PlainVisibility), nameof(PushEnabled), nameof(PushStyle),
     };
 
     /// <summary>
@@ -341,7 +344,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Every worked-out property again, from the top. Also what a Windows theme switch needs: NextBrush,
+    /// Every worked-out property again, from the top. Also what a Windows theme switch needs: AheadSeverity,
     /// PrimaryStyle and their like hand back a brush or a style taken out of the app's resources, and the
     /// one they took belongs to the theme that was on at the time. Nothing re-reads them on its own.
     /// </summary>
@@ -373,23 +376,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
 
     public Style? PushStyle => PushReady ? Application.Current.Resources["AccentButtonStyle"] as Style : null;
 
-    /// <summary>The revision the snapshot this branch was born from is at. The card names it once.</summary>
+    /// <summary>The revision the snapshot this branch was born from is at. The bar over the cards names it.</summary>
     public long BaseRevision { get; set; }
-
-    /// <summary>
-    /// Where the branch sits against its snapshot, as one line. The overview used to say only how far
-    /// ahead it was, which is half the relationship and never the half that asks for something.
-    /// </summary>
-    public string Distance
-    {
-        get
-        {
-            var s = "svn/" + Base + " r" + BaseRevision;
-            if (Behind > 0) s += "  \u00b7  " + Behind + " behind";
-            if (Ahead > 0) s += "  \u00b7  " + Ahead + " ahead";
-            return s;
-        }
-    }
 
     /// <summary>
     /// What this worktree wants next, in one sentence. The badges say what is true; this says what to
@@ -477,42 +465,42 @@ public sealed class WorktreeRow : INotifyPropertyChanged
 
     public double CardOpacity => Wants ? 1.0 : 0.7;
 
-    public string NextGlyph => Rank switch
-    {
-        1 => "\uEA39",
-        2 => "\uE7BA",
-        3 or 7 => "\uE898",
-        4 or 5 => "\uE70F",
-        6 => "\uE896",
-        _ => "\uE73E",
-    };
+    /// <summary>"1 file" or "N files": the tracked changes waiting for a commit. Untracked ones are not counted.</summary>
+    string DirtyFilesText => DirtyFiles == 0 ? "new files" : DirtyFiles == 1 ? "1 file" : $"{DirtyFiles} files";
 
-    public Brush? NextBrush => Res(
-        Rank <= 3 ? "SystemFillColorCriticalBrush"
-        : Rank <= 5 ? "SystemFillColorAttentionBrush"
-        : Rank == 6 ? "SystemFillColorCautionBrush"
-        : Rank == 7 ? "SystemFillColorSuccessBrush"
-        : "TextFillColorTertiaryBrush");
-
-    /// <summary>A settled card keeps its buttons but says its one line in the quieter voice.</summary>
-    public Brush? NextTextBrush => Res(Wants ? "TextFillColorPrimaryBrush" : "TextFillColorSecondaryBrush");
-
-    static Brush? Res(string key) =>
-        Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush ? brush : null;
-
-    /// <summary>"1 file" or "N files": the tracked changes waiting for a commit.</summary>
-    string DirtyFilesText => DirtyFiles == 1 ? "1 file" : $"{DirtyFiles} files";
-    public string DirtyText => DirtyFiles == 1 ? "1 uncommitted file" : $"{DirtyFiles} uncommitted files";
-    public string BehindText => Behind == 1 ? "1 snapshot behind, rebase" : $"{Behind} snapshots behind, rebase";
-    public string ConflictText => Conflicts == 1
-        ? $"{StoppedVerb} stopped, 1 file in conflict"
-        : $"{StoppedVerb} stopped, {Conflicts} files in conflict";
+    // The chips on the card carry a glyph and a number and nothing else; the words are here, one hover
+    // away. A chip that said "4 uncommitted files" beside a line that said "4 files not committed" and a
+    // button that said Commit was one fact three times over, and the row ran out of width for it.
+    public string DirtyTip => DirtyFiles == 0
+        ? "Files that are not tracked yet. Commit adds them to the branch; Discard deletes them."
+        : $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} changed and not committed. Commit or discard them before a rebase or a push, or shelve them for later.";
+    public string BehindTip => (Behind == 1 ? "1 snapshot" : $"{Behind} snapshots")
+        + " taken since this branch was made or last rebased. Rebase to build on the latest SVN state.";
+    public string ConflictTip => $"The {StoppedVerb} stopped on {(Conflicts == 1 ? "1 file" : $"{Conflicts} files")} in conflict. "
+        + "Use Resolve to pick a version for each, then continue.";
+    public string ShelvedTip => (Shelves == 1 ? "1 set" : $"{Shelves} sets")
+        + " of changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back.";
+    public string AheadTip => (Ahead == 1 ? "1 commit" : $"{Ahead} commits")
+        + " on the branch that SVN does not have. Push to SVN sends them, one svn commit per repository"
+        + (Dirty ? ", once the uncommitted changes are committed, discarded or shelved."
+            : RebaseInProgress ? $", once the {StoppedVerb} is finished."
+            : ".");
+    /// <summary>Green when a push is the thing to do; plain while something else has to happen first.</summary>
+    public ChipSeverity AheadSeverity => PushReady ? ChipSeverity.Success : ChipSeverity.Neutral;
+    public Visibility AheadVisibility => Ahead > 0 && !Missing ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BehindVisibility => Behind > 0 && !RebaseInProgress ? Visibility.Visible : Visibility.Collapsed;
     public Visibility RebaseVisibility => RebaseInProgress ? Visibility.Collapsed : Visibility.Visible;
     public Visibility ResolveVisibility => RebaseInProgress ? Visibility.Visible : Visibility.Collapsed;
     public Visibility PendingVisibility => Pending ? Visibility.Visible : Visibility.Collapsed;
     public Visibility DirtyVisibility => Dirty ? Visibility.Visible : Visibility.Collapsed;
     public Visibility MissingVisibility => Missing ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>
+    /// Commit is a split button whose other half shelves the same changes. Every other primary action
+    /// is a plain button, so the card holds both and shows the one its state calls for.
+    /// </summary>
+    public Visibility SplitVisibility => Primary == WorktreeAction.Commit ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility PlainVisibility => Primary == WorktreeAction.Commit ? Visibility.Collapsed : Visibility.Visible;
 }
 
 /// <summary>

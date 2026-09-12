@@ -51,7 +51,13 @@ public sealed class MessageDialog : ContentDialog
         panel.Children.Add(_extra);
         Content = panel;
         _box.TextChanged += (_, _) => Sync();
-        Opened += (_, _) => _box.Focus(FocusState.Programmatic);
+        // The caret goes after whatever is in the box: the prefix the page put there, or the message
+        // being amended. At the start it sat in front of the text, and the first letter typed went there.
+        Opened += (_, _) =>
+        {
+            _box.Focus(FocusState.Programmatic);
+            _box.SelectionStart = _box.Text.Length;
+        };
         // Ctrl+Enter inside is the dialog's own button. The dialog is a popup of its own, so the key sits
         // on its panel, where it reaches it while the box has the focus. Hide answers None, so the yes
         // travels in _confirmed.

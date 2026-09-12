@@ -447,6 +447,12 @@ public sealed partial class CommitPage : SgPage
         Message.Confirm = amending
             ? () => "This replaces the last commit on " + Branch + ". Do it only if nobody has it yet. Continue?"
             : null;
+        // An empty box starts with the prefix the last commit on this branch carried, "gui: " say, with
+        // the caret after it. The branch's own last commit only: a snapshot is titled "Fort r266" and
+        // has none, so a fresh branch starts empty. Delete it and it stays deleted for this showing;
+        // the box keeps its text between showings, so only an empty one is filled.
+        if (!amending && Message.Text.Trim().Length == 0 && Msg.Prefix(_lastMessage) is { } prefix)
+            Message.Text = prefix + " ";
         if (!await Message.AskAsync()) return;
         var root = Session.Require();
         var picked = Checked();

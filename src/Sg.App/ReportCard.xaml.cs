@@ -39,6 +39,23 @@ public sealed class ReportRow
     public string What { get; }
     public string Detail { get; }
     public string Tip { get; }
+
+    /// <summary>The words on the row's one button. Empty is no button.</summary>
+    public string ActionText { get; init; } = "";
+    /// <summary>What the button does. The page it runs on reports the result.</summary>
+    public Func<Task>? Action { get; init; }
+    public Visibility ActionVisibility => Action != null && ActionText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    bool _acting;
+
+    /// <summary>The button was pressed. A second press while the first is still running does nothing.</summary>
+    public async void Act()
+    {
+        if (Action == null || _acting) return;
+        _acting = true;
+        try { await Action(); }
+        finally { _acting = false; }
+    }
 }
 
 /// <summary>

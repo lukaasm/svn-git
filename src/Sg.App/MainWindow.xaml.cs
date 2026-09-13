@@ -304,7 +304,7 @@ public sealed partial class MainWindow : Window
                     new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
             else if (quiet && freshBehind.Count > 0)
                 Notifications.Show("A newer backup for " + string.Join(", ", freshBehind),
-                    "The backup holds newer work than this machine has for it. Open Backup on the checkout to restore it here.",
+                    "The backup holds newer work than this machine has for it, sent from another machine. Open Backup on the checkout and pull it.",
                     Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
                     new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
             await RefreshAsync();

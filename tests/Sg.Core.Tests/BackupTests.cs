@@ -608,6 +608,113 @@ public sealed class BackupTests : IDisposable
         Assert.False(failed.Ok);
     }
 
+    /// <summary>
+    /// Two machines working one branch through the backup. The laptop restores it and commits; home, which
+    /// never saw that commit, is behind rather than refused, and pull puts it onto home's own branch without
+    /// making the worktree again. Then both hold the same work under other hashes, and neither sends anything.
+    /// </summary>
+    [Fact]
+    public void TwoMachines_SyncOneBranch_ThroughTheBackup()
+    {
+        f.Setup();
+        var git = f.Root.Git;
+        var wt = MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        var far = Far();
+        var there = Backup.Restore(far.Root, "feature-x");
+        Assert.True(there.Ok, there.Why);
+        Fixture.Put(there.Path, "fort/dev/new/file.txt", "brand new\nfrom the laptop\n");
+        far.Root.Git.Ok(there.Path, "commit", "-q", "-am", "third: from the laptop");
+        Assert.Equal("pushed", Item(Backup.Run(far.Root), "branch", "feature-x").State);
+
+        var home = Item(Backup.Run(f.Root), "branch", "feature-x");
+        Assert.True(home.Behind, home.State + " " + home.Why);
+        Assert.Contains("third: from the laptop", home.Why);
+
+        // A file home has not committed stays where it is through the pull.
+        Fixture.Put(wt, "fort/dev/notes.txt", "mine, not committed\n");
+        var pulled = Backup.Pull(f.Root, "feature-x");
+        Assert.True(pulled.Ok, pulled.Why);
+        Assert.Equal(1, pulled.Applied);
+        Assert.Equal(wt, pulled.Path);
+        Assert.Equal("brand new\nfrom the laptop\n", Read(wt, "fort/dev/new/file.txt"));
+        Assert.Equal("mine, not committed\n", Read(wt, "fort/dev/notes.txt"));
+        Assert.Equal(3, git.CountCommits(f.Root.SnapshotRef(f.Co), "refs/heads/feature-x"));
+
+        var remoteTip = RemoteGit("rev-parse", "refs/heads/feature-x").Trim();
+        Assert.Equal("up to date", Item(Backup.Run(f.Root), "branch", "feature-x").State);
+        Assert.Equal("up to date", Item(Backup.Run(far.Root), "branch", "feature-x").State);
+        Assert.Equal(remoteTip, RemoteGit("rev-parse", "refs/heads/feature-x").Trim());
+        Assert.Equal(0, Ops.Status(f.Root, checkSvn: false).Worktrees.Single().NotBackedUp);
+    }
+
+    /// <summary>
+    /// The laptop's work in progress is its own. A clean branch at home used to delete it from the remote on
+    /// the next backup, as if home had committed it; now it stays, home is told it is behind, and pull writes
+    /// it into home's folder. After that both folders hold the same changes and nothing goes either way.
+    /// </summary>
+    [Fact]
+    public void AnotherMachinesUncommittedChanges_SurviveACleanBranchHere_AndPullBringsThem()
+    {
+        f.Setup();
+        var wt = MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        var far = Far();
+        var there = Backup.Restore(far.Root, "feature-x");
+        Assert.True(there.Ok, there.Why);
+        Fixture.Put(there.Path, "schmetterling/engine.cpp", "int engine = 7; // laptop, not committed\n");
+        Assert.Equal("pushed", Item(Backup.Run(far.Root), "wip", "feature-x").State);
+
+        var home = Backup.Run(f.Root);
+        Assert.Equal("up to date", Item(home, "branch", "feature-x").State);
+        var wip = Item(home, "wip", "feature-x");
+        Assert.True(wip.Behind, wip.State + " " + wip.Why);
+        Assert.Contains("refs/sg/wip/feature-x", RemoteGit("ls-remote", "--refs", _remote));
+
+        var pulled = Backup.Pull(f.Root, "feature-x");
+        Assert.True(pulled.Ok, pulled.Why);
+        Assert.True(pulled.WipWritten, pulled.WipShelf);
+        Assert.Equal("int engine = 7; // laptop, not committed\n", Read(wt, "schmetterling/engine.cpp"));
+
+        Assert.True(Backup.Run(f.Root).Ok);
+        Assert.Equal("up to date", Item(Backup.Run(far.Root), "wip", "feature-x").State);
+        Assert.Contains("refs/sg/wip/feature-x", RemoteGit("ls-remote", "--refs", _remote));
+    }
+
+    /// <summary>Force names what it writes over: the one item, under the lease of what was just read, and nothing else.</summary>
+    [Fact]
+    public void ForceOnly_WritesOverTheNamedItem_AndLeavesTheOtherRefused()
+    {
+        f.Setup();
+        MakeBranch("feature-x");
+        MakeBranch("feature-y");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        var far = Far();
+        foreach (var name in new[] { "feature-x", "feature-y" })
+        {
+            var fwt = Ops.Branch(far.Root, name, far.Co).Path;
+            Fixture.Put(fwt, "schmetterling/engine.cpp", $"int engine = 99; // the laptop's own {name}\n");
+            far.Root.Git.Ok(fwt, "add", "-A");
+            far.Root.Git.Ok(fwt, "commit", "-q", "-m", "the laptop's own " + name);
+        }
+        var r = Backup.Run(far.Root);
+        Assert.True(Item(r, "branch", "feature-x").Rejected);
+        Assert.True(Item(r, "branch", "feature-y").Rejected);
+        Assert.Contains("--force --only branch/feature-x", Item(r, "branch", "feature-x").Why);
+
+        var homeY = RemoteGit("rev-parse", "refs/heads/feature-y").Trim();
+        var forced = Backup.Run(far.Root, force: true, only: ["branch/feature-x"]);
+        Assert.Equal("pushed", Item(forced, "branch", "feature-x").State);
+        Assert.True(Item(forced, "branch", "feature-y").Rejected);
+        Assert.Equal(homeY, RemoteGit("rev-parse", "refs/heads/feature-y").Trim());
+    }
+
     [Fact]
     public void Set_RefusesAUrlThatIsNotARepository()
     {

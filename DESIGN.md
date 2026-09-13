@@ -324,6 +324,25 @@ name when the worktrees live elsewhere, and git cannot hold a ref beside a folde
 goes as `refs/sg/shelf/<id>` the same way, above whatever its parent became. A worktree that is clean again takes its wip off the remote with the next backup, so a restore never
 brings back work that was committed since. `--no-uncommitted` on `sg backup set` sends only what was committed.
 
+**Between machines.** A backup is also how work moves from one machine to another: restored on the laptop, carried
+on there, sent back. A restore replays commits, and a rebase rewrites them, so the copy a second machine sends never
+shares a hash with the branch here, and reading it by lineage alone called every such copy another machine's work -
+refused, or taken with `--force`. `BackupSync.cs` adds two readings. A commit is also known by its author email, its
+author date and its message, which a replay and a rebase both keep; a branch against its copy is then Ahead when the
+copy's commits are the first of this branch's, Behind when this branch's are the first of the copy's, Same when they
+are the same commits and every file the thin tree holds is the same here, and, for the same commits with other files,
+Ahead or Behind by which side sits on the newer snapshot revision. Uncommitted changes are known by the files they
+wrote: each holds here what the copy wrote, what it started from, or something else; all written is Ahead (Same when
+the changes here touch exactly those files), none is Behind, a mix is Diverged and names the files. Same pushes
+nothing, so two machines holding one piece of work do not write it over each other on every tick. A copy of
+uncommitted changes for a folder that is clean here is deleted only when this root sent it or the folder holds every
+file it wrote; another machine's work in progress is otherwise reported behind, not deleted. `sg backup pull` takes a
+behind copy: the commits past this branch's own are merged onto its tip one by one and the worktree fast-forwards to
+them, keeping its own changes; then the copy's uncommitted changes are written in when the folder holds none of them,
+put on a shelf beside the folder's own when both changed the same files, and skipped when they are already here. A
+restore and a pull record the copy they took as pushed, so this machine's next backup may send its own over it. Every
+push carries a lease of what was just read, a forced one too, and `--force --only kind/name` forces one item.
+
 **Size.** A host refuses a big push with a bare `HTTP 500` and no answer per ref. GitHub refuses a file over 100 MB
 and a push over 2 GB. One worktree's untracked build output once made every branch of a root fail that way, while
 the overview still showed them green. So there are two limits. A file over `maxFileMb` (100) stays out of the thin

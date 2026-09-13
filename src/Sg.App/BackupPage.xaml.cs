@@ -70,7 +70,7 @@ public sealed partial class BackupPage : SgPage
         Subtitle = cfg!.Url;
         UrlText.Text = cfg.Url + (cfg.Prefix.Length > 0 ? "   under " + cfg.Prefix + "/" : "");
         // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
-        ShowReport(LastReport, Backup.Last(root));
+        ShowReport(LastReport, Backup.Last(root), ActFor);
 
         var list = await Runner.Quiet(Pane, () => Backup.List(root));
         if (list == null)
@@ -256,7 +256,7 @@ public sealed partial class BackupPage : SgPage
         LastReport.Running("Backing up...", root.Config.Backup?.Url ?? "");
         var res = await Busy.During(sender, () => Runner.Run(Pane, "backup", () => Backup.Run(root)));
         // The run kept its result, a failed one too, so the report reads it back rather than being handed it.
-        ShowReport(LastReport, Backup.Last(root));
+        ShowReport(LastReport, Backup.Last(root), ActFor);
         if (res == null) return;
         foreach (var i in res.Items.Where(i => i.Failed || i.Rejected)) Pane.Append($"{i.Kind} {i.Name}: {i.Why}");
         await LoadAsync();
@@ -266,7 +266,57 @@ public sealed partial class BackupPage : SgPage
     /// A backup as a report: a chip per outcome with its count, and a row for every item that did not simply
     /// find the remote already holding it - sent, left files out, failed, diverged, or newer over there.
     /// </summary>
-    public static void ShowReport(ReportCard card, BackupResult? res)
+    /// <summary>The button a row of the report gets: pull a copy that is newer, or keep this machine's over one that differs.</summary>
+    (string Text, Func<Task> Run)? ActFor(BackupItem item) =>
+        item.Behind ? ("Pull", () => PullAsync(item))
+        : item.Rejected ? ("Keep this machine's", () => KeepAsync(item))
+        : null;
+
+    /// <summary>What another machine sent, onto the branch here and into its folder, without making the worktree again.</summary>
+    async Task PullAsync(BackupItem item)
+    {
+        var root = Session.Require();
+        var r = await Runner.Run(Pane, "pull " + item.Name, () => Backup.Pull(root, item.Name));
+        if (r == null) return;
+        ResultBar.ActionButton = null;
+        ResultBar.Severity = r.Ok && r.WipWhy == null && r.WipConflicted.Count == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+        ResultBar.Message = PullSentence(r);
+        ResultBar.IsOpen = true;
+        // The report still reads "behind" until the next backup says otherwise, and the timer sends one soon.
+        if (Host?.Window is MainWindow main) main.BackupSoon();
+        await LoadAsync();
+    }
+
+    static string PullSentence(RestoreResult r)
+    {
+        var parts = new List<string>();
+        if (r.Branch.Length > 0)
+            parts.Add(r.Commits == 0 ? $"{r.Branch} had every commit the backup holds." : $"{r.Applied} of {r.Commits} commit(s) pulled onto {r.Branch}.");
+        if (r.WipAlreadyHere) parts.Add("The uncommitted changes in the backup were here already.");
+        else if (r.WipShelf != null)
+            parts.Add(r.WipWritten
+                ? "The uncommitted changes are written into " + r.Path + (r.WipConflicted.Count > 0 ? $", {r.WipConflicted.Count} with conflict markers." : ".")
+                : $"The uncommitted changes wait on the shelf as {r.WipShelf}, beside the ones here: {r.WipWhy}.");
+        if (!r.Ok) parts.Add($"\"{r.Stopped}\" would not merge, so it and what comes after it are not here.");
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>This machine's copy over the one the remote holds, for this item alone, after saying what it writes over.</summary>
+    async Task KeepAsync(BackupItem item)
+    {
+        if (!await Dialogs.Confirm(this, "Keep this machine's " + item.Name,
+                $"The backup holds a different version of {item.Kind} {item.Name}:\n\n{item.Why}\n\n"
+                + "Write this machine's over it? Only this one item is sent. The version it replaces stays readable in this store until the next backup fetches over it.",
+                "Write over it"))
+            return;
+        var root = Session.Require();
+        LastReport.Running("Backing up " + item.Name + "...");
+        var res = await Runner.Run(Pane, "backup " + item.Name, () => Backup.Run(root, force: true, only: [item.Kind + "/" + item.Name]));
+        ShowReport(LastReport, Backup.Last(root), ActFor);
+        if (res != null) await LoadAsync();
+    }
+
+    public static void ShowReport(ReportCard card, BackupResult? res, Func<BackupItem, (string Text, Func<Task> Run)?>? act = null)
     {
         if (res == null)
         {
@@ -298,7 +348,13 @@ public sealed partial class BackupPage : SgPage
             new(ChipSeverity.Critical, "", failed, $"{failed} failed. The reason is on each row."),
         ];
         card.Show(severity, "", headline, detail, counts,
-            res.Items.Where(i => i.State != "up to date" || i.LeftOut.Count > 0).Select(RowOf));
+            res.Items.Where(i => i.State != "up to date" || i.LeftOut.Count > 0).Select(i => RowOf(i, act)));
+    }
+
+    static ReportRow RowOf(BackupItem i, Func<BackupItem, (string Text, Func<Task> Run)?>? act)
+    {
+        var row = RowOf(i);
+        return act?.Invoke(i) is { } a ? new ReportRow(row.Severity, row.Glyph, row.Name, row.What, row.Detail, row.Tip) { ActionText = a.Text, Action = a.Run } : row;
     }
 
     static ReportRow RowOf(BackupItem i)

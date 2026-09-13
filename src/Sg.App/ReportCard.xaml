@@ -43,12 +43,15 @@
             <local:RowListView x:Name="RowList" SelectionMode="None">
                 <local:RowListView.ItemTemplate>
                     <DataTemplate x:DataType="local:ReportRow">
-                        <Grid ColumnDefinitions="Auto,220,190,*" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">
+                        <Grid ColumnDefinitions="Auto,220,190,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">
                             <local:StatusChip Severity="{x:Bind Severity}" Glyph="{x:Bind Glyph}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource RowText}" TextTrimming="CharacterEllipsis" />
                             <TextBlock Grid.Column="2" Text="{x:Bind What}" Style="{StaticResource RowTextDim}" TextTrimming="CharacterEllipsis" />
                             <!-- The reason is the point of a failed row, so it wraps rather than ending in an ellipsis. -->
                             <TextBlock Grid.Column="3" Text="{x:Bind Detail}" Style="{StaticResource RowTextDim}" TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis" />
+                            <!-- The one thing to do about this row, where there is one: pull what is newer, keep what is here. -->
+                            <Button Grid.Column="4" Content="{x:Bind ActionText}" Visibility="{x:Bind ActionVisibility}" Click="{x:Bind Act}"
+                                    VerticalAlignment="Center" Padding="10,3" MinHeight="0" />
                         </Grid>
                     </DataTemplate>
                 </local:RowListView.ItemTemplate>

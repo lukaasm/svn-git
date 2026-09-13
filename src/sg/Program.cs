@@ -81,10 +81,14 @@ static class Cli
             sg import <file> [--name <b>] [--into <c>] [--show]
                                                       put one back here, against a checkout of the same repository
                                                       --show only reads the file and says what is in it
-            sg backup [--check] [--force]             every branch, the uncommitted changes and the shelves, to the backup
+            sg backup [--check] [--force [--only <kind/name>]...]
+                                                      every branch, the uncommitted changes and the shelves, to the backup
                                                       repository as thin histories. --check only says what would go. An older
-                                                      copy another machine left is written over; a newer one waits for a restore.
-                                                      Exit code 10 when the remote holds work that has diverged from here
+                                                      copy another machine left is written over, the same work under other hashes
+                                                      is left alone, and a newer one waits for a pull. Exit code 10 when the remote
+                                                      holds work that has diverged from here; --force --only branch/x keeps this machine's
+            sg backup pull <branch-or-checkout>       what another machine sent, onto the branch here and into its folder: its
+                                                      commits on top, its uncommitted changes written in or put on a shelf
             sg backup set <url> [--prefix <p>] [--no-uncommitted] [--max-file <MB>] [--max-push <MB>]
                                                       where backups go. A prefix keeps two machines apart in one repository.
                                                       A file over --max-file (100) stays here; one push carries --max-push (1024)
@@ -784,10 +788,32 @@ static class Cli
                 if (!yes) Console.WriteLine("delete them with: sg backup prune --yes");
                 return 0;
             }
+            case "pull":
+            {
+                var name = a.Arg(1, "the branch or checkout to pull");
+                var r = Backup.Pull(root, name);
+                if (json) { Json(r); return r.Ok ? 0 : 1; }
+                if (r.Branch.Length > 0)
+                    Console.WriteLine(r.Commits == 0 ? $"{r.Branch}: no commits to pull" : $"{r.Branch}: {r.Applied} of {r.Commits} commit(s) pulled into {r.Path}");
+                if (r.WipAlreadyHere) Console.WriteLine("  the uncommitted changes in the backup are already here");
+                else if (r.WipShelf != null)
+                    Console.WriteLine(r.WipWritten ? "  the uncommitted changes are written into " + r.Path
+                        : "  the uncommitted changes wait as shelf " + r.WipShelf + (r.WipWhy != null ? ": " + r.WipWhy : ""));
+                foreach (var c in r.WipConflicted.Take(20)) Console.WriteLine("  uncommitted change in conflict: " + c);
+                if (r.Ok) return 0;
+                Console.Error.WriteLine($"stopped at: {r.Stopped}");
+                foreach (var c in r.Conflicted.Take(20)) Console.Error.WriteLine("  conflict: " + c);
+                if (r.Why != null) Console.Error.WriteLine(r.Why.Split('\n')[0]);
+                Console.Error.WriteLine($"the branch keeps the {r.Applied} commit(s) that did go in.");
+                return 1;
+            }
             case "":
             {
                 var check = a.Has("--check");
-                var r = Backup.Run(root, check, a.Has("--force"));
+                var only = a.GetAll("--only");
+                if (only.Count > 0 && !a.Has("--force"))
+                    throw new SgException("--only names what --force writes over, for example: sg backup --force --only branch/gui");
+                var r = Backup.Run(root, check, a.Has("--force"), only.Count > 0 ? only : null);
                 if (json) { Json(r); return r.Rejected > 0 ? 10 : r.Ok ? 0 : 1; }
                 Console.WriteLine((check ? "backup check: " : "backup: ") + r.Url);
                 foreach (var i in r.Items)
@@ -800,7 +826,7 @@ static class Cli
                 return r.Rejected > 0 ? 10 : r.Ok ? 0 : 1;
             }
             default:
-                throw new SgException("sg backup takes: set <url>, list, restore <branch>, prune, clear, or nothing at all (which sends everything)");
+                throw new SgException("sg backup takes: set <url>, list, restore <branch>, pull <branch>, prune, clear, or nothing at all (which sends everything)");
         }
     }
 
@@ -930,7 +956,7 @@ sealed class Args
     static readonly HashSet<string> ValueOpts = new(StringComparer.OrdinalIgnoreCase)
     {
         "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared",
-        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push",
+        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only",
     };
 
     public string? Command;

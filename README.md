@@ -312,6 +312,8 @@ sg backup                                   # every branch, the uncommitted chan
 sg backup --check                           # what would go, and what is on the remote only
 sg backup list                              # what is there, and how far each checkout here has drifted from it
 sg backup restore feature-x --wip           # make the branch here again, merged onto this checkout's snapshot
+sg backup pull feature-x                    # what another machine sent: its commits onto the branch here, its uncommitted changes into the folder
+sg backup --force --only branch/feature-x   # keep this machine's copy of one thing the remote holds differently
 sg backup prune --yes                       # delete from the remote what is not here any more
 ```
 
@@ -320,6 +322,14 @@ and named, exit code 10, and `--force` takes it over. Nothing is ever deleted by
 lists first. Restore matches the checkout by URL the way import does, merges every commit across whatever revision
 this checkout is at, and when the store still has the real commits simply points the branch at them again. Uncommitted
 changes come back through the shelf: written into the worktree when they merge, left on the shelf when one does not.
+
+Between machines the backup is a sync. A restore or a rebase gives the same commits new hashes, so sg also knows a
+commit by its author, its date and its message, and uncommitted changes by the files they wrote. A copy on the remote
+that is older than what is here is written over, and the same work under other hashes is left alone. A newer one is
+`behind`: `sg backup pull` puts its commits on top of the branch here and its uncommitted changes into the folder, or
+on a shelf when both sides changed the same files. A clean branch never deletes another machine's uncommitted changes.
+Only work that really differs is refused, with what differs named, and `--force --only branch/<name>` keeps this
+machine's copy of that one thing.
 
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
 default). The app also backs up a few seconds after a commit, a shelve or a rebase made in it. Every worktree card

@@ -39,6 +39,10 @@ public sealed partial class CheckoutPage : SgPage
         {
             if (WorktreeList.ItemsSource is List<WorktreeRow> rows) foreach (var r in rows) r.Repaint();
         };
+        var openBackup = new Button { Content = "Open backup", HorizontalAlignment = HorizontalAlignment.Right };
+        openBackup.Click += Backup_Click;
+        BackupBar.ActionButton = openBackup;
+        BackupBar.Closed += BackupBar_Closed;
     }
 
     /// <summary>The strip the overview's operations report into. The main window uses it for its own reads.</summary>
@@ -73,6 +77,37 @@ public sealed partial class CheckoutPage : SgPage
     /// <summary>Bars where the worktree cards will be, for the first read of a root.</summary>
     public void ShowSkeleton(bool on) => OverviewSkeleton.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>When the failed backup on the bar ran, and when the one whose bar was closed ran: the same result does not open it again on the next refresh.</summary>
+    DateTimeOffset? _backupShown, _backupClosed;
+
+    /// <summary>
+    /// A bar above the cards when the last backup did not send something or could not run. A success opens
+    /// nothing: the green badges say that. It reads the kept result, so a timer run that failed while nobody
+    /// was looking is the first thing on screen the next time somebody is.
+    /// </summary>
+    void ShowBackupBar(StatusResult? status)
+    {
+        var last = status?.BackupUrl != null && Session.Root is { } root ? Backup.Last(root) : null;
+        var bad = last?.Items.Where(i => i.Failed || i.Rejected).ToList() ?? [];
+        if (last == null || (last.Error == null && bad.Count == 0) || last.When == _backupClosed)
+        {
+            BackupBar.IsOpen = false;
+            return;
+        }
+        _backupShown = last.When;
+        var ago = last.When is { } w ? WorktreeRow.Ago(w) : "";
+        BackupBar.Title = last.Error != null ? "The backup could not run" + ago
+            : $"The backup{ago} did not send " + string.Join(", ", bad.Select(i => i.Name).Distinct().Take(3)) + (bad.Count > 3 ? $" and {bad.Count - 3} more" : "");
+        BackupBar.Message = last.Error ?? string.Join("\n", bad.Take(3).Select(i =>
+            $"{i.Name}, {(i.Kind switch { "branch" => "branch", "wip" => "uncommitted changes", "edits" => "local edits", _ => "shelf" })}: {(i.Why ?? "").Split('\n')[0]}"));
+        BackupBar.IsOpen = true;
+    }
+
+    void BackupBar_Closed(InfoBar sender, InfoBarClosedEventArgs args)
+    {
+        if (args.Reason == InfoBarCloseReason.CloseButton) _backupClosed = _backupShown;
+    }
+
     /// <summary>Puts one checkout on screen. Null is "no root open", which is its own page.</summary>
     public void Show(CheckoutRow? row, StatusResult? status)
     {
@@ -81,6 +116,7 @@ public sealed partial class CheckoutPage : SgPage
         var noRoot = Session.Root == null;
         NoRoot.Visibility = noRoot ? Visibility.Visible : Visibility.Collapsed;
         Scroll.Visibility = noRoot ? Visibility.Collapsed : Visibility.Visible;
+        ShowBackupBar(status);
         var has = row != null;
         CheckoutBar.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         WorktreesHeader.Visibility = has ? Visibility.Visible : Visibility.Collapsed;

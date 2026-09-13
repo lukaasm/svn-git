@@ -149,6 +149,12 @@
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" />
 
+                <!-- The last backup did not send something, or could not run at all. Above the cards, because the
+                     badge on a card is a colour and a tooltip, and a failure that only lived in the footer line
+                     went unseen for as long as the backups kept failing. A success says nothing here: the
+                     green badges already say it. Closing it hides this result; the next failure opens it again. -->
+                <InfoBar x:Name="BackupBar" Severity="Error" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+
                 <TextBlock x:Name="WorktreesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,0,0,4" Visibility="Collapsed" />
                 <local:EmptyState x:Name="NoWorktrees" Visibility="Collapsed" Glyph="&#xE8F4;" Title="No worktrees yet" Margin="0,16,0,16"
                                   Text="A worktree is a folder with a git branch born from this checkout's snapshot. Work there, then push it back to SVN as one commit per repository.">

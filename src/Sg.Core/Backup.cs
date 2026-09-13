@@ -231,6 +231,10 @@ public sealed class BackupItem
 public sealed class BackupResult
 {
     public string Url = "";
+    /// <summary>When it ran. Set on a run that is kept as the last one; null on a check.</summary>
+    public DateTimeOffset? When;
+    /// <summary>Why the run as a whole stopped - the remote could not be reached, say. Null when it ran.</summary>
+    public string? Error;
     public List<BackupItem> Items = new();
     /// <summary>Refs on the remote under sg's names that nothing here answers to any more. Prune deletes them.</summary>
     public List<string> RemoteOnly = new();
@@ -238,7 +242,7 @@ public sealed class BackupResult
     public int Rejected => Items.Count(i => i.Rejected);
     /// <summary>Names the remote holds a newer version of than here: a restore, not a push, is the move.</summary>
     public int Behind => Items.Count(i => i.Behind);
-    public bool Ok => Items.All(i => !i.Rejected && !i.Failed);
+    public bool Ok => Error == null && Items.All(i => !i.Rejected && !i.Failed);
 }
 
 /// <summary>What the remote holds under one name: a branch with what it was cut from, a shelf, or a folder's uncommitted changes.</summary>
@@ -381,6 +385,48 @@ public static class Backup
     /// another version of is skipped and named; the rest still go.
     /// </summary>
     public static BackupResult Run(SgRoot root, bool check = false, bool force = false)
+    {
+        Require(root);
+        if (check) return RunOnce(root, check: true, force);
+        try
+        {
+            var res = RunOnce(root, check: false, force);
+            res.When = DateTimeOffset.Now;
+            KeepLast(root, res);
+            return res;
+        }
+        catch (SgException e)
+        {
+            KeepLast(root, new BackupResult { Url = root.Config.Backup?.Url ?? "", When = DateTimeOffset.Now, Error = e.Message });
+            throw;
+        }
+    }
+
+    static readonly System.Text.Json.JsonSerializerOptions LastJson = new(SgConfig.JsonOptions) { IncludeFields = true };
+
+    /// <summary>Where the last run's result is kept, so every window can say how the timer's backup went, not only the one that ran it.</summary>
+    static string LastPath(SgRoot root) => Path.Combine(root.StorePath, "backup-last.json");
+
+    /// <summary>How the last backup went, or null when none has run here or the file cannot be read.</summary>
+    public static BackupResult? Last(SgRoot root)
+    {
+        try { return System.Text.Json.JsonSerializer.Deserialize<BackupResult>(File.ReadAllText(LastPath(root)), LastJson); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return null; }
+    }
+
+    static void KeepLast(SgRoot root, BackupResult res)
+    {
+        var path = LastPath(root);
+        var tmp = path + ".tmp";
+        try
+        {
+            File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(res, LastJson));
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { root.Log.Warn("the backup result could not be kept: " + e.Message); }
+    }
+
+    static BackupResult RunOnce(SgRoot root, bool check, bool force)
     {
         var cfg = Require(root);
         var git = root.Git;

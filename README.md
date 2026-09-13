@@ -323,8 +323,10 @@ changes come back through the shelf: written into the worktree when they merge, 
 
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
 default). The app also backs up a few seconds after a commit, a shelve or a rebase made in it. Every worktree card
-says "backed up 3 min ago" or "2 commits not backed up", and **Backup** on the checkout toolbar opens the page: what
-the remote holds, Restore, Back up now, Prune.
+says "backed up 3 min ago", "2 commits not backed up", "backup failed" with the reason, or "backing up...", and
+**Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item
+that was sent, failed, diverged or left files out - then what the remote holds, Restore, Back up now, Prune. When the
+last backup failed or could not run, the overview says so in a red bar above the worktrees, with Open backup on it.
 
 ## Server branches
 

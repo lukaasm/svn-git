@@ -7,11 +7,14 @@
          list, its commits and the revisions it was cut from are shown beside what this checkout is at,
          and only then is the button offered - the same shape as importing a file, because it is the
          same question: how far has this checkout moved from where the branch was cut. -->
-    <Grid RowDefinitions="Auto,*,Auto,Auto,Auto" RowSpacing="8">
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="8">
 
         <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
-        <local:EmptyState x:Name="NoBackup" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE74E;" Title="No backup repository is set"
+        <!-- How the last backup went, whoever ran it: the timer, this page, or sg backup in a terminal. -->
+        <local:ReportCard x:Name="LastReport" Grid.Row="1" MaxWidth="1000" />
+
+        <local:EmptyState x:Name="NoBackup" Grid.Row="2" Visibility="Collapsed" Glyph="&#xE74E;" Title="No backup repository is set"
                           Text="Backups go to a git repository somewhere else: a bare folder on a share, or a hosted repository. Set its URL in Settings.">
             <local:EmptyState.Action>
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -21,7 +24,7 @@
             </local:EmptyState.Action>
         </local:EmptyState>
 
-        <local:EmptyState x:Name="Nothing" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE74E;" Title="Nothing of sg's is there yet"
+        <local:EmptyState x:Name="Nothing" Grid.Row="2" Visibility="Collapsed" Glyph="&#xE74E;" Title="Nothing of sg's is there yet"
                           Text="The first backup puts every branch there. Press Back up now, or wait for the timer.">
             <local:EmptyState.Action>
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -31,7 +34,7 @@
             </local:EmptyState.Action>
         </local:EmptyState>
 
-        <ScrollViewer x:Name="Filled" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="Filled" Grid.Row="2" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
 
                 <Border Style="{StaticResource Card}">
@@ -122,7 +125,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <Grid x:Name="RestoreRow" Grid.Row="2" ColumnDefinitions="Auto,*,Auto,220,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+        <Grid x:Name="RestoreRow" Grid.Row="3" ColumnDefinitions="Auto,*,Auto,220,Auto" ColumnSpacing="8" Margin="0,4,0,0">
             <TextBlock Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
             <TextBox x:Name="NameBox" Grid.Column="1" TextChanged="Name_TextChanged" MaxWidth="320" HorizontalAlignment="Left"
                      ToolTipService.ToolTip="The name the branch gets here. It starts as the name it has in the backup, which is free to be something else." />
@@ -137,7 +140,7 @@
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+        <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
             <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" x:Name="BackupNowButton"
                               ToolTipService.ToolTip="Send every branch, the uncommitted changes and the shelves to the backup repository now, rather than waiting for the timer." />
             <local:IconButton Grid.Column="1" Glyph="&#xE74D;" Text="Prune" Click="Prune_Click" x:Name="PruneButton"
@@ -154,6 +157,6 @@
             </Button>
         </Grid>
 
-        <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />
+        <local:StatusStrip x:Name="Pane" Grid.Row="5" Margin="0,8,0,0" />
     </Grid>
 </local:SgPage>

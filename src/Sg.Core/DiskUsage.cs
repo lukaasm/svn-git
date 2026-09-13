@@ -186,8 +186,13 @@ public static class DiskUsage
         }
     }
 
+    /// <summary>
+    /// A size in the unit it reads best in. Under 10 MB it keeps a decimal: a backup limit of 1 MB once read
+    /// "1 MB of uncommitted changes, more than the 1 MB one push carries" about 1.46 MB.
+    /// </summary>
     public static string Human(long bytes) =>
         bytes >= 1L << 30 ? $"{bytes / (double)(1L << 30):0.0} GB"
-        : bytes >= 1 << 20 ? $"{bytes / (double)(1 << 20):0} MB"
+        : bytes >= 10 << 20 ? $"{bytes / (double)(1 << 20):0} MB"
+        : bytes >= 1 << 20 ? $"{bytes / (double)(1 << 20):0.0} MB"
         : $"{bytes / 1024.0:0} KB";
 }

@@ -62,12 +62,15 @@ public sealed partial class BackupPage : SgPage
         RestoreButton.IsEnabled = false;
         if (!configured)
         {
+            LastReport.Hide();
             Subtitle = "no backup repository";
             Summary.Text = "Set the URL in Settings first.";
             return;
         }
         Subtitle = cfg!.Url;
         UrlText.Text = cfg.Url + (cfg.Prefix.Length > 0 ? "   under " + cfg.Prefix + "/" : "");
+        // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
+        ShowReport(LastReport, Backup.Last(root));
 
         var list = await Runner.Quiet(Pane, () => Backup.List(root));
         if (list == null)
@@ -249,15 +252,72 @@ public sealed partial class BackupPage : SgPage
     async void BackupNow_Click(object sender, RoutedEventArgs e)
     {
         var root = Session.Require();
+        ResultBar.IsOpen = false;
+        LastReport.Running("Backing up...", root.Config.Backup?.Url ?? "");
         var res = await Busy.During(sender, () => Runner.Run(Pane, "backup", () => Backup.Run(root)));
+        // The run kept its result, a failed one too, so the report reads it back rather than being handed it.
+        ShowReport(LastReport, Backup.Last(root));
         if (res == null) return;
-        var rejected = res.Items.Where(i => i.Rejected).ToList();
-        ResultBar.Severity = res.Ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-        ResultBar.Message = Sentence(res);
-        ResultBar.IsOpen = true;
-        if (rejected.Count > 0 && rejected[0].Why != null) Pane.Append(rejected[0].Why!);
-        foreach (var i in res.Items.Where(i => i.Failed)) Pane.Append($"{i.Kind} {i.Name}: {i.Why}");
+        foreach (var i in res.Items.Where(i => i.Failed || i.Rejected)) Pane.Append($"{i.Kind} {i.Name}: {i.Why}");
         await LoadAsync();
+    }
+
+    /// <summary>
+    /// A backup as a report: a chip per outcome with its count, and a row for every item that did not simply
+    /// find the remote already holding it - sent, left files out, failed, diverged, or newer over there.
+    /// </summary>
+    public static void ShowReport(ReportCard card, BackupResult? res)
+    {
+        if (res == null)
+        {
+            card.Hide();
+            return;
+        }
+        // When, in the quiet line under the sentence. The URL is not repeated: the page says it under its title.
+        var when = res.When is { } t ? $"{t.LocalDateTime:yyyy-MM-dd HH:mm},{WorktreeRow.Ago(t)}" : "";
+        if (res.Error != null)
+        {
+            card.Show(ChipSeverity.Critical, "", "The last backup could not run", res.Error + (when.Length > 0 ? "\n" + when : ""));
+            return;
+        }
+        var failed = res.Items.Count(i => i.Failed);
+        var leftOut = res.Items.Count(i => i.LeftOut.Count > 0);
+        var bad = failed + res.Rejected;
+        var severity = bad > 0 ? ChipSeverity.Critical : res.Behind + leftOut > 0 ? ChipSeverity.Caution : ChipSeverity.Success;
+        var headline = res.Items.Count == 0 ? "The last backup found nothing to send"
+            : bad == 0 ? "Backed up"
+            : $"The last backup did not send {bad} of {res.Items.Count}";
+        var detail = when + (res.RemoteOnly.Count > 0 ? $"   {res.RemoteOnly.Count} ref(s) there answer to nothing here: Prune" : "");
+        ReportCount[] counts =
+        [
+            new(ChipSeverity.Success, "", res.Pushed, $"{res.Pushed} sent: the remote holds them now."),
+            new(ChipSeverity.Neutral, "", res.Items.Count(i => i.State == "up to date"), "Already there: the remote held these as they are here, so nothing went."),
+            new(ChipSeverity.Caution, "", leftOut, $"{leftOut} went without files too big for the backup. The files are named on the rows."),
+            new(ChipSeverity.Caution, "", res.Behind, $"{res.Behind} newer on the remote than here. Restore brings them here."),
+            new(ChipSeverity.Critical, "", res.Rejected, $"{res.Rejected} diverged: another machine has different work under the name."),
+            new(ChipSeverity.Critical, "", failed, $"{failed} failed. The reason is on each row."),
+        ];
+        card.Show(severity, "", headline, detail, counts,
+            res.Items.Where(i => i.State != "up to date" || i.LeftOut.Count > 0).Select(RowOf));
+    }
+
+    static ReportRow RowOf(BackupItem i)
+    {
+        var kind = i.Kind switch { "branch" => "branch", "wip" => "uncommitted changes", "edits" => "local edits", _ => "shelf" };
+        var (severity, glyph, state) = i.State switch
+        {
+            "failed" => (ChipSeverity.Critical, "", "failed"),
+            "rejected" => (ChipSeverity.Critical, "", "diverged"),
+            "behind" => (ChipSeverity.Caution, "", "newer on the remote"),
+            "up to date" => (ChipSeverity.Caution, "", "already there, without some files"),
+            "pushed" when i.LeftOut.Count > 0 => (ChipSeverity.Caution, "", "sent without some files"),
+            "pushed" => (ChipSeverity.Success, "", i.Reconciled ? "sent over an older copy" : "sent"),
+            _ => (ChipSeverity.Neutral, "", i.State),
+        };
+        var leftOut = i.LeftOut.Count > 0 ? "left out, too big: " + string.Join(", ", i.LeftOut) : "";
+        var detail = i.Why ?? leftOut;
+        var tip = string.Join("\n", new[] { i.RemoteRef, i.Why ?? "", leftOut }.Where(s => s.Length > 0));
+        return new ReportRow(severity, glyph, i.Name, kind + ", " + state, detail, tip);
     }
 
     /// <summary>One line about a backup that ran: what went, what was there already, what was refused.</summary>

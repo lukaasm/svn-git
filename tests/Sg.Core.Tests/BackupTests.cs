@@ -576,6 +576,38 @@ public sealed class BackupTests : IDisposable
         Assert.Null(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-x").BackupFailed);
     }
 
+    /// <summary>
+    /// The last run is kept where every window reads it, so the overview can say a timer's backup failed
+    /// without having run it. A check changes nothing there; a run that cannot reach the remote says why.
+    /// </summary>
+    [Fact]
+    public void TheLastRun_IsKept_AndARunThatCannotReachTheRemoteSaysWhy()
+    {
+        f.Setup();
+        MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.Null(Backup.Last(f.Root));
+
+        var r = Backup.Run(f.Root);
+        var last = Backup.Last(f.Root);
+        Assert.NotNull(last);
+        Assert.NotNull(last!.When);
+        Assert.Null(last.Error);
+        Assert.Equal("pushed", last.Items.Single(i => i.Kind == "branch" && i.Name == "feature-x").State);
+        Assert.Equal(r.Items.Count, last.Items.Count);
+
+        Backup.Run(f.Root, check: true);
+        Assert.Equal(last.When, Backup.Last(f.Root)!.When);
+
+        // The remote goes away: pointed at a folder that is not there, since git's read-only objects make deleting it a fight.
+        f.Root.Config.Backup!.Url = Path.Combine(f.Base, "gone.git");
+        f.Root.Save();
+        Assert.Throws<SgException>(() => Backup.Run(f.Root));
+        var failed = Backup.Last(f.Root)!;
+        Assert.Contains("cannot reach", failed.Error);
+        Assert.False(failed.Ok);
+    }
+
     [Fact]
     public void Set_RefusesAUrlThatIsNotARepository()
     {

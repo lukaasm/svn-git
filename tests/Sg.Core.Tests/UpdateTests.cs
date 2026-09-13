@@ -107,6 +107,7 @@ public sealed class DiskUsageTests
     {
         Assert.Equal("4.0 GB", DiskUsage.Human(4L * 1024 * 1024 * 1024));
         Assert.Equal("69 MB", DiskUsage.Human(69L * 1024 * 1024));
+        Assert.Equal("1.5 MB", DiskUsage.Human(3L * 1024 * 1024 / 2));
         Assert.Equal("512 KB", DiskUsage.Human(512 * 1024));
     }
 }

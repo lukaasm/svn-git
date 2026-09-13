@@ -336,6 +336,14 @@ fails its own refs only. A branch whose commits or uncommitted changes failed ke
 `branch.<name>.sgBackupFailed` until a backup sends them. The badge reads that key and says "backup failed".
 While a backup runs, the badge says "backing up...". 0 turns either limit off.
 
+**How the last one went.** A run that is not a check keeps its result in `.sg/backup-last.json`: when it ran, every
+item with its state, reason and left-out files, and the error when the run as a whole stopped. A footer line saying
+"backup: done" over a backup whose every branch had failed is what this replaced. The Backup page shows it in a
+`ReportCard` - the app's one control for how an operation went: a badge and a sentence, a chip per outcome with its
+count, and a row for each item that did not simply find the remote holding it already. The overview opens an error
+bar above the worktree cards when the kept result has a failure, a divergence or an error, with Open backup on it.
+Closing the bar hides that result; the next failure opens it again. A success opens nothing there.
+
 **Where it goes.** `sg.json` gets `backup: { url, prefix, uncommitted, maxFileMb, maxPushMb }`. The URL is never registered as a git
 remote, on purpose: a `git push` typed in a worktree keeps having nowhere to go, where a remote named `backup`
 would have sent the real branch, snapshot and all, the first time someone typed `git push backup`. sg pushes with

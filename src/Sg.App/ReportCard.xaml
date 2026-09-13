@@ -43,7 +43,8 @@
             <local:RowListView x:Name="RowList" SelectionMode="None">
                 <local:RowListView.ItemTemplate>
                     <DataTemplate x:DataType="local:ReportRow">
-                        <Grid ColumnDefinitions="Auto,220,190,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">
+                        <!-- A little air above and below: three wrapped lines of one reason used to touch the next row's. -->
+                        <Grid ColumnDefinitions="Auto,220,190,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" Margin="0,4" ToolTipService.ToolTip="{x:Bind Tip}">
                             <local:StatusChip Severity="{x:Bind Severity}" Glyph="{x:Bind Glyph}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource RowText}" TextTrimming="CharacterEllipsis" />
                             <TextBlock Grid.Column="2" Text="{x:Bind What}" Style="{StaticResource RowTextDim}" TextTrimming="CharacterEllipsis" />

@@ -82,16 +82,17 @@
             </StackPanel>
         </ScrollViewer>
 
-        <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,220,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+        <!-- The same form as Backup's restore, under the same 1000 wide column as the list above it. -->
+        <Grid Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,260,Auto,240,*" ColumnSpacing="10" Margin="0,4,0,0">
             <TextBlock Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-            <TextBox x:Name="NameBox" Grid.Column="1" TextChanged="Name_TextChanged" MaxWidth="320" HorizontalAlignment="Left"
+            <TextBox x:Name="NameBox" Grid.Column="1" VerticalAlignment="Center" TextChanged="Name_TextChanged"
                      ToolTipService.ToolTip="The name the branch gets here. It starts as the name it had, which is free to be something else." />
-            <TextBlock Grid.Column="2" Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-            <ComboBox x:Name="IntoBox" Grid.Column="3" HorizontalAlignment="Stretch" SelectionChanged="Into_Changed"
+            <TextBlock Grid.Column="2" Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
+            <ComboBox x:Name="IntoBox" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
                       ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the export names." />
         </Grid>
 
-        <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+        <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
             <local:IconButton Glyph="&#xED25;" Text="Another file" Click="Pick_Click" ToolTipService.ToolTip="Read a different export file." />
             <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             <!-- Only after an import stopped. It is the way on from there, so it stands next to the

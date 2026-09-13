@@ -68,7 +68,9 @@ public sealed partial class BackupPage : SgPage
             return;
         }
         Subtitle = cfg!.Url;
-        UrlText.Text = cfg.Url + (cfg.Prefix.Length > 0 ? "   under " + cfg.Prefix + "/" : "");
+        // The URL is under the page title already. The card says only what the title does not: the prefix, when there is one.
+        UrlText.Text = cfg.Prefix.Length > 0 ? "everything under " + cfg.Prefix + "/" : "";
+        UrlText.Visibility = cfg.Prefix.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
         ShowReport(LastReport, Backup.Last(root), ActFor);
 

@@ -103,15 +103,21 @@ public static class Thin
         return git.CommitTreeExact(git.EmptyTree(), null, sb.ToString(), who);
     }
 
-    public sealed record Result(string Tip, int Changes, bool FromScratch);
+    /// <summary>The thin tip, how many commits it stands for, and the files too big to go, as "path (size)".</summary>
+    public sealed record Result(string Tip, int Changes, bool FromScratch, List<string> LeftOut);
 
     /// <summary>
     /// The thin history of everything between a snapshot and a tip. From the marker when none of it was
     /// built before; from a thin tip already built when the commit it stands for is still on the run,
     /// so only what sits above it is rewritten. The candidates are tried in order: a wip or a shelf
     /// hands in the branch's own tip, whose history is its prefix.
+    ///
+    /// A file bigger than maxFileBytes, in either version, stays out of that commit whole: its base is
+    /// not put in and its change is not either. So the change commit does not touch the path, and a
+    /// restore leaves the file here as it is rather than reading its absence as a delete. What stayed
+    /// out is named. The limit is decided by size alone, so the same run still makes the same objects.
     /// </summary>
-    public static Result Rewrite(SgRoot root, string tip, string snapshot, IEnumerable<string?> builtTips)
+    public static Result Rewrite(SgRoot root, string tip, string snapshot, IEnumerable<string?> builtTips, long maxFileBytes = 0)
     {
         var git = root.Git;
         string? thinParent = null;
@@ -131,6 +137,7 @@ public static class Thin
 
         var present = new HashSet<string>(git.LsTree(thinParent, null, recursive: true).Select(e => e.Path), StringComparer.Ordinal);
         var chain = git.RevListFirstParent(from + ".." + tip);
+        var leftOut = new Dictionary<string, long>(StringComparer.Ordinal);
         var index = root.NewTempFile(".index");
         try
         {
@@ -143,21 +150,32 @@ public static class Thin
                 // The version each path starts from, for the paths this history has not seen. A path the
                 // commit adds has none, and one the run deleted earlier and adds again has none either.
                 var needBase = changed.Where(e => e.Status != 'A' && !present.Contains(e.Path)).Select(e => e.Path).ToList();
-                if (needBase.Count > 0)
+                var bases = needBase.Count > 0 ? git.BlobsAt(parent, needBase) : new List<TreeEntry>();
+                var adds = changed.Where(e => e.Status != 'D').Select(e => e.Path).ToList();
+                var entries = git.BlobsAt(c, adds);
+                if (maxFileBytes > 0)
                 {
-                    var bases = git.BlobsAt(parent, needBase);
-                    if (bases.Count > 0)
+                    var sizes = git.ObjectSizes(bases.Concat(entries).Select(e => e.Sha));
+                    var big = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var e in bases.Concat(entries))
                     {
-                        var tree = Compose(git, index, thinParent, bases, Array.Empty<string>());
-                        var msg = $"sg base: {bases.Count} file(s) the next change starts from\n\n{KeyKind}: base\n{KeySource}: {c}\n";
-                        thinParent = git.CommitTreeExact(tree, thinParent, msg, who);
-                        foreach (var b in bases) present.Add(b.Path);
+                        var size = sizes.GetValueOrDefault(e.Sha);
+                        if (size <= maxFileBytes) continue;
+                        big.Add(e.Path);
+                        leftOut[e.Path] = Math.Max(size, leftOut.GetValueOrDefault(e.Path));
                     }
+                    bases = bases.Where(e => !big.Contains(e.Path)).ToList();
+                    entries = entries.Where(e => !big.Contains(e.Path)).ToList();
+                }
+                if (bases.Count > 0)
+                {
+                    var tree = Compose(git, index, thinParent, bases, Array.Empty<string>());
+                    var msg = $"sg base: {bases.Count} file(s) the next change starts from\n\n{KeyKind}: base\n{KeySource}: {c}\n";
+                    thinParent = git.CommitTreeExact(tree, thinParent, msg, who);
+                    foreach (var b in bases) present.Add(b.Path);
                 }
 
-                var adds = changed.Where(e => e.Status != 'D').Select(e => e.Path).ToList();
                 var dels = changed.Where(e => e.Status == 'D' && present.Contains(e.Path)).Select(e => e.Path).ToList();
-                var entries = git.BlobsAt(c, adds);
                 var t = Compose(git, index, thinParent, entries, dels);
                 var body = who.Body.TrimEnd() + "\n\n" + KeyKind + ": change\n" + KeySource + ": " + c + "\n";
                 thinParent = git.CommitTreeExact(t, thinParent, body, who);
@@ -169,7 +187,8 @@ public static class Thin
         {
             try { File.Delete(index); } catch (IOException) { }
         }
-        return new Result(thinParent, chain.Count, scratch);
+        return new Result(thinParent, chain.Count, scratch,
+            leftOut.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} ({DiskUsage.Human(kv.Value)})").ToList());
     }
 
     /// <summary>A tree that is another commit's tree with these blobs put in and these paths taken out, built in an index of its own.</summary>
@@ -199,6 +218,8 @@ public sealed class BackupItem
     /// <summary>It went up over an older copy another machine had left there.</summary>
     public bool Reconciled;
     public string? Why;
+    /// <summary>Files too big for the backup that stayed here, as "path (size)". The rest of the item went without them.</summary>
+    public List<string> LeftOut = new();
 
     public bool Pushed => State == "pushed";
     public bool Rejected => State == "rejected";
@@ -325,9 +346,12 @@ public static class Backup
     public static string PushedRef(string kind, string name) => PushedPrefix + Ns(kind) + "/" + name;
     public static string FetchedRef(string kind, string name) => FetchedPrefix + Ns(kind) + "/" + name;
     static string KeyBackedUp(string branch) => $"branch.{branch}.sgBackedUp";
+    /// <summary>The branch config key that holds why the last backup did not send a branch's work.</summary>
+    public const string FailedKey = "sgBackupFailed";
+    static string KeyFailed(string branch) => $"branch.{branch}.{FailedKey}";
 
     /// <summary>Where backups go. The URL is tried before it is kept, so a typo is found now and not on the timer.</summary>
-    public static BackupConfig Set(SgRoot root, string url, string? prefix = null, bool? uncommitted = null)
+    public static BackupConfig Set(SgRoot root, string url, string? prefix = null, bool? uncommitted = null, int? maxFileMb = null, int? maxPushMb = null)
     {
         var b = root.Config.Backup ?? new BackupConfig();
         var u = url.Trim();
@@ -336,6 +360,8 @@ public static class Backup
         b.Url = u;
         if (prefix != null) b.Prefix = prefix.Trim().Trim('/');
         if (uncommitted != null) b.Uncommitted = uncommitted.Value;
+        if (maxFileMb != null) b.MaxFileMb = Math.Max(0, maxFileMb.Value);
+        if (maxPushMb != null) b.MaxPushMb = Math.Max(0, maxPushMb.Value);
         root.Config.Backup = b;
         root.Save();
         return b;
@@ -368,6 +394,7 @@ public static class Backup
         // The refs the remote holds a version of that this root did not push last - another machine, or
         // another root. Fetched in one call so their lineage can be read, and reconciled by it below.
         var foreign = sources
+            .Where(s => s.Why == null)
             .Select(s => (S: s, Ref: RemoteRef(cfg, s.Kind, s.Name)))
             .Where(x => remote.TryGetValue(x.Ref, out var have) && have != git.RefSha(PushedRef(x.S.Kind, x.S.Name)))
             .ToList();
@@ -376,15 +403,24 @@ public static class Backup
 
         foreach (var s in sources)
         {
-            var item = new BackupItem { Kind = s.Kind, Name = s.Name, RemoteRef = RemoteRef(cfg, s.Kind, s.Name) };
+            var item = new BackupItem { Kind = s.Kind, Name = s.Name, RemoteRef = RemoteRef(cfg, s.Kind, s.Name), LeftOut = s.LeftOut };
             res.Items.Add(item);
+            // Refused before a commit was made of it: uncommitted changes too big for any push. What the
+            // remote holds under its name stays there, since it is not stale, only not replaced.
+            if (s.Why != null)
+            {
+                item.State = "failed";
+                item.Why = s.Why;
+                continue;
+            }
             var pushedRef = PushedRef(s.Kind, s.Name);
             var last = git.RefSha(pushedRef);
             try
             {
-                var thin = Thin.Rewrite(root, s.Tip, s.Snapshot, [last, s.Branch != null ? git.RefSha(PushedRef("branch", s.Branch)) : null]);
+                var thin = Thin.Rewrite(root, s.Tip, s.Snapshot, [last, s.Branch != null ? git.RefSha(PushedRef("branch", s.Branch)) : null], cfg.MaxFileBytes);
                 item.Thin = thin.Tip;
                 item.Commits = git.CountCommits(s.Snapshot, s.Tip);
+                item.LeftOut = item.LeftOut.Concat(thin.LeftOut).Distinct(StringComparer.Ordinal).ToList();
             }
             catch (SgException e)
             {
@@ -445,31 +481,97 @@ public static class Backup
             else res.RemoteOnly.Add(r);
         }
         res.RemoteOnly.Sort(StringComparer.Ordinal);
-        if (check || (pending.Count == 0 && stale.Count == 0)) return res;
 
-        var pushes = pending.Select(p => new PushRef(p.Item.Thin, p.Item.RemoteRef, p.Lease ?? "")).ToList();
-        pushes.AddRange(stale.Select(r => new PushRef(null, r, remote[r])));
-        var answers = git.PushRefs(cfg.Url, pushes, force);
-        foreach (var (item, _) in pending)
+        // What each push would carry, against everything the remote holds that this store has too. A host
+        // drops a push past its size with a bare HTTP 500 and no answer per ref, and that once failed every
+        // branch for one folder of build output. So one thing too big on its own stays here, named, and
+        // the rest go in as many pushes as it takes to keep each one under the limit.
+        var haves = git.ObjectSizes(remote.Values).Keys.ToList();
+        var sized = new List<(BackupItem Item, string Lease, long Bytes)>();
+        foreach (var (item, lease) in pending)
         {
-            if (answers.TryGetValue(item.RemoteRef, out var a) && a.Ok)
+            var bytes = git.DiskUsage(item.Thin, haves);
+            if (cfg.MaxPushBytes > 0 && bytes > cfg.MaxPushBytes)
             {
-                item.State = "pushed";
-                git.UpdateRef(PushedRef(item.Kind, item.Name), item.Thin);
-                if (item.Kind == "branch") git.Config(KeyBackedUp(item.Name), Now());
+                item.State = "failed";
+                item.Why = $"{DiskUsage.Human(bytes)} to send, more than the {DiskUsage.Human(cfg.MaxPushBytes)} one backup push carries. "
+                           + "Raise the limit with: sg backup set <url> --max-push <MB>";
                 continue;
             }
-            var summary = a?.Summary ?? "";
-            var lease = summary.Contains("stale info", StringComparison.Ordinal) || summary.Contains("fetch first", StringComparison.Ordinal);
-            item.State = lease ? "rejected" : "failed";
-            item.Why = lease
-                ? "the remote holds a version of this that did not come from here - another root, or another machine. "
-                  + "Restore it first if it is the newer one, back up under a prefix, or --force to write over it."
-                : summary.Length > 0 ? summary : "the push did not answer for this ref";
+            sized.Add((item, lease ?? "", bytes));
         }
-        foreach (var r in stale)
-            if (answers.TryGetValue(r, out var a) && a.Ok && Owned(cfg, r) is { } o) git.DeleteRef(PushedRef(o.Kind, o.Name));
+        if (check) return res;
+
+        var batches = new List<List<(BackupItem Item, string Lease, long Bytes)>> { new() };
+        long used = 0;
+        foreach (var p in sized)
+        {
+            if (cfg.MaxPushBytes > 0 && batches[^1].Count > 0 && used + p.Bytes > cfg.MaxPushBytes)
+            {
+                batches.Add(new());
+                used = 0;
+            }
+            batches[^1].Add(p);
+            used += p.Bytes;
+        }
+        for (var n = 0; n < batches.Count; n++)
+        {
+            var batch = batches[n];
+            var pushes = batch.Select(p => new PushRef(p.Item.Thin, p.Item.RemoteRef, p.Lease)).ToList();
+            // A stale wip is a delete and carries nothing, so it rides with the first push.
+            if (n == 0) pushes.AddRange(stale.Select(r => new PushRef(null, r, remote[r])));
+            if (pushes.Count == 0) continue;
+            Dictionary<string, PushRefResult> answers;
+            try { answers = git.PushRefs(cfg.Url, pushes, force); }
+            catch (SgException e)
+            {
+                // Nothing per ref came back, so every ref of this push gets the one reason, and the size it was.
+                var why = $"{e.Message} ({DiskUsage.Human(batch.Sum(p => p.Bytes))} in this push)";
+                answers = pushes.ToDictionary(p => p.Dst, _ => new PushRefResult(false, '!', why), StringComparer.Ordinal);
+            }
+            foreach (var (item, _, _) in batch)
+            {
+                if (answers.TryGetValue(item.RemoteRef, out var a) && a.Ok)
+                {
+                    item.State = "pushed";
+                    git.UpdateRef(PushedRef(item.Kind, item.Name), item.Thin);
+                    if (item.Kind == "branch") git.Config(KeyBackedUp(item.Name), Now());
+                    continue;
+                }
+                var summary = a?.Summary ?? "";
+                var lease = summary.Contains("stale info", StringComparison.Ordinal) || summary.Contains("fetch first", StringComparison.Ordinal);
+                item.State = lease ? "rejected" : "failed";
+                item.Why = lease
+                    ? "the remote holds a version of this that did not come from here - another root, or another machine. "
+                      + "Restore it first if it is the newer one, back up under a prefix, or --force to write over it."
+                    : summary.Length > 0 ? summary : "the push did not answer for this ref";
+            }
+            if (n == 0)
+                foreach (var r in stale)
+                    if (answers.TryGetValue(r, out var a) && a.Ok && Owned(cfg, r) is { } o) git.DeleteRef(PushedRef(o.Kind, o.Name));
+        }
+        RememberFailures(git, res);
         return res;
+    }
+
+    /// <summary>
+    /// What the last backup could not send, per branch, where the overview reads it. A branch whose commits
+    /// or uncommitted changes failed keeps the reason until a backup sends them, so its badge cannot say
+    /// "backed up" over work that never left. A check writes nothing.
+    /// </summary>
+    static void RememberFailures(Git git, BackupResult res)
+    {
+        var before = git.BranchConfig(FailedKey);
+        foreach (var name in res.Items.Where(i => i.Kind is "branch" or "wip").Select(i => i.Name).Distinct(StringComparer.Ordinal))
+        {
+            var failed = res.Items.FirstOrDefault(i => i.Name == name && (i.Kind is "branch" or "wip") && i.Failed);
+            if (failed != null)
+            {
+                var why = (failed.Kind == "wip" ? "uncommitted changes: " : "") + (failed.Why ?? "the push did not answer").Split('\n')[0];
+                if (before.GetValueOrDefault(name) != why) git.Config(KeyFailed(name), why);
+            }
+            else if (before.ContainsKey(name)) git.ConfigUnset(KeyFailed(name));
+        }
     }
 
     static string Now() => DateTimeOffset.Now.ToString("o", CultureInfo.InvariantCulture);
@@ -499,7 +601,8 @@ public static class Backup
         return Verdict.Diverged;
     }
 
-    sealed record Source(string Kind, string Name, string Tip, string Snapshot, string? Branch);
+    /// <summary>One thing to back up. Why is set when it was refused before a commit could be made of it.</summary>
+    sealed record Source(string Kind, string Name, string Tip, string Snapshot, string? Branch, List<string> LeftOut, string? Why = null);
 
     /// <summary>Everything a backup is made of, with the snapshot each one sits on.</summary>
     static List<Source> Sources(SgRoot root, BackupConfig cfg)
@@ -526,14 +629,20 @@ public static class Backup
                 root.Log.Warn($"{branch} shares no history with svn/{coName}, so it is not backed up");
                 continue;
             }
-            list.Add(new Source("branch", branch, tip, mb, null));
+            list.Add(new Source("branch", branch, tip, mb, null, []));
             if (!cfg.Uncommitted || !Directory.Exists(w.Path)) continue;
+            // Refused changes still make an item, failed and named: a line in the log alone left the branch
+            // looking backed up while its uncommitted work never went.
             try
             {
-                var wip = Shelf.Wip(root, w.Path);
-                if (wip != null) list.Add(new Source("wip", branch, wip.Sha, mb, branch));
+                var wip = Shelf.Wip(root, w.Path, cfg.MaxFileBytes, cfg.MaxPushBytes);
+                if (wip != null) list.Add(new Source("wip", branch, wip.Sha, mb, branch, wip.LeftOut));
             }
-            catch (SgException e) { root.Log.Warn($"{branch}: the uncommitted changes are not in the backup: {e.Message}"); }
+            catch (SgException e)
+            {
+                root.Log.Warn($"{branch}: the uncommitted changes are not in the backup: {e.Message}");
+                list.Add(new Source("wip", branch, "", mb, branch, [], e.Message));
+            }
         }
 
         if (cfg.Uncommitted)
@@ -542,10 +651,14 @@ public static class Backup
                 if (!snapshots.TryGetValue(co.Name, out var snap) || !Directory.Exists(co.Path)) continue;
                 try
                 {
-                    var wip = Shelf.Wip(root, co.Path);
-                    if (wip != null) list.Add(new Source("edits", co.Name, wip.Sha, snap, null));
+                    var wip = Shelf.Wip(root, co.Path, cfg.MaxFileBytes, cfg.MaxPushBytes);
+                    if (wip != null) list.Add(new Source("edits", co.Name, wip.Sha, snap, null, wip.LeftOut));
                 }
-                catch (SgException e) { root.Log.Warn($"{co.Name}: the local edits are not in the backup: {e.Message}"); }
+                catch (SgException e)
+                {
+                    root.Log.Warn($"{co.Name}: the local edits are not in the backup: {e.Message}");
+                    list.Add(new Source("edits", co.Name, "", snap, null, [], e.Message));
+                }
             }
 
         foreach (var s in Shelf.List(root))
@@ -560,7 +673,7 @@ public static class Backup
                 root.Log.Warn($"shelf {s.Id} sits on no snapshot here, so it is not backed up");
                 continue;
             }
-            list.Add(new Source("shelf", s.Id, s.Sha, mb, s.IsCheckout ? null : s.Branch));
+            list.Add(new Source("shelf", s.Id, s.Sha, mb, s.IsCheckout ? null : s.Branch, []));
         }
         return list;
     }

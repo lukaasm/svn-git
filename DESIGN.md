@@ -143,7 +143,7 @@ Config: `D:\fort\.sg\sg.json`. It holds checkouts, skip lists, push order, messa
 | `sg export [<worktree>] [-o <file>]` | worktree | Packs the branch's own commits into one file, with the SVN revisions it was cut from. |
 | `sg import <file> [--name n] [--into c] [--show]` | anywhere | Puts one back against a checkout of the same repository, merging across whatever this one is at. |
 | `sg backup [--check] [--force]` | anywhere | Every worktree's branch, the uncommitted changes, and the shelves, rewritten thin and pushed to the backup URL. `--check` prints what would go up and what is on the remote only. |
-| `sg backup set <url> [--prefix p] [--no-uncommitted]` | anywhere | Where backups go. |
+| `sg backup set <url> [--prefix p] [--no-uncommitted] [--max-file MB] [--max-push MB]` | anywhere | Where backups go, and how big a file and a push may be. |
 | `sg backup list` | anywhere | What the remote holds: each branch, the checkout it was cut from as URL and revision, its commits, its wip and shelves, and how far the checkouts here have drifted. |
 | `sg backup restore <branch> [--name n] [--into c] [--wip]` | anywhere | Makes the branch here and replays it, the way import does. `--wip` brings the uncommitted changes back through the shelf. |
 | `sg backup prune [--yes]` | anywhere | Lists what is on the remote and not here, and deletes it with `--yes`. |
@@ -324,7 +324,19 @@ name when the worktrees live elsewhere, and git cannot hold a ref beside a folde
 goes as `refs/sg/shelf/<id>` the same way, above whatever its parent became. A worktree that is clean again takes its wip off the remote with the next backup, so a restore never
 brings back work that was committed since. `--no-uncommitted` on `sg backup set` sends only what was committed.
 
-**Where it goes.** `sg.json` gets `backup: { url, prefix, uncommitted }`. The URL is never registered as a git
+**Size.** A host refuses a big push with a bare `HTTP 500` and no answer per ref. GitHub refuses a file over 100 MB
+and a push over 2 GB. One worktree's untracked build output once made every branch of a root fail that way, while
+the overview still showed them green. So there are two limits. A file over `maxFileMb` (100) stays out of the thin
+history whole: its base and its change both stay out, so a restore leaves it alone and does not delete it. It is
+named on the item as `leftOut`. `Shelf.Wip` adds up the sizes on disk before it hashes anything. Uncommitted changes
+over `maxPushMb` (1024) fail as an item that names the folders most of it is in, and the branch still goes. Every
+pending item is measured with `git rev-list --objects --disk-usage` against the remote tips this store has. An item
+over the limit on its own fails; the rest go in as many pushes as it takes to stay under it. A push that throws
+fails its own refs only. A branch whose commits or uncommitted changes failed keeps the reason in
+`branch.<name>.sgBackupFailed` until a backup sends them. The badge reads that key and says "backup failed".
+While a backup runs, the badge says "backing up...". 0 turns either limit off.
+
+**Where it goes.** `sg.json` gets `backup: { url, prefix, uncommitted, maxFileMb, maxPushMb }`. The URL is never registered as a git
 remote, on purpose: a `git push` typed in a worktree keeps having nowhere to go, where a remote named `backup`
 would have sent the real branch, snapshot and all, the first time someone typed `git push backup`. sg pushes with
 `git push <url> <thin sha>:refs/heads/<branch>` and fetches with the URL the same way; credential helpers and

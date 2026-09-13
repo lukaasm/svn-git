@@ -307,6 +307,7 @@ machine. The URL is kept in `sg.json` and is never a git remote, so `git push` i
 
 ```powershell
 sg backup set \\nas\git\fort-backup.git     # or any git URL. --prefix laptop keeps two machines apart in one repository
+                                            # --max-file 100 and --max-push 1024 (MB, the defaults) fit GitHub; 0 is no limit
 sg backup                                   # every branch, the uncommitted changes, the shelves. Only what changed goes
 sg backup --check                           # what would go, and what is on the remote only
 sg backup list                              # what is there, and how far each checkout here has drifted from it

@@ -81,4 +81,14 @@ public sealed class BackupConfig
     public string Prefix { get; set; } = "";
     /// <summary>The changes not yet committed go too, as one commit above the branch, and the local edits of a checkout above its snapshot.</summary>
     public bool Uncommitted { get; set; } = true;
+    /// <summary>A file bigger than this many MB stays out of the backup, named. GitHub refuses a file over 100 MB outright. 0 is no limit.</summary>
+    public int MaxFileMb { get; set; } = 100;
+    /// <summary>
+    /// The most one push carries, in MB. A backup bigger than this goes as several pushes, and one thing
+    /// bigger on its own stays here and is named. GitHub drops a push past 2 GB with an HTTP 500. 0 is no limit.
+    /// </summary>
+    public int MaxPushMb { get; set; } = 1024;
+
+    [JsonIgnore] public long MaxFileBytes => MaxFileMb > 0 ? MaxFileMb * (1L << 20) : 0;
+    [JsonIgnore] public long MaxPushBytes => MaxPushMb > 0 ? MaxPushMb * (1L << 20) : 0;
 }

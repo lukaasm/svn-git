@@ -481,6 +481,101 @@ public sealed class BackupTests : IDisposable
         Assert.True(Backup.Restore(far.Root, "feature-x").Ok);
     }
 
+    /// <summary>Bytes that do not compress, so a size on disk is the size a push carries.</summary>
+    static void PutBytes(string root, string rel, int size, int seed)
+    {
+        var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var bytes = new byte[size];
+        new Random(seed).NextBytes(bytes);
+        File.WriteAllBytes(path, bytes);
+    }
+
+    /// <summary>
+    /// A file past the size a host takes stays here, whole, whether the branch committed it or it lies
+    /// untracked in the worktree. Everything else still goes, what stayed is named, and a restore leaves
+    /// the file alone rather than reading its absence as a delete.
+    /// </summary>
+    [Fact]
+    public void AFileTooBigForTheHost_StaysOut_AndIsNamed()
+    {
+        f.Setup();
+        var git = f.Root.Git;
+        var wt = MakeBranch("feature-x");
+        PutBytes(wt, "fort/dev/movie.ogv", 3 << 20, 1);
+        git.Ok(wt, "add", "-A");
+        git.Ok(wt, "commit", "-q", "-m", "third: a movie and nothing else");
+        PutBytes(wt, "fort/dev/preview/big.dll", 3 << 20, 2);
+        Fixture.Put(wt, "fort/dev/untracked.txt", "small and new\n");
+        Backup.Set(f.Root, Remote(), maxFileMb: 2);
+
+        var r = Backup.Run(f.Root);
+        Assert.True(r.Ok, string.Join("\n", r.Items.Select(i => i.State + " " + i.Why)));
+        var branch = Item(r, "branch", "feature-x");
+        Assert.Equal("pushed", branch.State);
+        Assert.Contains(branch.LeftOut, l => l.StartsWith("fort/dev/movie.ogv (", StringComparison.Ordinal));
+        var wip = Item(r, "wip", "feature-x");
+        Assert.Equal("pushed", wip.State);
+        Assert.Contains(wip.LeftOut, l => l.StartsWith("fort/dev/preview/big.dll (", StringComparison.Ordinal));
+
+        var objects = RemoteGit("rev-list", "--objects", "--all");
+        Assert.DoesNotContain("movie.ogv", objects);
+        Assert.DoesNotContain("big.dll", objects);
+        Assert.Contains("fort/dev/untracked.txt", objects);
+        Assert.Contains("fort/dev/new/file.txt", objects);
+        // Leaving a file out is decided by its size alone, so the same run makes the same objects again.
+        var again = Backup.Run(f.Root);
+        Assert.Equal("up to date", Item(again, "branch", "feature-x").State);
+        Assert.Equal("up to date", Item(again, "wip", "feature-x").State);
+
+        var far = Far();
+        var back = Backup.Restore(far.Root, "feature-x", wip: true);
+        Assert.True(back.Ok, back.Why);
+        Assert.Equal(3, back.Commits);
+        Assert.Equal("small and new\n", Read(back.Path, "fort/dev/untracked.txt"));
+        Assert.False(File.Exists(Path.Combine(back.Path, "fort", "dev", "movie.ogv")));
+    }
+
+    /// <summary>
+    /// Uncommitted changes bigger than one push carries are refused on their own, named by the folder most
+    /// of it is in, and the branches still go - in two pushes, since together they pass the limit. The
+    /// branch's badge says the backup failed until a backup sends its work.
+    /// </summary>
+    [Fact]
+    public void WorkTooBigForOnePush_FailsAlone_AndTheRestGoesInPushesThatFit()
+    {
+        f.Setup();
+        var git = f.Root.Git;
+        var wt = MakeBranch("feature-x");
+        PutBytes(wt, "fort/dev/a.bin", 700 << 10, 1);
+        git.Ok(wt, "add", "-A");
+        git.Ok(wt, "commit", "-q", "-m", "third: most of a megabyte");
+        var other = Ops.Branch(f.Root, "feature-y", f.Co).Path;
+        PutBytes(other, "fort/dev/b.bin", 700 << 10, 2);
+        git.Ok(other, "add", "-A");
+        git.Ok(other, "commit", "-q", "-m", "most of another megabyte");
+        for (var i = 0; i < 3; i++) PutBytes(wt, $"fort/dev/output/bin/part{i}.bin", 600 << 10, 10 + i);
+        Backup.Set(f.Root, Remote(), maxPushMb: 1);
+
+        var r = Backup.Run(f.Root);
+        Assert.Equal("pushed", Item(r, "branch", "feature-x").State);
+        Assert.Equal("pushed", Item(r, "branch", "feature-y").State);
+        var wip = Item(r, "wip", "feature-x");
+        Assert.Equal("failed", wip.State);
+        Assert.Contains("fort/dev/", wip.Why);
+        Assert.False(r.Ok);
+        Assert.DoesNotContain("refs/sg/wip/feature-x", RemoteGit("ls-remote", "--refs", _remote));
+        var status = Ops.Status(f.Root, checkSvn: false).Worktrees;
+        Assert.StartsWith("uncommitted changes: ", status.Single(w => w.Branch == "feature-x").BackupFailed);
+        Assert.Null(status.Single(w => w.Branch == "feature-y").BackupFailed);
+
+        // The build output goes, and the next backup clears the failure.
+        Directory.Delete(Path.Combine(wt, "fort", "dev", "output"), recursive: true);
+        var after = Backup.Run(f.Root);
+        Assert.True(after.Ok, string.Join("\n", after.Items.Select(i => i.State + " " + i.Why)));
+        Assert.Null(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-x").BackupFailed);
+    }
+
     [Fact]
     public void Set_RefusesAUrlThatIsNotARepository()
     {

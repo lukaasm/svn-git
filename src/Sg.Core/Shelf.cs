@@ -41,6 +41,9 @@ public sealed class ShelfInfo
     /// <summary>Paths that were staged when the shelf was made, so putting it back can stage them again.</summary>
     public List<string> Staged = new();
 
+    /// <summary>Files a backup's wip left out for their size, as "path (size)". Not in the message: a shelf someone makes holds everything.</summary>
+    public List<string> LeftOut = new();
+
     public bool IsCheckout => Kind == "checkout";
     public string RefName => Shelf.RefPrefix + Id;
     public int Count => Files.Count;
@@ -259,14 +262,14 @@ public static class Shelf
     }
 
     /// <summary>The tree a shelf would hold: the base with the files written over it. Null when that is the base itself.</summary>
-    static string? TreeOf(SgRoot root, string worktree, ShelfInfo info)
+    static string? TreeOf(SgRoot root, string worktree, ShelfInfo info, IEnumerable<string>? exclude = null)
     {
         var git = root.Git;
         var index = root.NewTempFile(".index");
         try
         {
             git.ReadTree(worktree, info.Base, index);
-            git.AddPathsForced(worktree, info.Files.Select(f => f.Path), index);
+            git.AddPathsForced(worktree, info.Files.Select(f => f.Path), index, exclude);
             var tree = git.WriteTree(worktree, index);
             return tree == git.TreeOf(info.Base) ? null : tree;
         }
@@ -285,8 +288,11 @@ public static class Shelf
     /// because a backup that stops on one such file protects none of the others; what is left out is
     /// named in the log. Its dates are the base commit's, so the same changes make the same commit
     /// twice and a backup can tell "still the same" from "changed since".
+    ///
+    /// A file bigger than maxFileBytes is left out too, and named in LeftOut. Changes that add up to
+    /// more than maxTotalBytes are refused with the folders most of it is in, before anything is hashed.
     /// </summary>
-    public static ShelfInfo? Wip(SgRoot root, string folder)
+    public static ShelfInfo? Wip(SgRoot root, string folder, long maxFileBytes = 0, long maxTotalBytes = 0)
     {
         folder = Path.GetFullPath(folder);
         var git = root.Git;
@@ -338,14 +344,75 @@ public static class Shelf
             };
             where = worktree;
         }
+        // What a backup cannot carry is found before a byte of it is hashed. A folder of build output
+        // hashed into the store on every run costs minutes and gigabytes, only for the push to be refused.
+        var exclude = new List<string>();
+        if (maxFileBytes > 0 || maxTotalBytes > 0)
+        {
+            long total = 0;
+            var big = new List<(string Path, long Size)>();
+            var dropped = new HashSet<string>(StringComparer.Ordinal);
+            var groups = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in info.Files)
+                foreach (var (rel, size) in SizesUnder(where, f.Path))
+                {
+                    if (maxFileBytes > 0 && size > maxFileBytes)
+                    {
+                        big.Add((rel, size));
+                        if (rel == f.Path) dropped.Add(rel);
+                        else exclude.Add(rel);
+                        continue;
+                    }
+                    total += size;
+                    var g = Group(rel);
+                    groups[g] = groups.GetValueOrDefault(g) + size;
+                }
+            info.Files = info.Files.Where(f => !dropped.Contains(f.Path)).ToList();
+            info.Staged = info.Staged.Where(p => !dropped.Contains(p)).ToList();
+            info.LeftOut = big.OrderByDescending(b => b.Size).Select(b => $"{b.Path} ({DiskUsage.Human(b.Size)})").ToList();
+            if (info.LeftOut.Count > 0)
+                root.Log.Warn($"{info.Where}: {info.LeftOut.Count} file(s) bigger than {DiskUsage.Human(maxFileBytes)} are not in the backup: "
+                              + string.Join(", ", info.LeftOut.Take(5)) + (info.LeftOut.Count > 5 ? ", ..." : ""));
+            if (maxTotalBytes > 0 && total > maxTotalBytes)
+            {
+                var most = groups.OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"{kv.Key} {DiskUsage.Human(kv.Value)}");
+                throw new SgException($"{DiskUsage.Human(total)} of uncommitted changes, more than the {DiskUsage.Human(maxTotalBytes)} one backup push carries. "
+                                      + $"Most of it: {string.Join(", ", most)}. Ignore what is build output, commit what is work, "
+                                      + "or raise the limit with: sg backup set <url> --max-push <MB>");
+            }
+            if (info.Files.Count == 0) return null;
+        }
+
         var under = git.IdentityOf(info.Base);
         info.Created = DateTimeOffset.TryParse(under.CommitterDate, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when)
             ? when : DateTimeOffset.UnixEpoch;
-        var tree = TreeOf(root, where, info);
+        var tree = TreeOf(root, where, info, exclude);
         if (tree == null) return null;
         var who = new CommitIdentity("sg", "sg@localhost", under.CommitterDate, "sg", "sg@localhost", under.CommitterDate, "");
         info.Sha = git.CommitTreeExact(tree, info.Base, Message(info), who);
         return info;
+    }
+
+    /// <summary>Every file at a path with its size: the file itself, or each file under a folder svn lists as one entry. Nothing for a path gone from disk.</summary>
+    static IEnumerable<(string Rel, long Size)> SizesUnder(string root, string rel)
+    {
+        var full = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(full))
+        {
+            yield return (rel, new FileInfo(full).Length);
+            yield break;
+        }
+        if (!Directory.Exists(full)) yield break;
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        foreach (var fi in new DirectoryInfo(full).EnumerateFiles("*", opts))
+            yield return (rel.TrimEnd('/') + "/" + Path.GetRelativePath(full, fi.FullName).Replace('\\', '/'), fi.Length);
+    }
+
+    /// <summary>The folder two levels down that a path is in, or the path when it is shallower: "build/ui-preview/" for all a build wrote there.</summary>
+    static string Group(string rel)
+    {
+        var parts = rel.Split('/');
+        return parts.Length <= 2 ? rel : parts[0] + "/" + parts[1] + "/";
     }
 
     /// <summary>

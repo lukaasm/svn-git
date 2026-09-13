@@ -268,6 +268,8 @@ public sealed partial class MainWindow : Window
         var root = Session.Root;
         if (root == null || !Backup.Configured(root) || _backingUp) return null;
         _backingUp = true;
+        Session.BackingUp = true;
+        Overview.RepaintWorktrees();
         try
         {
             var res = quiet
@@ -276,17 +278,26 @@ public sealed partial class MainWindow : Window
             if (res == null) return null;
             var rejected = res.Items.Where(i => i.Rejected).Select(i => i.Name).ToList();
             var behind = res.Items.Where(i => i.Behind).Select(i => i.Name).ToList();
-            if (!quiet || res.Pushed > 0 || rejected.Count > 0 || behind.Count > 0 || res.Items.Any(i => i.Failed))
+            var failed = res.Items.Where(i => i.Failed).ToList();
+            if (!quiet || res.Pushed > 0 || rejected.Count > 0 || behind.Count > 0 || failed.Count > 0)
                 Pane.Append($"{DateTime.Now:HH:mm}  " + BackupPage.Sentence(res));
             if (rejected.Count > 0) Pane.Append(res.Items.First(i => i.Rejected).Why ?? "");
+            foreach (var i in failed) Pane.Append($"{i.Kind} {i.Name}: {i.Why}");
 
-            // A conflict and a newer-remote are lasting states, not fresh events: the timer would raise the
-            // same toast every few minutes. Toast a name once, when it first appears, and again only if it clears and returns.
-            var alert = rejected.Concat(behind).ToHashSet(StringComparer.Ordinal);
+            // A conflict, a newer remote and a failure are lasting states, not fresh events: the timer would raise
+            // the same toast every few minutes. Toast a name once, when it first appears, and again only if it clears and returns.
+            var failedNames = failed.Select(i => i.Kind + " " + i.Name).ToList();
+            var alert = rejected.Concat(behind).Concat(failedNames).ToHashSet(StringComparer.Ordinal);
             var freshReject = rejected.Where(n => !_backupAlerted.Contains(n)).ToList();
             var freshBehind = behind.Where(n => !_backupAlerted.Contains(n)).ToList();
+            var freshFailed = failed.Where(i => !_backupAlerted.Contains(i.Kind + " " + i.Name)).ToList();
             _backupAlerted = alert;
-            if (quiet && freshReject.Count > 0)
+            if (quiet && freshFailed.Count > 0)
+                Notifications.Show("Backup failed for " + string.Join(", ", freshFailed.Select(i => i.Name).Distinct()),
+                    (freshFailed[0].Why ?? "The push did not go.").Split('\n')[0],
+                    Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
+                    new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
+            else if (quiet && freshReject.Count > 0)
                 Notifications.Show("Backup conflict for " + string.Join(", ", freshReject),
                     "Another machine has different work under this name. Open Backup on the checkout to restore it, overwrite it, or back up under this machine's own prefix.",
                     Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
@@ -299,7 +310,12 @@ public sealed partial class MainWindow : Window
             await RefreshAsync();
             return res;
         }
-        finally { _backingUp = false; }
+        finally
+        {
+            _backingUp = false;
+            Session.BackingUp = false;
+            Overview.RepaintWorktrees();
+        }
     }
 
     void Nav_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)

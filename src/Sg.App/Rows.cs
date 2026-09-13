@@ -253,15 +253,30 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public DateTimeOffset? BackedUp { get; set; }
     /// <summary>A backup repository is set, so the chip has something to say at all.</summary>
     public bool BackupOn { get; set; }
+    /// <summary>Why the last backup did not send this branch or its uncommitted changes. Null when nothing failed.</summary>
+    public string? BackupFailed { get; set; }
 
     public Visibility BackupVisibility => BackupOn && !Missing ? Visibility.Visible : Visibility.Collapsed;
-    public string BackupText => NotBackedUp < 0 ? "not backed up"
+    /// <summary>
+    /// A run says so while it runs, and a failed one says so until a backup sends the work. The commit count
+    /// alone had the badge green through a push that failed for the uncommitted changes, and through the
+    /// half hour that push took.
+    /// </summary>
+    public string BackupText => Session.BackingUp ? "backing up..."
+        : BackupFailed != null ? "backup failed"
+        : NotBackedUp < 0 ? "not backed up"
         : NotBackedUp == 0 ? "backed up" + Ago(BackedUp)
         : NotBackedUp == 1 ? "1 commit not backed up"
         : NotBackedUp + " commits not backed up";
-    /// <summary>Green when the backup holds the tip, amber when commits wait, red when nothing of this branch ever went.</summary>
-    public ChipSeverity BackupSeverity => NotBackedUp == 0 ? ChipSeverity.Success : NotBackedUp > 0 ? ChipSeverity.Caution : ChipSeverity.Critical;
-    public string BackupTip => NotBackedUp == 0
+    /// <summary>Green when the backup holds the tip, amber when commits wait, red when a backup failed or nothing of this branch ever went.</summary>
+    public ChipSeverity BackupSeverity => Session.BackingUp ? ChipSeverity.Neutral
+        : BackupFailed != null ? ChipSeverity.Critical
+        : NotBackedUp == 0 ? ChipSeverity.Success : NotBackedUp > 0 ? ChipSeverity.Caution : ChipSeverity.Critical;
+    public string BackupTip => Session.BackingUp
+        ? "A backup is running. This badge says how it went when it ends."
+        : BackupFailed != null
+        ? "The last backup did not send this branch's work: " + BackupFailed + ". Open Backup on the checkout to try again."
+        : NotBackedUp == 0
         ? "The backup repository holds every commit of this branch"
           + (BackedUp is { } t ? $", last confirmed {t.LocalDateTime:yyyy-MM-dd HH:mm}" : "") + ". Uncommitted changes go with the next backup."
         : NotBackedUp < 0
@@ -343,6 +358,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         NotBackedUp = n.NotBackedUp;
         BackedUp = n.BackedUp;
         BackupOn = n.BackupOn;
+        BackupFailed = n.BackupFailed;
         Repaint();
     }
 

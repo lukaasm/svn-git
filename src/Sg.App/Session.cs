@@ -99,6 +99,9 @@ public static class Session
     public static AppSettings Settings { get; } = AppSettings.Load();
     public static SgRoot? Root { get; private set; }
 
+    /// <summary>A backup is running. The worktree badges say so, rather than what the last one found.</summary>
+    public static bool BackingUp { get; set; }
+
     public static bool Open(string? hint)
     {
         SgRoot? r = null;

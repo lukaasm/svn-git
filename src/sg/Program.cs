@@ -85,8 +85,10 @@ static class Cli
                                                       repository as thin histories. --check only says what would go. An older
                                                       copy another machine left is written over; a newer one waits for a restore.
                                                       Exit code 10 when the remote holds work that has diverged from here
-            sg backup set <url> [--prefix <p>] [--no-uncommitted]
-                                                      where backups go. A prefix keeps two machines apart in one repository
+            sg backup set <url> [--prefix <p>] [--no-uncommitted] [--max-file <MB>] [--max-push <MB>]
+                                                      where backups go. A prefix keeps two machines apart in one repository.
+                                                      A file over --max-file (100) stays here; one push carries --max-push (1024)
+                                                      at most, and more goes in several. 0 is no limit
             sg backup list                            what the remote holds, and how far each checkout here has drifted
             sg backup restore <branch> [--name <b>] [--into <c>] [--wip] [--force]
                                                       make the branch here again. --wip brings its uncommitted changes back too;
@@ -710,10 +712,11 @@ static class Cli
             {
                 var url = a.Arg(1, "the URL of the backup repository");
                 bool? uncommitted = a.Has("--no-uncommitted") ? false : a.Has("--uncommitted") ? true : null;
-                var b = Backup.Set(root, url, a.Get("--prefix"), uncommitted);
+                var b = Backup.Set(root, url, a.Get("--prefix"), uncommitted, Megabytes(a, "--max-file"), Megabytes(a, "--max-push"));
                 if (json) { Json(b); return 0; }
                 Console.WriteLine("backups go to " + b.Url + (b.Prefix.Length > 0 ? " under " + b.Prefix + "/" : "")
                                   + (b.Uncommitted ? "" : ", committed work only"));
+                Console.WriteLine($"  a file over {Limit(b.MaxFileMb)} stays here; one push carries at most {Limit(b.MaxPushMb)}");
                 Console.WriteLine("  send them with: sg backup");
                 return 0;
             }
@@ -790,7 +793,8 @@ static class Cli
                 foreach (var i in r.Items)
                     Console.WriteLine($"  {i.State,-11} {i.Kind,-7} {i.Name,-28}" + (i.Kind == "branch" ? $" {i.Commits} commit(s)" : "")
                                       + (i.Reconciled ? "  (over an older copy from another machine)" : "")
-                                      + (i.Why != null ? "\n              " + i.Why : ""));
+                                      + (i.Why != null ? "\n              " + i.Why : "")
+                                      + (i.LeftOut.Count > 0 ? "\n              left out, too big: " + string.Join(", ", i.LeftOut) : ""));
                 foreach (var o in r.RemoteOnly) Console.WriteLine("  remote only " + o + "   (sg backup prune)");
                 if (r.Items.Count == 0) Console.WriteLine("  nothing here to back up");
                 return r.Rejected > 0 ? 10 : r.Ok ? 0 : 1;
@@ -816,6 +820,16 @@ static class Cli
     };
 
     static void Json(object o) => Console.WriteLine(JsonSerializer.Serialize(o, JsonOpts));
+
+    /// <summary>A size in MB from a flag, null when the flag is not there. 0 is no limit.</summary>
+    static int? Megabytes(Args a, string flag)
+    {
+        var v = a.Get(flag);
+        if (v == null) return null;
+        return int.TryParse(v, out var mb) && mb >= 0 ? mb : throw new SgException($"{flag} takes a size in MB, or 0 for no limit: {v}");
+    }
+
+    static string Limit(int mb) => mb > 0 ? mb + " MB" : "no limit";
 }
 
 /// <summary>Everything goes to stderr, so --json output on stdout stays clean. Progress redraws one line when stderr is a terminal.</summary>

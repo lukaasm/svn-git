@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -570,13 +571,41 @@ public sealed class Git
     /// ignore rules cover: svn calls it unversioned, the snapshot leaves it out, and it is still the
     /// reader's work. -A, so a path that is gone from disk goes in as a deletion.
     /// </summary>
-    public void AddPathsForced(string worktree, IEnumerable<string> relPaths, string? indexFile = null)
+    public void AddPathsForced(string worktree, IEnumerable<string> relPaths, string? indexFile = null, IEnumerable<string>? exclude = null)
     {
         var list = relPaths.ToList();
         if (list.Count == 0) return;
-        var f = WritePathspecFile(list.Select(p => ":(literal)" + p));
+        var specs = list.Select(p => ":(literal)" + p);
+        if (exclude != null) specs = specs.Concat(exclude.Select(p => ":(exclude,literal)" + p));
+        var f = WritePathspecFile(specs);
         try { Run(worktree, ["add", "-A", "-f", "--pathspec-from-file=" + f, "--pathspec-file-nul"], null, IndexEnv(indexFile)).EnsureOk(); }
         finally { File.Delete(f); }
+    }
+
+    /// <summary>The size of each of these objects, in one cat-file. An id the store does not have is left out, so the keys also say which ones it has.</summary>
+    public Dictionary<string, long> ObjectSizes(IEnumerable<string> shas)
+    {
+        var res = new Dictionary<string, long>(StringComparer.Ordinal);
+        var list = shas.Distinct(StringComparer.Ordinal).ToList();
+        if (list.Count == 0) return res;
+        var r = Run(Store, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], Encoding.UTF8.GetBytes(string.Join("\n", list) + "\n"));
+        foreach (var line in r.StdOut.Split('\n'))
+        {
+            var parts = line.Trim().Split(' ');
+            if (parts.Length == 2 && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var size)) res[parts[0]] = size;
+        }
+        return res;
+    }
+
+    /// <summary>
+    /// What the objects of a commit take in the store and not under any of these, compressed as they
+    /// sit: close to the size of the pack a push of it would send to a remote that has the others.
+    /// </summary>
+    public long DiskUsage(string tip, IEnumerable<string> haves)
+    {
+        var stdin = tip + "\n" + string.Concat(haves.Distinct(StringComparer.Ordinal).Select(h => "^" + h + "\n"));
+        var r = Run(Store, ["rev-list", "--objects", "--disk-usage", "--stdin"], Encoding.UTF8.GetBytes(stdin)).EnsureOk();
+        return long.Parse(r.StdOut.Trim(), CultureInfo.InvariantCulture);
     }
 
     /// <summary>The same as CheckoutPaths, into an index of its own, so the real one is left as it was.</summary>

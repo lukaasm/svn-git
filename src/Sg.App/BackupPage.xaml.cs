@@ -256,6 +256,7 @@ public sealed partial class BackupPage : SgPage
         ResultBar.Message = Sentence(res);
         ResultBar.IsOpen = true;
         if (rejected.Count > 0 && rejected[0].Why != null) Pane.Append(rejected[0].Why!);
+        foreach (var i in res.Items.Where(i => i.Failed)) Pane.Append($"{i.Kind} {i.Name}: {i.Why}");
         await LoadAsync();
     }
 

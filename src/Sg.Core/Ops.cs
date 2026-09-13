@@ -96,6 +96,8 @@ public sealed class WorktreeStatus
     public int NotBackedUp = -1;
     /// <summary>When the backup last held this branch.</summary>
     public DateTimeOffset? BackedUp;
+    /// <summary>Why the last backup did not send this branch or its uncommitted changes, until one does. Null when nothing failed.</summary>
+    public string? BackupFailed;
 }
 
 public sealed class StatusResult
@@ -1058,8 +1060,12 @@ public static class Ops
         // git status walks the whole worktree, and a worktree here holds tens of thousands of files.
         // One worktree at a time made the overview wait for the sum of them.
         res.Worktrees.AddRange(Fan.Map(found, w => WorktreeStatusOf(git, refs, bases, shared, backedUp, w)));
+        var backupFailed = git.BranchConfig(Backup.FailedKey);
         foreach (var ws in res.Worktrees)
+        {
             ws.Shelves = shelves.Count(s => !s.IsCheckout && s.Branch.Equals(ws.Branch, StringComparison.OrdinalIgnoreCase));
+            ws.BackupFailed = backupFailed.GetValueOrDefault(ws.Branch);
+        }
         return res;
     }
 

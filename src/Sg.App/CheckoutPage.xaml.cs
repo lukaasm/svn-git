@@ -44,6 +44,12 @@ public sealed partial class CheckoutPage : SgPage
     /// <summary>The strip the overview's operations report into. The main window uses it for its own reads.</summary>
     public StatusStrip Strip => Pane;
 
+    /// <summary>The worktree cards again, for state that lives outside their rows: a backup starting or ending.</summary>
+    public void RepaintWorktrees()
+    {
+        if (WorktreeList.ItemsSource is List<WorktreeRow> rows) foreach (var r in rows) r.Repaint();
+    }
+
     /// <summary>The checkout on screen, or null.</summary>
     public CheckoutRow? Current => _current;
 
@@ -130,6 +136,7 @@ public sealed partial class CheckoutPage : SgPage
                 NotBackedUp = w.NotBackedUp,
                 BackedUp = w.BackedUp,
                 BackupOn = status.BackupUrl != null,
+                BackupFailed = w.BackupFailed,
             })
             // By name, and by nothing else. Sorting by what each worktree wants put the loudest first,
             // which reads well in a screenshot and badly in use: committing, rebasing or syncing changes

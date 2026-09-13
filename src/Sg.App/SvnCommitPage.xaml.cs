@@ -326,11 +326,9 @@ public sealed partial class SvnCommitPage : SgPage
                 + "A file whose svn property changed is reverted outright: a shelf cannot hold a property.",
                 "Discard")) return;
         // The shelf is the discard: saving one reverts the files. What it cannot hold is reverted the old way.
-        var shelf = await Discards.ShelveAsync(Pane, _co.Path, paths,
+        var result = await Discards.ShelveAsync(Pane, _co.Path, paths,
             rest => Ops.SvnRevert(root, _co, rest.ToList(), deleteUnversioned: true));
-        if (shelf != null)
-            Discards.Announce(ResultBar, what, $"They wait on the shelf as \"{shelf.Title}\" for a week, or until you drop them.",
-                Discards.Restore(Pane, shelf), () => LoadAsync());
+        Discards.Report(ResultBar, Pane, what, result, () => LoadAsync());
         await LoadAsync();
     }
 
@@ -386,8 +384,9 @@ public sealed partial class SvnCommitPage : SgPage
         var r = await ShelfActions.SaveAsync(this, Pane, _co.Path, paths, what, ShelfActions.Suggest(paths));
         if (r == null) return;
         ResultBar.ActionButton = null;
-        ResultBar.Severity = InfoBarSeverity.Success;
-        ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The checkout holds what SVN has for them again.";
+        ResultBar.Severity = r.LeftBehind.Count > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
+        ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The checkout holds what SVN has for them again."
+                            + ShelfActions.LeftBehindNote(r);
         ResultBar.IsOpen = true;
         await LoadAsync();
     }

@@ -437,9 +437,9 @@ public sealed partial class PushPage : SgPage
             : $"Put the checkout's own edits to {paths.Count} file(s) aside, so this push can write them.";
         var r = await ShelfActions.SaveAsync(this, Pane, co.Path, paths, what, "before pushing " + Branch);
         if (r == null) return;
-        ResultBar.Severity = InfoBarSeverity.Success;
+        ResultBar.Severity = r.LeftBehind.Count > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
         ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". "
-                            + "Push now, then put them back from Shelved changes on the checkout card.";
+                            + "Push now, then put them back from Shelved changes on the checkout card." + ShelfActions.LeftBehindNote(r);
         ResultBar.IsOpen = true;
         await LoadAsync();
     }

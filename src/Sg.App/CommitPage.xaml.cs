@@ -375,8 +375,9 @@ public sealed partial class CommitPage : SgPage
         var r = await ShelfActions.SaveAsync(this, Pane, _worktree, paths, what, ShelfActions.Suggest(paths));
         if (r == null) return;
         ResultBar.ActionButton = null;
-        ResultBar.Severity = InfoBarSeverity.Success;
-        ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The worktree holds what the branch has for them again.";
+        ResultBar.Severity = r.LeftBehind.Count > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
+        ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The worktree holds what the branch has for them again."
+                            + ShelfActions.LeftBehindNote(r);
         ResultBar.IsOpen = true;
         await LoadAsync();
     }
@@ -521,7 +522,7 @@ public sealed partial class CommitPage : SgPage
                 "Discard")) return;
         // The shelf is the discard: saving one writes the files back the way the last commit has them.
         // What it cannot hold is discarded the old way, which is what this whole method used to be.
-        var shelf = await Discards.ShelveAsync(Pane, _worktree, picked.Select(p => p.Path).ToList(), rest =>
+        var result = await Discards.ShelveAsync(Pane, _worktree, picked.Select(p => p.Path).ToList(), rest =>
         {
             var left = rest.ToHashSet(StringComparer.OrdinalIgnoreCase);
             root.Git.RestoreFromHead(_worktree, picked.Where(p => p.Tracked && left.Contains(p.Path)).Select(p => p.Path));
@@ -531,9 +532,7 @@ public sealed partial class CommitPage : SgPage
                 if (File.Exists(abs)) File.Delete(abs);
             }
         });
-        if (shelf != null)
-            Discards.Announce(ResultBar, what, $"They wait on the shelf as \"{shelf.Title}\" for a week, or until you drop them.",
-                Discards.Restore(Pane, shelf), () => LoadAsync());
+        Discards.Report(ResultBar, Pane, what, result, () => LoadAsync());
         await LoadAsync();
     }
 

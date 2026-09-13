@@ -57,6 +57,9 @@ public sealed partial class CheckoutPage : SgPage
     /// <summary>The checkout on screen, or null.</summary>
     public CheckoutRow? Current => _current;
 
+    /// <summary>The card the overview's operations report on. The main window runs sync and new worktree, so it reaches it here.</summary>
+    public ReportCard Report => OpReport;
+
     /// <summary>Coming back from a commit, a push, or the settings: read the root again, as closing that window used to.</summary>
     public override void OnShown(bool returning)
     {
@@ -111,6 +114,8 @@ public sealed partial class CheckoutPage : SgPage
     /// <summary>Puts one checkout on screen. Null is "no root open", which is its own page.</summary>
     public void Show(CheckoutRow? row, StatusResult? status)
     {
+        // A report is about the checkout it was made on: another checkout coming on screen does not inherit it.
+        if (_current?.Name != row?.Name) OpReport.Hide();
         _current = row;
         _shown++;   // anything a previous checkout's size walk reports from here is stale
         var noRoot = Session.Root == null;
@@ -473,7 +478,7 @@ public sealed partial class CheckoutPage : SgPage
     {
         if (_current == null) return;
         var co = _current.Config;
-        var r = await ShelfActions.SaveAsync(this, Pane, co.Path, null, $"the {_localEdits} change(s) in {co.Name}", "checkout changes");
+        var r = await ShelfActions.SaveAsync(this, Pane, co.Path, null, $"the {_localEdits} change(s) in {co.Name}", "checkout changes", OpReport);
         if (r == null) return;
         await _owner.RefreshAsync();
     }
@@ -542,7 +547,7 @@ public sealed partial class CheckoutPage : SgPage
         var row = WorktreeOf(sender);
         if (row == null) return;
         var what = row.DirtyFiles == 0 ? $"the uncommitted changes in {row.Branch}" : $"the {row.DirtyFiles} change(s) in {row.Branch}";
-        var r = await ShelfActions.SaveAsync(this, Pane, row.Path, null, what, "worktree changes");
+        var r = await ShelfActions.SaveAsync(this, Pane, row.Path, null, what, "worktree changes", OpReport);
         if (r == null) return;
         _owner.BackupSoon();
         await _owner.RefreshAsync();
@@ -656,7 +661,9 @@ public sealed partial class CheckoutPage : SgPage
         // dialog says nothing, and the work after it takes as long as a git worktree remove takes.
         await Busy.During(sender, async () =>
         {
-            await Runner.Run(Pane, "remove " + row.Branch, () => Ops.Remove(root, row.Branch, force: true));
+            await Reports.Run(OpReport, Pane, "remove " + row.Branch, () => Ops.Remove(root, row.Branch, force: true),
+                card => card.Show(ChipSeverity.Success, "", $"{row.Branch} is removed",
+                    $"The folder {row.Path} and the branch are gone. Anything pushed stays in SVN."));
             await _owner.RefreshAsync();
         });
     }
@@ -697,7 +704,11 @@ public sealed partial class CheckoutPage : SgPage
     async Task RebaseAsync(WorktreeRow row)
     {
         var root = Session.Require();
-        var r = await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, row.Path));
+        var r = await Reports.Run(OpReport, Pane, "rebase " + row.Branch, () => Ops.Rebase(root, row.Path), (card, x) => card.Show(
+            x.Ok ? ChipSeverity.Success : ChipSeverity.Caution, x.Ok ? "" : "",
+            x.Ok ? $"{x.Branch} is on the latest svn/{x.Checkout}, {x.Ahead} commit(s) ahead" : $"The rebase of {x.Branch} stopped on conflicts",
+            x.Ok ? (x.Refreshed.Count > 0 ? "Shared folders refreshed from the checkout: " + string.Join(", ", x.Refreshed) : "")
+                 : "The resolver is open: pick a version for each file, then carry on. The branch stays half moved until then."));
         if (r == null) { await _owner.RefreshAsync(); return; }
         if (r.Ok)
         {

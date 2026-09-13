@@ -153,6 +153,10 @@
                      badge on a card is a colour and a tooltip, and a failure that only lived in the footer line
                      went unseen for as long as the backups kept failing. A success says nothing here: the
                      green badges already say it. Closing it hides this result; the next failure opens it again. -->
+                <!-- How the last thing done from this page went: a sync, a rebase, a shelve, a removal, a new
+                     worktree. It stays until it is closed, the checkout changes, or the next one replaces it. -->
+                <local:ReportCard x:Name="OpReport" Closable="True" Margin="0,0,0,8" />
+
                 <InfoBar x:Name="BackupBar" Severity="Error" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
                 <TextBlock x:Name="WorktreesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,0,0,4" Visibility="Collapsed" />

@@ -20,16 +20,21 @@ public static class Discards
     /// <summary>How long a discard waits on the shelf before it is dropped for good.</summary>
     static readonly TimeSpan Keep = TimeSpan.FromDays(7);
 
+    /// <summary>What a discard did: the shelf that keeps it, the files that went with nothing behind them, and why the shelf would not take those.</summary>
+    public sealed record Result(ShelfInfo? Shelf, IReadOnlyList<string> Unkept, string? Why);
+
     /// <summary>
     /// Takes the picked paths out of the working copy onto a shelf, which puts each file back the way
     /// the last commit, or BASE, has it. What a shelf cannot hold - a file carrying an svn property
     /// change, a path the checkout skips - goes to plain, which discards it the old way, with nothing
-    /// behind it. The shelf comes back, or null when nothing went onto one.
+    /// behind it. What was kept and what was not both come back, so the page can say which is which.
     /// </summary>
-    public static async Task<ShelfInfo?> ShelveAsync(StatusStrip pane, string folder, IReadOnlyList<string> paths, Action<IReadOnlyList<string>> plain)
+    public static async Task<Result> ShelveAsync(StatusStrip pane, string folder, IReadOnlyList<string> paths, Action<IReadOnlyList<string>> plain)
     {
         var root = Session.Require();
         ShelfInfo? shelf = null;
+        IReadOnlyList<string> unkept = [];
+        string? why = null;
         await Runner.Run(pane, "discard", () =>
         {
             var rest = paths;
@@ -38,18 +43,50 @@ public static class Discards
                 var saved = Shelf.Save(root, folder, paths, TitlePrefix + DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
                 shelf = saved.Shelf;
                 rest = saved.LeftBehind;
+                if (rest.Count > 0) why = "a shelf cannot hold an svn property change";
             }
             catch (SgException ex)
             {
                 // A shelf refuses whole, before it writes anything: nothing among the picked files it can
-                // hold, or one of them in conflict. The old discard takes all of them, and the log says why.
-                root.Log.Info("not kept before the discard: " + ex.Message.Split('\n')[0]);
+                // hold, or one of them in conflict. The old discard takes all of them, and the page says why.
+                why = ex.Message.Split('\n')[0];
+                root.Log.Info("not kept before the discard: " + why);
             }
-            if (rest.Count > 0) plain(rest);
+            if (rest.Count > 0)
+            {
+                plain(rest);
+                unkept = rest;
+            }
             Prune(root);
         });
-        return shelf;
+        return new Result(shelf, unkept, why);
     }
+
+    /// <summary>
+    /// Says what a discard did, on the page's bar: kept on a shelf with Undo, and - for files a shelf would
+    /// not take - gone with nothing behind them, in the colour of a warning. A log line was the only trace
+    /// of those, under a strip that read "discard: done".
+    /// </summary>
+    public static void Report(InfoBar bar, StatusStrip pane, string what, Result r, Func<Task> reload)
+    {
+        var unkept = r.Unkept.Count == 0 ? ""
+            : $" {Names(r.Unkept)} could not go onto the shelf{(r.Why != null ? " (" + r.Why + ")" : "")}, and went with no way back.";
+        if (r.Shelf != null)
+        {
+            Announce(bar, what, $"They wait on the shelf as \"{r.Shelf.Title}\" for a week, or until you drop them." + unkept, Restore(pane, r.Shelf), reload);
+            if (unkept.Length > 0) bar.Severity = InfoBarSeverity.Warning;
+        }
+        else if (unkept.Length > 0)
+        {
+            Clear(bar);
+            bar.Severity = InfoBarSeverity.Warning;
+            bar.Message = $"Discarded {what}.{unkept}";
+            bar.IsOpen = true;
+        }
+    }
+
+    static string Names(IReadOnlyList<string> paths) =>
+        paths.Count <= 3 ? string.Join(", ", paths) : $"{string.Join(", ", paths.Take(3))} and {paths.Count - 3} more";
 
     /// <summary>A discard shelf a week old was not wanted back. It goes, so the shelf list is not a graveyard.</summary>
     static void Prune(SgRoot root)

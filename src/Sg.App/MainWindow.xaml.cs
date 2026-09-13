@@ -1017,7 +1017,7 @@ public sealed partial class MainWindow : Window
         // there walked the host's list out from under the navigation that was already running, and the app
         // went with it. By the time this runs that navigation has finished, and Host.Current is the truth.
         DispatcherQueue.TryEnqueue(() => { if (Host.Current is not CheckoutPage) ShowOverview(RowOf(co)); });
-        var r = await Runner.Run(Pane, "sync " + co.Name, () => Ops.Sync(root, co));
+        var r = await Reports.Run(Overview.Report, Pane, "sync " + co.Name, () => Ops.Sync(root, co), ShowSync);
         if (r != null)
         {
             var line = $"{r.Checkout}: r{r.Revision}, {(r.Changed ? "new snapshot" : "no change")}"
@@ -1041,8 +1041,10 @@ public sealed partial class MainWindow : Window
         var root = Session.Root;
         var input = await Dialogs.NewBranch(this, root, preselect);
         if (input == null) return;
-        var r = await Runner.Run(Pane, "new branch " + input.Name,
-            () => Ops.Branch(root, input.Name, input.Checkout, input.Without, input.Minimal, input.Shared));
+        var r = await Reports.Run(Overview.Report, Pane, "new branch " + input.Name,
+            () => Ops.Branch(root, input.Name, input.Checkout, input.Without, input.Minimal, input.Shared),
+            (card, x) => card.Show(ChipSeverity.Success, "", $"Worktree {x.Branch} is ready",
+                x.Path + (x.Shared.Count > 0 ? "\n" + SharedFolders.Describe(x.SharedMode) + ": " + string.Join(", ", x.Shared) : "")));
         if (r != null)
         {
             Pane.Append($"worktree: {r.Path}");
@@ -1057,8 +1059,34 @@ public sealed partial class MainWindow : Window
         if (root == null || root.Config.Checkouts.Count == 0) return;   // the button is disabled in that case
         var input = await Dialogs.ServerCheckout(this, root, preselect);
         if (input == null) return;
-        var r = await Runner.Run(Pane, "server checkout " + input.Target, () => Server.Checkout(root, input.Near, input.Target, input.Name));
+        var r = await Reports.Run(Overview.Report, Pane, "server checkout " + input.Target, () => Server.Checkout(root, input.Near, input.Target, input.Name),
+            (card, x) => card.Show(x.Snapshot.Warnings.Count > 0 ? ChipSeverity.Caution : ChipSeverity.Success, "",
+                $"Checkout {x.Checkout.Name} is at r{x.Snapshot.Revision}", x.Checkout.Path,
+                [new ReportCount(ChipSeverity.Caution, "", x.Snapshot.Warnings.Count, $"{x.Snapshot.Warnings.Count} warning(s) from the first snapshot, one per row.")],
+                x.Snapshot.Warnings.Select(w => new ReportRow(ChipSeverity.Caution, "", "warning", "first snapshot", w, w))));
         if (r != null) Pane.Append($"checkout {r.Checkout.Name}: {r.Checkout.Path}, r{r.Snapshot.Revision}");
         await RefreshAsync();
+    }
+
+    /// <summary>
+    /// A sync as a report: the revision it reached, then a chip and a row for everything it could not leave
+    /// clean. The svn conflicts, the local edits left out and the warnings used to be a line in the log alone.
+    /// </summary>
+    static void ShowSync(ReportCard card, SyncResult r)
+    {
+        var severity = r.Conflicts > 0 ? ChipSeverity.Critical : r.Overlaid + r.Warnings.Count > 0 ? ChipSeverity.Caution : ChipSeverity.Success;
+        var headline = r.Conflicts > 0 ? $"{r.Checkout} is at r{r.Revision}, with {r.Conflicts} svn conflict(s) in the checkout"
+            : $"{r.Checkout} is at r{r.Revision}" + (r.Changed ? "" : ", nothing new");
+        var detail = r.Changed ? "A new snapshot. Rebase the worktrees when you want what came in." : "The snapshot was already at this revision.";
+        ReportCount[] counts =
+        [
+            new(ChipSeverity.Critical, "", r.Conflicts, $"{r.Conflicts} svn conflict(s) in the checkout. Resolve them there; the snapshot holds the server's side."),
+            new(ChipSeverity.Attention, "", r.Overlaid, $"{r.Overlaid} local edit(s) of the checkout are not in the snapshot, which holds what SVN has."),
+            new(ChipSeverity.Caution, "", r.Warnings.Count, $"{r.Warnings.Count} warning(s), one per row."),
+            new(ChipSeverity.Neutral, "", r.KeptSwitched.Count, $"{r.KeptSwitched.Count} external(s) kept switched away from what svn:externals declares."),
+        ];
+        var rows = r.Warnings.Select(w => new ReportRow(ChipSeverity.Caution, "", "warning", "", w, w))
+            .Concat(r.KeptSwitched.Select(k => new ReportRow(ChipSeverity.Neutral, "", k, "external, kept switched", "Sync left it pointed where it is.", k)));
+        card.Show(severity, "", headline, detail, counts, rows);
     }
 }

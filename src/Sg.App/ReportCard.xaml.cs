@@ -88,6 +88,22 @@ public sealed partial class ReportCard : UserControl
 
     public void Hide() => Visibility = Visibility.Collapsed;
 
+    /// <summary>A close button in the corner. For a report of one operation; a standing state, like the last backup, has none.</summary>
+    public bool Closable
+    {
+        get => CloseButton.Visibility == Visibility.Visible;
+        set => CloseButton.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The reader closed it.</summary>
+    public event Action? Closed;
+
+    void Close_Click(object sender, RoutedEventArgs e)
+    {
+        Hide();
+        Closed?.Invoke();
+    }
+
     void SetDetail(string detail)
     {
         DetailText.Text = detail;

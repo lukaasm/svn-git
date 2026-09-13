@@ -164,7 +164,8 @@ public static class Runner
     /// for minutes, and until this restored the previous sink, any window that finished a read in the
     /// meantime kept the sink and the push's own log went quiet with nothing said about it.
     /// </summary>
-    public static async Task<T?> Run<T>(StatusStrip pane, string title, Func<T> work) where T : class
+    /// <remarks>failed hears the message the strip shows when the work throws, so a page can say it where the reader is looking. Not on a cancel.</remarks>
+    public static async Task<T?> Run<T>(StatusStrip pane, string title, Func<T> work, Action<string>? failed = null) where T : class
     {
         var previous = Session.Log.Sink;
         Session.Log.Sink = pane;
@@ -196,11 +197,14 @@ public static class Runner
         catch (SgException ex)
         {
             pane.Error(ex.Message);
+            failed?.Invoke(ex.Message);
             return null;
         }
         catch (Exception ex)
         {
-            pane.Error(Unexpected(ex));
+            var line = Unexpected(ex);
+            pane.Error(line);
+            failed?.Invoke(line);
             return null;
         }
         finally
@@ -222,9 +226,9 @@ public static class Runner
         return line + "  (" + ex.GetType().Name + ")";
     }
 
-    public static async Task<bool> Run(StatusStrip pane, string title, Action work)
+    public static async Task<bool> Run(StatusStrip pane, string title, Action work, Action<string>? failed = null)
     {
-        var r = await Run(pane, title, () => { work(); return "ok"; });
+        var r = await Run(pane, title, () => { work(); return "ok"; }, failed);
         return r != null;
     }
 

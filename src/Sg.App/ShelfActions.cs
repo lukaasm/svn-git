@@ -19,13 +19,15 @@ public static class ShelfActions
     /// strip has already said why.
     /// </summary>
     public static async Task<ShelfSaveResult?> SaveAsync(object owner, StatusStrip pane, string folder,
-        IReadOnlyList<string>? paths, string what, string suggested)
+        IReadOnlyList<string>? paths, string what, string suggested, ReportCard? card = null)
     {
         var name = await AskName(owner, what, suggested);
         if (name == null) return null;
         var root = Session.Require();
         var list = paths?.ToList();
-        var result = await Runner.Run(pane, "shelve", () => Shelf.Save(root, folder, list, name));
+        var result = card == null
+            ? await Runner.Run(pane, "shelve", () => Shelf.Save(root, folder, list, name))
+            : await Reports.Run(card, pane, "shelve", () => Shelf.Save(root, folder, list, name), Show);
         if (result == null) return null;
         pane.Append($"shelved {result.Shelf.Count} file(s) as {result.Shelf.Id}. Put them back from Shelved changes.");
         if (result.LeftBehind.Count > 0)
@@ -33,6 +35,23 @@ public static class ShelfActions
                         + string.Join(", ", result.LeftBehind));
         return result;
     }
+
+    /// <summary>A shelve as a report: what went onto the shelf, and a row for each file that stayed where it was.</summary>
+    static void Show(ReportCard card, ShelfSaveResult r)
+    {
+        var left = r.LeftBehind.Count;
+        card.Show(left > 0 ? ChipSeverity.Caution : ChipSeverity.Success, "",
+            $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\"",
+            "Put them back from Shelved changes on the card they came from." + LeftBehindNote(r),
+            [new ReportCount(ChipSeverity.Caution, "", left, $"{left} file(s) stayed where they were: a shelf cannot hold an svn property change.")],
+            r.LeftBehind.Select(p => new ReportRow(ChipSeverity.Caution, "", p, "stayed in the working copy", "carries an svn property change a shelf cannot hold", p)));
+    }
+
+    /// <summary>The sentence a page's own bar adds when a shelf left files behind: they are still changed where they were, and the bar said success over them.</summary>
+    public static string LeftBehindNote(ShelfSaveResult r) =>
+        r.LeftBehind.Count == 0 ? ""
+            : $" {r.LeftBehind.Count} file(s) stayed where they were, because a shelf cannot hold an svn property change: "
+              + string.Join(", ", r.LeftBehind.Take(3)) + (r.LeftBehind.Count > 3 ? $" and {r.LeftBehind.Count - 3} more." : ".");
 
     /// <summary>
     /// The one question a shelf asks. A name, because a shelf is found again by reading a list of them,

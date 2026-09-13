@@ -344,6 +344,13 @@ count, and a row for each item that did not simply find the remote holding it al
 bar above the worktree cards when the kept result has a failure, a divergence or an error, with Open backup on it.
 Closing the bar hides that result; the next failure opens it again. A success opens nothing there.
 
+The same card reports the overview's own operations - sync, rebase, shelve, remove, new worktree, server checkout -
+through `Reports.Run`: a ring while it runs, then the result or the error, above the backup bar, with a close button.
+A sync's svn conflicts, the local edits it left out of the snapshot, its warnings and the externals it kept switched
+are chips and rows there; they were a line in the log. `Runner.Run` hands its error message to the card as well as to
+the strip. A discard that could not go onto a shelf first says so on the page's bar, in amber, naming the files that
+went with no way back, and a shelve that left files behind names them on the bar that reports it.
+
 **Where it goes.** `sg.json` gets `backup: { url, prefix, uncommitted, maxFileMb, maxPushMb }`. The URL is never registered as a git
 remote, on purpose: a `git push` typed in a worktree keeps having nowhere to go, where a remote named `backup`
 would have sent the real branch, snapshot and all, the first time someone typed `git push backup`. sg pushes with

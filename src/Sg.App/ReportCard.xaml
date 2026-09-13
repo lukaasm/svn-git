@@ -10,7 +10,7 @@
          x:Bind to Detail stopped the XAML compiler with an internal error and no message. -->
     <StackPanel Spacing="4">
         <Border Style="{StaticResource Card}">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="14">
                 <Grid VerticalAlignment="Top" Margin="0,2,0,0">
                     <local:StatusChip x:Name="Chip" />
                     <ProgressRing x:Name="Ring" Width="18" Height="18" MinWidth="18" MinHeight="18" IsActive="False" Visibility="Collapsed" />
@@ -31,6 +31,12 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                <!-- Only where the report is about one moment rather than a standing state: the overview's own operations. -->
+                <Button x:Name="CloseButton" Grid.Column="3" Style="{StaticResource QuietButton}" Padding="4" MinWidth="0" MinHeight="0"
+                        VerticalAlignment="Top" Margin="0,-2,-6,0" Visibility="Collapsed" Click="Close_Click"
+                        AutomationProperties.Name="Close the report" ToolTipService.ToolTip="Close this report. The log keeps every line of it.">
+                    <FontIcon Glyph="&#xE711;" FontSize="12" />
+                </Button>
             </Grid>
         </Border>
         <Border x:Name="RowsCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">

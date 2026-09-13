@@ -930,7 +930,7 @@ sealed class Args
     static readonly HashSet<string> ValueOpts = new(StringComparer.OrdinalIgnoreCase)
     {
         "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared",
-        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix",
+        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push",
     };
 
     public string? Command;

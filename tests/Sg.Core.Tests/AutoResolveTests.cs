@@ -110,6 +110,77 @@ public sealed class AutoResolveTests : IDisposable
     }
 
     [Fact]
+    public void A_resolver_that_speaks_stream_json_is_read_event_by_event()
+    {
+        var wt = StoppedRebase();
+        // What Claude Code prints in stream-json: a step in its own words, a write, the answer as
+        // text, and a tool result with a whole file in it that must not become the resolver's words.
+        UseResolver(KeepTheirs.Replace("Write-Output \"resolved: $rel\"", "")
+                    + "\n  Write-Output ('{\"type\":\"system\",\"subtype\":\"task_summary\",\"detail\":\"Reading ' + $rel + '\"}')"
+                    + "\n  Write-Output ('{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"a whole file of noise\"}]}}')"
+                    + "\n  Write-Output ('{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"' + ($path -replace '\\\\', '/') + '\"}}]}}')"
+                    + "\n  Write-Output ('{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"resolved: ' + $rel + '\"}]}}')"
+                    + "\n  Write-Output '{\"type\":\"result\",\"subtype\":\"success\"}'");
+
+        var r = Conflicts.AutoResolve(f.Root, wt);
+
+        Assert.True(r.AllResolved, string.Join("; ", r.Left.Select(l => l.Why)));
+        // The answer's text is the resolver's words; the events around it are not.
+        Assert.Equal("resolved: CMakeLists.txt", r.Output);
+        Assert.DoesNotContain("noise", r.Output);
+        // And the log carries what it did, which is the whole point of reading the events at all.
+        var log = f.Log.ToString();
+        Assert.Contains("resolver: Reading CMakeLists.txt", log);
+        Assert.Contains("resolver: writing CMakeLists.txt", log);
+    }
+
+    [Fact]
+    public void A_file_settled_before_the_run_is_staged_without_asking_anybody()
+    {
+        // What a run that was stopped half way leaves: the file is settled on disk, and the step was
+        // never carried on. Asking for it again would pay an agent to redo work that is already there.
+        var wt = StoppedRebase();
+        Fixture.Put(wt, "CMakeLists.txt", "project(fort)\n# svn side\n# branch side\n");
+        UseResolver("  throw 'the resolver should not have been asked'");
+
+        var r = Conflicts.AutoResolve(f.Root, wt);
+
+        Assert.Equal(["CMakeLists.txt"], r.Resolved);
+        Assert.Empty(r.Left);
+        Assert.Empty(f.Root.Git.ConflictedFiles(wt));
+        Assert.Equal("project(fort)\n# svn side\n# branch side\n", Raw(wt, "CMakeLists.txt").Replace("\r\n", "\n"));
+
+        var cont = Conflicts.Continue(f.Root, wt);
+        Assert.True(cont.Ok, cont.Output);
+    }
+
+    [Fact]
+    public void A_file_one_side_deleted_is_never_taken_as_it_stands()
+    {
+        // No markers to settle and no merge to make: what is on disk is one whole side already, so a
+        // resolver that does nothing must not be read as having kept both.
+        f.Setup();
+        var git = f.Root.Git;
+        var wt = Ops.Branch(f.Root, "feature-d", f.Co).Path;
+        Fixture.Put(wt, "schmetterling/engine.cpp", "int engine = 2;\n");
+        git.Ok(wt, "commit", "-q", "-am", "the branch keeps editing the engine");
+
+        var other = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        f.Svn.Ok(other, "delete", "engine.cpp");
+        f.Svn.Ok(other, "commit", "--non-interactive", "-m", "svn deletes the engine");
+        Ops.Sync(f.Root, f.Co);
+
+        Assert.True(Ops.Rebase(f.Root, wt).Conflict);
+        UseResolver("  Write-Output \"resolved: $rel\"");
+
+        var r = Conflicts.AutoResolve(f.Root, wt);
+
+        Assert.Empty(r.Resolved);
+        var left = Assert.Single(r.Left);
+        Assert.Contains("pick a version", left.Why);
+    }
+
+    [Fact]
     public void A_resolver_that_fails_before_it_starts_names_the_failure_as_the_reason()
     {
         var wt = StoppedRebase();

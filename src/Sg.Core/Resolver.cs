@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 
 namespace Sg.Core;
 
@@ -72,9 +73,13 @@ public static class Resolver
     /// What runs when the config names nothing. Claude Code in print mode: the prompt comes in on
     /// stdin, edits inside the worktree are accepted without a prompt, and git may only be asked to
     /// show things. Every other tool stays off, so the agent can read and write files and nothing else.
+    ///
+    /// The output is stream-json rather than text, because text prints nothing at all until the whole
+    /// job is done: the first run of this against a real conflict looked frozen for minutes and was
+    /// stopped by hand. StreamReading turns those events into a line per thing it does.
     /// </summary>
     public const string DefaultCommand =
-        "claude -p --output-format text --no-session-persistence --max-turns 80 --permission-mode acceptEdits"
+        "claude -p --output-format stream-json --verbose --no-session-persistence --max-turns 80 --permission-mode acceptEdits"
         + " --allowedTools \"Read,Edit,Write,MultiEdit,Grep,Glob,Bash(git diff:*),Bash(git show:*),Bash(git log:*)\"";
 
     /// <summary>The command the config names, or the default when it names none.</summary>
@@ -94,6 +99,7 @@ public static class Resolver
         if (state.Conflicted.Count == 0) return res;
 
         var text = new List<string>();
+        var already = new List<string>();
         var before = new Dictionary<string, Sides>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in state.Conflicted)
         {
@@ -103,8 +109,15 @@ public static class Resolver
                 res.Left.Add(new AutoResolveLeft(path, "binary file, pick a version"));
                 continue;
             }
+            if (sides.AlreadySettled) { already.Add(path); continue; }
             before[path] = sides;
             text.Add(path);
+        }
+        if (already.Count > 0)
+        {
+            root.Log.Info($"{already.Count} file(s) hold no markers any more: they were settled before this run, and are staged as they stand");
+            git.MarkResolved(worktree, already);
+            res.Resolved.AddRange(already);
         }
         if (text.Count == 0) return res;
 
@@ -122,10 +135,11 @@ public static class Resolver
             ["SG_PROMPT_FILE"] = promptFile,
         };
         root.Log.Info($"asking the resolver about {text.Count} file(s): {res.Command}");
+        root.Log.Info("it reads the code before it writes any, so this takes minutes rather than seconds. What it does appears below as it goes.");
         var said = new StringBuilder();
+        var stream = new StreamReading(root.Log, said, worktree);
         var r = Proc.RunStreaming(exe, args, worktree, root.Log,
-            line => { lock (said) said.AppendLine(line); root.Log.Info("resolver: " + line); },
-            line => { lock (said) said.AppendLine(line); root.Log.Info("resolver: " + line); },
+            stream.Line, stream.Line,
             env, keepStdout: false, stdin: Utf8.GetBytes(prompt));
         res.Output = said.ToString().Trim();
         if (!r.Ok && res.Output.Length == 0) res.Output = $"the resolver exited with code {r.ExitCode} and said nothing";
@@ -154,7 +168,13 @@ public static class Resolver
             var now = OnDisk(worktree, path);
             if (saidLeft.TryGetValue(path, out var why)) res.Left.Add(new AutoResolveLeft(path, why));
             else if (now == null) res.Left.Add(new AutoResolveLeft(path, "the file is gone from the worktree"));
-            else if (now == sides.Conflicted) res.Left.Add(new AutoResolveLeft(path, failed ?? "the resolver did not change it"));
+            // Untouched is only a refusal while there was something in the file to settle. git writes
+            // markers into every file whose conflict is inside it, so one without them, from a side that
+            // deleted the file, is a version to pick and not a merge - and taking it as it stands would
+            // pick one side quietly.
+            else if (now == sides.Conflicted && !sides.Whole)
+                res.Left.Add(new AutoResolveLeft(path, failed ?? "one side has no version of this file, so there is nothing to merge: pick a version"));
+            else if (now == sides.Conflicted && HasMarkers(now)) res.Left.Add(new AutoResolveLeft(path, failed ?? "the resolver did not change it"));
             else if (HasMarkers(now)) res.Left.Add(new AutoResolveLeft(path, "conflict markers are still in it"));
             else
             {
@@ -209,15 +229,26 @@ public static class Resolver
         readonly string _ours, _theirs;
         public readonly string Conflicted;
 
-        public Sides(string @base, string ours, string theirs, string? conflicted)
+        public Sides(string? @base, string? ours, string? theirs, string? conflicted)
         {
-            _ours = ours;
-            _theirs = theirs;
+            _ours = ours ?? "";
+            _theirs = theirs ?? "";
             Conflicted = conflicted ?? "";
-            Binary = @base.Contains('\0') || ours.Contains('\0') || theirs.Contains('\0');
+            Binary = (@base + _ours + _theirs).Contains('\0');
+            // Both sides have a version of this file, so its conflict is inside it, between markers.
+            // Missing one is a file one side deleted: there is nothing to merge, only a version to pick.
+            Whole = ours != null && theirs != null;
         }
 
         public bool Binary { get; }
+        public bool Whole { get; }
+
+        /// <summary>
+        /// It is in conflict, and yet what is on disk holds no markers: somebody settled it already and
+        /// the step was never carried on - a resolver run stopped half way, or a hand between two runs.
+        /// The work is done, and asking for it again would only pay for it twice.
+        /// </summary>
+        public bool AlreadySettled => Whole && Conflicted.Length > 0 && !HasMarkers(Conflicted);
 
         static bool AllCrlf(string s) => s.Contains('\n') && !s.Replace("\r\n", "").Contains('\n');
         static bool NoCr(string s) => !s.Contains('\r');
@@ -292,6 +323,83 @@ public static class Resolver
         sb.AppendLine("    resolved: <path>");
         sb.AppendLine("    left: <path> - <why>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The resolver's output as it arrives. A command that speaks Claude Code's stream-json says what
+    /// it is doing while it does it - one JSON object per line - and a plain command says whatever it
+    /// says; both end up here, because the config may name either. A line that is not an event is kept
+    /// as the resolver's own words, and so is what an agent writes as text: those are the lines that
+    /// carry "resolved:" and "left:", and a failure's reason.
+    ///
+    /// Only what a person would want to read is logged. A tool result carries a whole file in it.
+    /// </summary>
+    sealed class StreamReading(ILog log, StringBuilder said, string worktree)
+    {
+        public void Line(string raw)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) return;
+            if (line[0] != '{') { Keep(line); return; }
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(line); }
+            catch (JsonException) { Keep(line); return; }
+            using (doc) Event(doc.RootElement);
+        }
+
+        void Event(JsonElement root)
+        {
+            switch (Str(root, "type"))
+            {
+                // What Claude Code calls the step in its own words: "Reading EditableFlowGraph.cpp".
+                case "system" when Str(root, "subtype") == "task_summary":
+                    var detail = Str(root, "detail");
+                    if (!string.IsNullOrWhiteSpace(detail)) log.Info("resolver: " + detail.Trim());
+                    return;
+                case "assistant":
+                    if (root.TryGetProperty("message", out var m) && m.TryGetProperty("content", out var c)
+                        && c.ValueKind == JsonValueKind.Array)
+                        foreach (var block in c.EnumerateArray()) Block(block);
+                    return;
+                case "result" when Str(root, "subtype") is { } sub && sub != "success":
+                    Keep("the resolver ended with " + sub);
+                    return;
+            }
+        }
+
+        void Block(JsonElement block)
+        {
+            switch (Str(block, "type"))
+            {
+                case "text":
+                    foreach (var t in (Str(block, "text") ?? "").Split('\n')) Keep(t.Trim());
+                    return;
+                // A write is the one tool worth naming as it happens: it is the work, and a summary
+                // line does not always follow it.
+                case "tool_use" when Str(block, "name") is "Edit" or "Write" or "MultiEdit":
+                    var path = block.TryGetProperty("input", out var input) ? Str(input, "file_path") : null;
+                    log.Info("resolver: writing " + (path == null ? "a file" : Named(path)));
+                    return;
+            }
+        }
+
+        void Keep(string line)
+        {
+            if (line.Length == 0) return;
+            lock (said) said.AppendLine(line);
+            log.Info("resolver: " + line);
+        }
+
+        /// <summary>A path the reader knows: relative to the worktree when it is in it, whole when it is not.</summary>
+        string Named(string path)
+        {
+            try { return PathUtil.RelativeTo(worktree, path); }
+            catch (Exception e) when (e is SgException or ArgumentException) { return path; }
+        }
+
+        static string? Str(JsonElement e, string name) =>
+            e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString() : null;
     }
 
     /// <summary>

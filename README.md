@@ -298,7 +298,10 @@ code means. `sg resolve auto` hands that question to a coding agent: Claude Code
 the task on stdin - the files, which side is which, the version both started from, the commit's own message -
 and edits the files in place. It may read anything and ask git to show things; it cannot stage, commit or
 push. sg then checks every file: markers gone and the file changed is settled and staged; anything else, or a
-file the agent said it left, stays in conflict for you, with the reason. Line endings both sides had are put
+file the agent said it left, stays in conflict for you, with the reason. A file that already holds no markers
+when sg looks - a run that was stopped half way, or your own edit - is staged as it stands and never sent to an
+agent twice; a file one side deleted is never taken as it stands either, because there is a version to pick and
+no merge to make. Line endings both sides had are put
 back, so an agent that writes LF into a CRLF file does not turn every line into a change.
 
 `--all` keeps going: continue, and when the next commit stops, ask again, until the rebase is through or a
@@ -314,7 +317,12 @@ and the markers are `zdiff3`, with the base in the middle.
 Your own resolver gets `SG_WORKTREE`, `SG_FILES` (one path per line), `SG_REPLAY` (`rebase` or `import`),
 `SG_STOPPED` (the commit's subject) and `SG_PROMPT_FILE` (the task as a file), and should print
 `resolved: <path>` or `left: <path> - <why>` per file when it is done. Claude Code has to be logged in for
-the default: run `claude` once in a terminal and sign in if `sg resolve auto` says it could not authenticate.
+the default: run `claude auth login` once if `sg resolve auto` says it could not authenticate.
+
+An agent reads the code before it writes any, so a stop takes minutes, not seconds. The default command asks
+Claude Code for `stream-json`, and sg turns those events into a line per thing it does - what it is reading,
+what it writes - so the wait is legible rather than a frozen terminal. Ctrl+C ends the agent as well as sg,
+and nothing is half done: the replay is still stopped where it was, and the same command can be run again.
 
 Abort costs different things too. A rebase goes back exactly as it was. An import comes off whole, the
 commits that already went in included, because git undoes a patch series as one thing - the export file

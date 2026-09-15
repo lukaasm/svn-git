@@ -10,6 +10,17 @@ static class Cli
 {
     public static int Run(string[] argv)
     {
+        // Ctrl+C ends the child rather than this process alone. A resolver run is minutes of an agent
+        // reading code, and the one long thing here a person is likely to stop half way; without this
+        // sg died and left it running, writing into the worktree with nobody watching.
+        using var stop = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = !stop.IsCancellationRequested;
+            if (!stop.IsCancellationRequested) Console.Error.WriteLine("stopping...");
+            stop.Cancel();
+        };
+        using var _cancel = Cancellation.Use(stop.Token);
         try
         {
             var a = new Args(argv);
@@ -46,6 +57,11 @@ static class Cli
         {
             Console.Error.WriteLine("error: " + ex.Message);
             return 1;
+        }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine("stopped. Nothing half done is lost: run the same command again, or 'sg resolve' to see where it stands.");
+            return 130;
         }
     }
 

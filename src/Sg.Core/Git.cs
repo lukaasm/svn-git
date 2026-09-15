@@ -762,13 +762,14 @@ public sealed class Git
     /// The same, byte for byte: every byte of the blob as one Latin-1 char, so a BOM and the line endings
     /// are there to read and compare, where a decoded string has had its BOM eaten by the reader.
     /// </summary>
-    public string ShowStageRaw(string worktree, int stage, string path)
+    /// <remarks>Null when the index holds no such stage, which is how a file one side deleted looks.</remarks>
+    public string? ShowStageRaw(string worktree, int stage, string path)
     {
         var tmp = Path.GetTempFileName();
         try
         {
             var r = Run(worktree, ["show", $":{stage}:{path}"], stdoutToFile: tmp);
-            return r.Ok ? File.ReadAllText(tmp, Encoding.Latin1) : "";
+            return r.Ok ? File.ReadAllText(tmp, Encoding.Latin1) : null;
         }
         finally { File.Delete(tmp); }
     }

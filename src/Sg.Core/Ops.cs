@@ -99,6 +99,12 @@ public sealed class WorktreeStatus
     public DateTimeOffset? BackedUp;
     /// <summary>Why the last backup did not send this branch or its uncommitted changes, until one does. Null when nothing failed.</summary>
     public string? BackupFailed;
+    /// <summary>
+    /// The backup holds a copy of this branch this machine does not: "newer: ..." when it is ahead of what is
+    /// here, "differs: ..." when the two hold different work. Null when the last backup found nothing of the kind.
+    /// A pull takes it, and clears this.
+    /// </summary>
+    public string? BackupRemote;
 }
 
 public sealed class StatusResult
@@ -136,6 +142,10 @@ public static class Ops
         ("rerere.autoUpdate", "true"),
         ("merge.conflictStyle", "zdiff3"),
         ("merge.renameLimit", "32767"),
+        // A bare repository keeps no reflog unless it is told to. This store's branches are worked on
+        // through worktrees and rewritten by rebase, squash and reword, and the reflog is what says that
+        // a backup elsewhere holds this branch's own older state rather than another machine's work.
+        ("core.logAllRefUpdates", "true"),
     };
 
     /// <summary>
@@ -143,7 +153,7 @@ public static class Ops
     /// The version is a key in the store's own config, read from the file rather than from git, so an
     /// open that has nothing to do costs a file read and no process.
     /// </summary>
-    const int StoreConfigVersion = 2;
+    const int StoreConfigVersion = 3;
 
     /// <summary>Writes every StoreConfig key a store made by an older sg lacks. Nothing when it is current.</summary>
     public static void UpgradeStore(SgRoot root)
@@ -1093,10 +1103,12 @@ public static class Ops
         // One worktree at a time made the overview wait for the sum of them.
         res.Worktrees.AddRange(Fan.Map(found, w => WorktreeStatusOf(git, refs, bases, shared, backedUp, w)));
         var backupFailed = git.BranchConfig(Backup.FailedKey);
+        var backupRemote = git.BranchConfig(Backup.RemoteKey);
         foreach (var ws in res.Worktrees)
         {
             ws.Shelves = shelves.Count(s => !s.IsCheckout && s.Branch.Equals(ws.Branch, StringComparison.OrdinalIgnoreCase));
             ws.BackupFailed = backupFailed.GetValueOrDefault(ws.Branch);
+            ws.BackupRemote = backupRemote.GetValueOrDefault(ws.Branch);
         }
         return res;
     }

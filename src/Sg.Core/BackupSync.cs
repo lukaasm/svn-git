@@ -89,6 +89,51 @@ public static partial class Backup
         };
     }
 
+    /// <summary>
+    /// Whether the copy on the remote stands for a commit this branch itself once pointed at here. A rebase,
+    /// a squash and an amend all make new commits of the same work, and the one they replaced stays in the
+    /// branch's reflog - so a copy built from it is this machine's own older state, not somebody else's work
+    /// under the same name, and this side is ahead of it however little the two histories now line up.
+    ///
+    /// The commits of a rebase carry the same author, date and message, so they compare as the same work;
+    /// what a rebase changes is the base they sit on and whatever a conflict was settled to, and both of
+    /// those show up as other files in the same commits. Without this, every rebase of a branch that had
+    /// been backed up needed --force, which is the one habit a safety net must not teach.
+    /// </summary>
+    static bool WasHere(Git git, Source s, List<ThinCommit> chain)
+    {
+        var changes = chain.Where(c => c.Kind == ThinKind.Change).ToList();
+        var source = changes.Count > 0 ? changes[^1].Source : chain[0].Source;
+        // A branch source carries its name in Name; Branch is what a shelf or a wip hangs off.
+        var branch = s.Kind == "branch" ? s.Name : s.Branch;
+        if (source == null || branch == null) return false;
+        return git.BranchWas(branch).Any(sha => sha == source);
+    }
+
+    /// <summary>
+    /// When the copy on the remote was written, which is the one fact that says where it came from: a
+    /// machine somebody was working on that day. A refusal used to name what differed and leave the reader
+    /// to guess whether the other side was last week's laptop or this morning's own push.
+    /// </summary>
+    static string Elsewhere(Git git, List<ThinCommit> chain)
+    {
+        var r = git.Run(null, "log", "-1", "--format=%cI", chain[^1].Sha);
+        if (!r.Ok || !DateTimeOffset.TryParse(r.StdOut.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when))
+            return "";
+        return ", and was written " + when.LocalDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Whether every commit the copy holds past the ones this branch shares with it is in this branch's
+    /// tip by content: what it changed, taken back out of the tip, comes out cleanly. False for a copy with
+    /// nothing past the shared run, which is a question this was not asked.
+    /// </summary>
+    static bool AllChangesHere(Git git, List<ThinCommit> chain, int shared, string tip)
+    {
+        var extra = chain.Where(c => c.Kind == ThinKind.Change).Skip(shared).ToList();
+        return extra.Count > 0 && extra.All(c => git.ChangeIsIn(c.Sha, tip));
+    }
+
     /// <summary>By lineage, when this store still has the real commit the copy stands for. Null when that does not settle it.</summary>
     static (Verdict, string?)? Lineage(Git git, string tip, List<ThinCommit> chain)
     {
@@ -124,14 +169,27 @@ public static partial class Backup
             if (theirRev > ourRev)
                 return (Verdict.Behind, $"the remote holds the same {ours.Count} commit(s) rebased onto r{theirRev}, and this branch is on r{ourRev}. "
                                         + "Sync this checkout and rebase the branch to catch up; backing up now would send the older base over it.");
-            return (Verdict.Diverged, $"the remote holds the same {ours.Count} commit(s) with other files in them - amended, or rebased differently elsewhere");
+            // The same commits, the same SVN revision under them, and other bytes in them: one machine
+            // settled a conflict, or rebased over the same revision again. This is what a backup shared
+            // between machines looks like in the normal week, and refusing it made every rebase of a
+            // branch that lives on two machines need --force. Nothing is lost by sending: every commit
+            // the remote holds is here too, under its own name, and this side is the one being backed up.
+            return (Verdict.Ahead, null);
         }
+        if (WasHere(git, s, chain)) return (Verdict.Ahead, null);
         if (shared == theirs.Count && theirRev <= ourRev) return (Verdict.Ahead, null);
+        // The commits only the remote has, by what they changed rather than by name: a commit pushed to
+        // SVN from the other machine is in this branch's snapshot now and gone from its own list, and one
+        // made again here is a different commit with the same change in it. Neither is lost by sending,
+        // so when every one of them is in this branch already, this side is ahead. The check is by content
+        // because that is the only thing the two sides still share by then.
+        if (AllChangesHere(git, chain, shared, s.Tip)) return (Verdict.Ahead, null);
         if (shared == ours.Count && ourRev <= theirRev)
             return (Verdict.Behind, $"the remote holds {theirs.Count - shared} commit(s) this branch does not, {Newest(theirs.Skip(shared))}. "
                                     + $"Backing up would send an older copy over them; pull brings them here: sg backup pull {s.Name}");
         return (Verdict.Diverged, $"the remote holds {theirs.Count - shared} commit(s) this branch does not ({Newest(theirs.Skip(shared))})"
-                                  + $" and this branch holds {ours.Count - shared} the remote does not ({Newest(ours.Skip(shared))})");
+                                  + $" and this branch holds {ours.Count - shared} the remote does not ({Newest(ours.Skip(shared))})"
+                                  + Elsewhere(git, chain));
     }
 
     /// <summary>
@@ -255,6 +313,9 @@ public static partial class Backup
             }
             if (res.Ok && cfg.Uncommitted && remote.ContainsKey(wipRef))
                 PullChanges(root, cfg, res, git.RefSha(FetchedRef("wip", name))!, worktree, co, name, PushedRef("wip", name));
+            // What the remote had over this machine is here now, or as much of it as merged: the card stops
+            // offering the pull, and the next backup says where the two stand.
+            if (res.Ok) git.ConfigUnset(KeyRemote(name));
             return res;
         }
 

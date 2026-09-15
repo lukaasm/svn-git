@@ -178,6 +178,7 @@ public sealed partial class CheckoutPage : SgPage
                 BackedUp = w.BackedUp,
                 BackupOn = status.BackupUrl != null,
                 BackupFailed = w.BackupFailed,
+                BackupRemote = w.BackupRemote,
             })
             // By name, and by nothing else. Sorting by what each worktree wants put the loudest first,
             // which reads well in a screenshot and badly in use: committing, rebasing or syncing changes
@@ -597,6 +598,30 @@ public sealed partial class CheckoutPage : SgPage
     {
         var row = WorktreeOf(sender);
         if (row != null) await Busy.During(sender, () => RebaseAsync(row));
+    }
+
+    /// <summary>
+    /// What another machine sent for this branch, onto it: the commits the backup holds past this
+    /// branch's own on top of its tip, and its uncommitted changes into the worktree or onto a shelf.
+    /// The card offered it because the last backup found the remote ahead or apart; it reports on the
+    /// same card, and a backup follows soon after so the two stand as one again.
+    /// </summary>
+    async void Pull_Click(object sender, RoutedEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row == null) return;
+        await Busy.During(sender, async () =>
+        {
+            var root = Session.Require();
+            var r = await Reports.Run(OpReport, Pane, "pull " + row.Branch, () => Backup.Pull(root, row.Branch), (card, x) => card.Show(
+                x.Ok && x.WipWhy == null && x.WipConflicted.Count == 0 ? ChipSeverity.Success : ChipSeverity.Caution, "",
+                x.Ok ? $"Pulled from the backup onto {row.Branch}" : $"The pull onto {row.Branch} stopped short",
+                BackupPage.PullSentence(x)));
+            if (r == null) { await _owner.RefreshAsync(); return; }
+            Pane.Append(BackupPage.PullSentence(r));
+            _owner.BackupSoon();
+            await _owner.RefreshAsync();
+        });
     }
 
     void Open_Click(object sender, RoutedEventArgs e)

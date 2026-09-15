@@ -333,7 +333,21 @@ refused, or taken with `--force`. `BackupSync.cs` adds two readings. A commit is
 author date and its message, which a replay and a rebase both keep; a branch against its copy is then Ahead when the
 copy's commits are the first of this branch's, Behind when this branch's are the first of the copy's, Same when they
 are the same commits and every file the thin tree holds is the same here, and, for the same commits with other files,
-Ahead or Behind by which side sits on the newer snapshot revision. Uncommitted changes are known by the files they
+Ahead or Behind by which side sits on the newer snapshot revision - and Ahead when both sit on the same one, because
+the same commits over the same revision with other bytes in them is one machine settling a conflict or rebasing
+again, which is the normal week of a branch that lives on two machines, and nothing is lost by sending: every commit
+the remote holds is here under its own name (changed 2026-09-15; it was refused as different work and needed
+`--force` on every such rebase). When the commits do not line up, the branch's own reflog is asked before anything is
+refused: a copy that stands for a commit this branch once pointed at here is this machine's own older state - a
+squash, a reword, a rebase whose record of the last push is gone - and this side is ahead of it. Then the commits
+only the remote has are read by content: each one's patch taken back out of this branch's tip applies cleanly when
+what it changed is here - pushed to SVN from the other machine and in the snapshot now, or made again here as another
+commit - and when every one of them is, nothing is lost by sending and this side is ahead. What remains refused is
+work only the remote has, and a refusal names when the copy was written, so the reader knows which machine to think
+of. The last backup's verdict on each branch stays on it (`branch.<name>.sgBackupRemote`: newer or differs, with the
+reason) until a backup sends over it or a pull takes it, so the overview's card can say "newer on the backup" and
+offer the pull; the toast carries a Pull button for the first two names, and a row on the Backup page that differs
+offers both ways out. Uncommitted changes are known by the files they
 wrote: each holds here what the copy wrote, what it started from, or something else; all written is Ahead (Same when
 the changes here touch exactly those files), none is Behind, a mix is Diverged and names the files. Same pushes
 nothing, so two machines holding one piece of work do not write it over each other on every tick. A copy of

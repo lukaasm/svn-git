@@ -357,6 +357,9 @@ public static partial class Backup
     /// <summary>The branch config key that holds why the last backup did not send a branch's work.</summary>
     public const string FailedKey = "sgBackupFailed";
     static string KeyFailed(string branch) => $"branch.{branch}.{FailedKey}";
+    /// <summary>The branch config key that says the remote holds a newer or a different copy of a branch, with the reason, until that clears.</summary>
+    public const string RemoteKey = "sgBackupRemote";
+    static string KeyRemote(string branch) => $"branch.{branch}.{RemoteKey}";
 
     /// <summary>Where backups go. The URL is tried before it is kept, so a typo is found now and not on the timer.</summary>
     public static BackupConfig Set(SgRoot root, string url, string? prefix = null, bool? uncommitted = null, int? maxFileMb = null, int? maxPushMb = null)
@@ -537,7 +540,8 @@ public static partial class Backup
                     item.State = "rejected";
                     item.Why = (detail ?? "the remote holds a version of this that did not come from here, and neither is an ancestor of the other")
                                + " - different work under one name. "
-                               + (s.Kind == "branch" ? $"Restore the remote's under another name to compare (sg backup restore {s.Name} --name {s.Name}-remote)"
+                               + (s.Kind == "branch" ? $"Pull puts the commits only the remote has on top of this branch (sg backup pull {s.Name}), "
+                                                       + $"or restore the remote's under another name to compare (sg backup restore {s.Name} --name {s.Name}-remote)"
                                   : s.Kind is "wip" or "edits" ? $"Pull puts the remote's on a shelf beside these (sg backup pull {s.Name})"
                                   : "Restore it to compare")
                                + $", or keep this machine's: sg backup --force --only {s.Kind}/{s.Name}";
@@ -668,6 +672,7 @@ public static partial class Backup
     static void RememberFailures(Git git, BackupResult res)
     {
         var before = git.BranchConfig(FailedKey);
+        var remote = git.BranchConfig(RemoteKey);
         foreach (var name in res.Items.Where(i => i.Kind is "branch" or "wip").Select(i => i.Name).Distinct(StringComparer.Ordinal))
         {
             var failed = res.Items.FirstOrDefault(i => i.Name == name && (i.Kind is "branch" or "wip") && i.Failed);
@@ -677,6 +682,17 @@ public static partial class Backup
                 if (before.GetValueOrDefault(name) != why) git.Config(KeyFailed(name), why);
             }
             else if (before.ContainsKey(name)) git.ConfigUnset(KeyFailed(name));
+
+            // What the remote holds that this machine does not, until a backup sends over it or a pull
+            // takes it: the card on the overview offers the pull from this, so it has to outlive the toast.
+            var other = res.Items.FirstOrDefault(i => i.Name == name && (i.Kind is "branch" or "wip") && (i.Behind || i.Rejected));
+            if (other != null)
+            {
+                var note = (other.Behind ? "newer" : "differs") + ": " + (other.Kind == "wip" ? "uncommitted changes: " : "")
+                           + (other.Why ?? "").Split('\n')[0];
+                if (remote.GetValueOrDefault(name) != note) git.Config(KeyRemote(name), note);
+            }
+            else if (remote.ContainsKey(name)) git.ConfigUnset(KeyRemote(name));
         }
     }
 

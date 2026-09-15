@@ -255,6 +255,13 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public bool BackupOn { get; set; }
     /// <summary>Why the last backup did not send this branch or its uncommitted changes. Null when nothing failed.</summary>
     public string? BackupFailed { get; set; }
+    /// <summary>"newer: why" or "differs: why" when the backup holds a copy this machine does not, else null. Pull takes it.</summary>
+    public string? BackupRemote { get; set; }
+    /// <summary>The backup is ahead of this branch, so a pull is the thing to do.</summary>
+    public bool BackupNewer => BackupRemote != null && BackupRemote.StartsWith("newer", StringComparison.Ordinal);
+    /// <summary>Whatever the remote holds over this machine, without the word in front.</summary>
+    string BackupRemoteWhy => BackupRemote == null ? "" : BackupRemote[(BackupRemote.IndexOf(':') + 1)..].Trim();
+    public Visibility PullVisibility => BackupRemote != null && !Missing ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility BackupVisibility => BackupOn && !Missing ? Visibility.Visible : Visibility.Collapsed;
     /// <summary>
@@ -264,6 +271,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// </summary>
     public string BackupText => Session.BackingUp ? "backing up..."
         : BackupFailed != null ? "backup failed"
+        : BackupRemote != null ? (BackupNewer ? "newer on the backup" : "differs from the backup")
         : NotBackedUp < 0 ? "not backed up"
         : NotBackedUp == 0 ? "backed up" + Ago(BackedUp)
         : NotBackedUp == 1 ? "1 commit not backed up"
@@ -271,11 +279,18 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// <summary>Green when the backup holds the tip, amber when commits wait, red when a backup failed or nothing of this branch ever went.</summary>
     public ChipSeverity BackupSeverity => Session.BackingUp ? ChipSeverity.Neutral
         : BackupFailed != null ? ChipSeverity.Critical
+        : BackupRemote != null ? (BackupNewer ? ChipSeverity.Caution : ChipSeverity.Critical)
         : NotBackedUp == 0 ? ChipSeverity.Success : NotBackedUp > 0 ? ChipSeverity.Caution : ChipSeverity.Critical;
     public string BackupTip => Session.BackingUp
         ? "A backup is running. This badge says how it went when it ends."
         : BackupFailed != null
         ? "The last backup did not send this branch's work: " + BackupFailed + ". Open Backup on the checkout to try again."
+        : BackupRemote != null
+        ? (BackupNewer
+            ? "The backup holds newer work for this branch than this machine has, sent from another machine: " + BackupRemoteWhy
+              + " Pull from backup, in the card's menu, puts it on top of what is here."
+            : "The backup holds different work under this name, from another machine: " + BackupRemoteWhy
+              + " Pull from backup, in the card's menu, puts its commits on top of this branch; Backup on the checkout can keep this machine's instead.")
         : NotBackedUp == 0
         ? "The backup repository holds every commit of this branch"
           + (BackedUp is { } t ? $", last confirmed {t.LocalDateTime:yyyy-MM-dd HH:mm}" : "") + ". Uncommitted changes go with the next backup."
@@ -359,6 +374,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         BackedUp = n.BackedUp;
         BackupOn = n.BackupOn;
         BackupFailed = n.BackupFailed;
+        BackupRemote = n.BackupRemote;
         Repaint();
     }
 

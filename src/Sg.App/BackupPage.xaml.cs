@@ -268,11 +268,19 @@ public sealed partial class BackupPage : SgPage
     /// A backup as a report: a chip per outcome with its count, and a row for every item that did not simply
     /// find the remote already holding it - sent, left files out, failed, diverged, or newer over there.
     /// </summary>
-    /// <summary>The button a row of the report gets: pull a copy that is newer, or keep this machine's over one that differs.</summary>
-    (string Text, Func<Task> Run)? ActFor(BackupItem item) =>
-        item.Behind ? ("Pull", () => PullAsync(item))
-        : item.Rejected ? ("Keep this machine's", () => KeepAsync(item))
+    /// <summary>
+    /// The buttons a row of the report gets: pull a copy that is newer; and for one that differs, pull
+    /// the remote's commits on top of this branch or keep this machine's over it. Both, because which is
+    /// right is the reader's call, and the row is where the reason is.
+    /// </summary>
+    RowActions? ActFor(BackupItem item) =>
+        item.Behind ? new RowActions("Pull", () => PullAsync(item))
+        : item.Rejected && item.Kind is "branch" or "wip" ? new RowActions("Pull theirs on top", () => PullAsync(item), "Keep this machine's", () => KeepAsync(item))
+        : item.Rejected ? new RowActions("Keep this machine's", () => KeepAsync(item))
         : null;
+
+    /// <summary>What a report row can do: one thing, or a first and a second.</summary>
+    public sealed record RowActions(string Text, Func<Task> Run, string OtherText = "", Func<Task>? Other = null);
 
     /// <summary>What another machine sent, onto the branch here and into its folder, without making the worktree again.</summary>
     async Task PullAsync(BackupItem item)
@@ -289,7 +297,7 @@ public sealed partial class BackupPage : SgPage
         await LoadAsync();
     }
 
-    static string PullSentence(RestoreResult r)
+    public static string PullSentence(RestoreResult r)
     {
         var parts = new List<string>();
         if (r.Branch.Length > 0)
@@ -318,7 +326,7 @@ public sealed partial class BackupPage : SgPage
         if (res != null) await LoadAsync();
     }
 
-    public static void ShowReport(ReportCard card, BackupResult? res, Func<BackupItem, (string Text, Func<Task> Run)?>? act = null)
+    public static void ShowReport(ReportCard card, BackupResult? res, Func<BackupItem, RowActions?>? act = null)
     {
         if (res == null)
         {
@@ -353,10 +361,12 @@ public sealed partial class BackupPage : SgPage
             res.Items.Where(i => i.State != "up to date" || i.LeftOut.Count > 0).Select(i => RowOf(i, act)));
     }
 
-    static ReportRow RowOf(BackupItem i, Func<BackupItem, (string Text, Func<Task> Run)?>? act)
+    static ReportRow RowOf(BackupItem i, Func<BackupItem, RowActions?>? act)
     {
         var row = RowOf(i);
-        return act?.Invoke(i) is { } a ? new ReportRow(row.Severity, row.Glyph, row.Name, row.What, row.Detail, row.Tip) { ActionText = a.Text, Action = a.Run } : row;
+        return act?.Invoke(i) is { } a
+            ? new ReportRow(row.Severity, row.Glyph, row.Name, row.What, row.Detail, row.Tip) { ActionText = a.Text, Action = a.Run, OtherText = a.OtherText, Other = a.Other }
+            : row;
     }
 
     static ReportRow RowOf(BackupItem i)

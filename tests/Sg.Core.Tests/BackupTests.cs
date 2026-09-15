@@ -716,6 +716,171 @@ public sealed class BackupTests : IDisposable
     }
 
     [Fact]
+    public void ABranchRebasedHereGoesWithoutForceEvenWhenTheRecordOfTheLastPushIsGone()
+    {
+        // A rebase makes new commits of the same work against a new base - and, when a conflict was
+        // settled on the way, with other files in them. While this root still holds the note of what it
+        // last pushed, that is a plain push. Without it - a store made again, a second root, a restore -
+        // the copy on the remote reads as a stranger's, and the branch's own reflog is what says it is
+        // this machine's own older state.
+        f.Setup();
+        var wt = MakeBranch("feature-r");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        var before = RemoteGit("rev-parse", "refs/heads/feature-r").Trim();
+        f.Root.Git.Run(null, "update-ref", "-d", Backup.PushedRef("branch", "feature-r")).EnsureOk();
+
+        var other = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        Fixture.Put(other, "engine.cpp", "int engine = 9; // and somebody else edits the same line\n");
+        f.Svn.Ok(other, "commit", "--non-interactive", "-m", "the engine says nine");
+        Ops.Sync(f.Root, f.Co);
+
+        var rb = Ops.Rebase(f.Root, wt);
+        Assert.True(rb.Conflict, rb.Output);
+        // Settled to something neither side had, so what the branch wrote moves and the copy on the
+        // remote is no longer the same files under the same commits.
+        Fixture.Put(wt, "schmetterling/engine.cpp", "int engine = 2; // and somebody else edited this line\n");
+        f.Root.Git.MarkResolved(wt, ["schmetterling/engine.cpp"]);
+        Assert.True(Conflicts.Continue(f.Root, wt).Ok);
+
+        var after = Backup.Run(f.Root);
+        var item = Item(after, "branch", "feature-r");
+
+        Assert.Equal("pushed", item.State);
+        Assert.True(item.Reconciled);
+        Assert.NotEqual(before, RemoteGit("rev-parse", "refs/heads/feature-r").Trim());
+        Assert.Equal(item.Thin, RemoteGit("rev-parse", "refs/heads/feature-r").Trim());
+        Assert.Equal("up to date", Item(Backup.Run(f.Root), "branch", "feature-r").State);
+    }
+
+    [Fact]
+    public void TheSameCommitsRebasedHereGoOverAnotherMachinesCopyOfThem()
+    {
+        // What a backup shared between machines looks like in the normal week: both hold the same work,
+        // one of them rebases it - over the same SVN revision, or settles a conflict differently - and the
+        // bytes in the commits move apart. Nothing is lost by sending, because every commit the remote
+        // holds is here under its own name, so it goes rather than waiting for --force.
+        f.Setup();
+        MakeBranch("feature-s");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        // The far machine takes the branch, changes what one of those commits wrote, and sends it back.
+        var far = Far();
+        var r = Backup.Restore(far.Root, "feature-s");
+        Assert.True(r.Ok, r.Why);
+        Fixture.Put(r.Path, "schmetterling/engine.cpp", "int engine = 2; // settled the other way\n");
+        far.Root.Git.Ok(r.Path, "commit", "-q", "--amend", "--no-edit", "-a");
+        Assert.Equal("pushed", Item(Backup.Run(far.Root), "branch", "feature-s").State);
+        var theirs = RemoteGit("rev-parse", "refs/heads/feature-s").Trim();
+
+        // This machine has not changed its own, and sends it: the same commits, other bytes in one of them.
+        var mine = Backup.Run(f.Root);
+        var item = Item(mine, "branch", "feature-s");
+
+        Assert.Equal("pushed", item.State);
+        Assert.True(item.Reconciled);
+        Assert.NotEqual(theirs, RemoteGit("rev-parse", "refs/heads/feature-s").Trim());
+        Assert.Equal(item.Thin, RemoteGit("rev-parse", "refs/heads/feature-s").Trim());
+    }
+
+    [Fact]
+    public void CommitsTheRemoteHasThatWentToSvnAlreadyAreNotLostBySending()
+    {
+        // The other machine backed up two commits, then pushed them to SVN. Here the branch was rebased
+        // over that, so it has none of those commits by name - and every one of them by content, in the
+        // snapshot under it. The copy on the remote is behind, whatever its list of commits says.
+        f.Setup();
+        var far = Far();
+        var fwt = Ops.Branch(far.Root, "feature-p", far.Co).Path;
+        Fixture.Put(fwt, "schmetterling/engine.cpp", "int engine = 2;\n");
+        Fixture.Put(fwt, "fort/dev/new/file.txt", "brand new\n");
+        far.Root.Git.Ok(fwt, "add", "-A");
+        far.Root.Git.Ok(fwt, "commit", "-q", "-m", "first: edit one, add one");
+        far.Root.Git.Ok(fwt, "mv", "fort/dev/game.cpp", "fort/dev/game_renamed.cpp");
+        File.Delete(Path.Combine(fwt, "fort", "tools", "tool.py"));
+        far.Root.Git.Ok(fwt, "add", "-A");
+        far.Root.Git.Ok(fwt, "commit", "-q", "-m", "second: rename one, delete one");
+        Assert.True(Backup.Run(far.Root).Ok);
+
+        // The same changes reach SVN, the way a push sends them: one commit per repository.
+        var engine = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        Fixture.Put(engine, "engine.cpp", "int engine = 2;\n");
+        f.Svn.Ok(engine, "commit", "--non-interactive", "-m", "the engine says two");
+        var dev = f.OtherWc(f.GameUrl + "/branches/fort/dev");
+        Fixture.Put(dev, "new/file.txt", "brand new\n");
+        f.Svn.Ok(dev, "add", "--parents", Path.Combine(dev, "new", "file.txt"));
+        f.Svn.Ok(dev, "move", "game.cpp", "game_renamed.cpp");
+        f.Svn.Ok(dev, "commit", "--non-interactive", "-m", "a new file and a rename");
+        var tools = f.OtherWc(f.GameUrl + "/branches/fort/tools");
+        f.Svn.Ok(tools, "delete", "tool.py");
+        f.Svn.Ok(tools, "commit", "--non-interactive", "-m", "the tool goes");
+        Ops.Sync(f.Root, f.Co);
+
+        // Here: a branch of the same name on top of that, with one commit of its own.
+        Backup.Set(f.Root, Remote());
+        var wt = Ops.Branch(f.Root, "feature-p", f.Co).Path;
+        Fixture.Put(wt, "CMakeLists.txt", "project(fort)\n# and one more thing\n");
+        f.Root.Git.Ok(wt, "commit", "-q", "-am", "third: one more thing");
+
+        var r = Backup.Run(f.Root);
+        var item = Item(r, "branch", "feature-p");
+
+        Assert.Equal("pushed", item.State);
+        Assert.True(item.Reconciled);
+        Assert.Equal(item.Thin, RemoteGit("rev-parse", "refs/heads/feature-p").Trim());
+    }
+
+    [Fact]
+    public void TheCardIsToldWhatTheRemoteHoldsOverThisMachineUntilAPullTakesIt()
+    {
+        // The other machine's copy holds a commit this branch does not: the overview's card says so from
+        // the note the backup leaves on the branch, offers the pull, and the note goes when the pull did.
+        f.Setup();
+        MakeBranch("feature-n");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        var far = Far();
+        var restored = Backup.Restore(far.Root, "feature-n");
+        Assert.True(restored.Ok, restored.Why);
+        Fixture.Put(restored.Path, "fort/dev/new/file.txt", "brand new\nand a line from the other machine\n");
+        far.Root.Git.Ok(restored.Path, "commit", "-q", "-am", "fourth: from the other machine");
+        Assert.Equal("pushed", Item(Backup.Run(far.Root), "branch", "feature-n").State);
+
+        var here = Backup.Run(f.Root);
+        Assert.True(Item(here, "branch", "feature-n").Behind);
+        var ws = Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-n");
+        Assert.NotNull(ws.BackupRemote);
+        Assert.StartsWith("newer:", ws.BackupRemote);
+
+        var pulled = Backup.Pull(f.Root, "feature-n");
+        Assert.True(pulled.Ok, pulled.Why);
+        Assert.Equal(1, pulled.Applied);
+        Assert.Null(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-n").BackupRemote);
+    }
+
+    [Fact]
+    public void AnotherMachinesWorkUnderTheSameNameIsStillRefused()
+    {
+        // The rule above must not read every stranger as this machine's own past: the far side's commits
+        // were never this branch here, so they are not in its reflog and the refusal stands.
+        f.Setup();
+        MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+
+        var far = Far();
+        var fwt = Ops.Branch(far.Root, "feature-x", far.Co).Path;
+        Fixture.Put(fwt, "schmetterling/engine.cpp", "int engine = 99; // the laptop's own\n");
+        far.Root.Git.Ok(fwt, "add", "-A");
+        far.Root.Git.Ok(fwt, "commit", "-q", "-m", "the laptop's own feature-x");
+
+        var r = Backup.Run(far.Root);
+        Assert.True(Item(r, "branch", "feature-x").Rejected);
+    }
+
+    [Fact]
     public void Set_RefusesAUrlThatIsNotARepository()
     {
         f.Setup();

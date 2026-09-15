@@ -297,16 +297,18 @@ public sealed partial class MainWindow : Window
                     (freshFailed[0].Why ?? "The push did not go.").Split('\n')[0],
                     Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
                     new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
+            // The toast carries the pull for the first two names: the thing to do, one press away, rather
+            // than a page to find it on. The rest are on their cards and on the Backup page.
             else if (quiet && freshReject.Count > 0)
-                Notifications.Show("Backup conflict for " + string.Join(", ", freshReject),
-                    "Another machine has different work under this name. Open Backup on the checkout to restore it, overwrite it, or back up under this machine's own prefix.",
+                Notifications.Show("Backup differs for " + string.Join(", ", freshReject),
+                    "Another machine has different work under this name. Pull puts its commits on top of this branch; Backup on the checkout can keep this machine's instead.",
                     Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
-                    new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
+                    PullButtons(freshReject).Append(new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? "")))).ToArray());
             else if (quiet && freshBehind.Count > 0)
                 Notifications.Show("A newer backup for " + string.Join(", ", freshBehind),
-                    "The backup holds newer work than this machine has for it, sent from another machine. Open Backup on the checkout and pull it.",
+                    "The backup holds newer work than this machine has for it, sent from another machine. Pull puts it on top of what is here.",
                     Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
-                    new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
+                    PullButtons(freshBehind).Append(new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? "")))).ToArray());
             await RefreshAsync();
             return res;
         }
@@ -316,6 +318,24 @@ public sealed partial class MainWindow : Window
             Session.BackingUp = false;
             Overview.RepaintWorktrees();
         }
+    }
+
+    /// <summary>A "Pull <name>" button per name, two at most: a toast has room for a few buttons and no more.</summary>
+    IEnumerable<Notifications.ToastButton> PullButtons(IEnumerable<string> names) =>
+        names.Take(2).Select(n => new Notifications.ToastButton("Pull " + n, Notifications.Action("pull", ("checkout", _current?.Name ?? ""), ("name", n))));
+
+    /// <summary>The pull a toast button asked for, on the overview, with the result where the card is.</summary>
+    internal async Task PullFromToastAsync(string name)
+    {
+        var root = Session.Root;
+        if (root == null) return;
+        var r = await Runner.Run(Pane, "pull " + name, () => Backup.Pull(root, name));
+        if (r != null)
+        {
+            Pane.Append(BackupPage.PullSentence(r));
+            BackupSoon();
+        }
+        await RefreshAsync();
     }
 
     void Nav_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
@@ -751,7 +771,7 @@ public sealed partial class MainWindow : Window
     /// What a toast's button asks for, with the window already up. The checkout is named rather than
     /// held: the toast may be pressed long after the pane was rebuilt under it.
     /// </summary>
-    internal void FromToast(string action, string? checkout)
+    internal void FromToast(string action, string? checkout, string? name = null)
     {
         var row = checkout == null ? null
             : Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow)
@@ -762,6 +782,7 @@ public sealed partial class MainWindow : Window
             case "sync" when row != null: SyncOrPreview(row.Config); break;
             case "backup": Host.Go(() => new BackupPage { Checkout = row?.Name }, "backup"); break;
             case "update": _ = UpdateAsync(); break;
+            case "pull" when name != null: _ = PullFromToastAsync(name); break;
         }
     }
 

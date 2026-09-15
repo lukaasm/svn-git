@@ -454,6 +454,33 @@ public sealed class Git
         return Run(null, args, Encoding.UTF8.GetBytes(message), env, asUser: true).EnsureOk().StdOut.Trim();
     }
 
+    /// <summary>
+    /// Whether what a commit changed is in a tree already: its patch taken back out of the tree applies
+    /// cleanly, which is only so when every line it added is there and every line it took out is not.
+    /// The test runs against a private index read from the tree, so the store's own index and the
+    /// worktrees are untouched. A commit that changed nothing counts as in there.
+    /// </summary>
+    public bool ChangeIsIn(string commit, string tree)
+    {
+        var parent = ParentOf(commit);
+        if (parent == null) return false;
+        var patch = Path.GetTempFileName();
+        var index = Path.GetTempFileName();
+        try
+        {
+            File.Delete(index);
+            Run(null, ["diff", "--binary", "--full-index", parent, commit], stdoutToFile: patch).EnsureOk();
+            if (new FileInfo(patch).Length == 0) return true;
+            ReadTree(Store, tree, index);
+            return Run(null, ["apply", "--cached", "--check", "--reverse", patch], null, IndexEnv(index)).Ok;
+        }
+        finally
+        {
+            File.Delete(patch);
+            if (File.Exists(index)) File.Delete(index);
+        }
+    }
+
     /// <summary>The commit under this one, or null when it is a root commit.</summary>
     public string? ParentOf(string sha)
     {
@@ -719,6 +746,20 @@ public sealed class Git
 
     /// <summary>Drops the commit the rebase stopped on and goes on with the ones after it.</summary>
     public ProcResult RebaseSkip(string worktree) => Run(worktree, "rebase", "--skip");
+
+    /// <summary>
+    /// Every commit this branch has pointed at in this store, newest first, out of its reflog. A rebase, a
+    /// squash and an amend all leave the commit they replaced in here, which is what says a copy somewhere
+    /// else holds an older state of this branch rather than somebody else's work. Empty when git kept no
+    /// log for it, and then nothing is claimed from it either.
+    /// </summary>
+    public List<string> BranchWas(string branch)
+    {
+        var r = Run(null, "reflog", "show", "--format=%H", "refs/heads/" + branch);
+        return r.Ok
+            ? r.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+            : new List<string>();
+    }
 
     /// <summary>During a rebase HEAD is detached. This gives the branch the rebase works on.</summary>
     public string? RebaseHeadName(string worktree)

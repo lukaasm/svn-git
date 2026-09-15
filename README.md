@@ -361,11 +361,17 @@ changes come back through the shelf: written into the worktree when they merge, 
 
 Between machines the backup is a sync. A restore or a rebase gives the same commits new hashes, so sg also knows a
 commit by its author, its date and its message, and uncommitted changes by the files they wrote. A copy on the remote
-that is older than what is here is written over, and the same work under other hashes is left alone. A newer one is
+that is older than what is here is written over, and the same work under other hashes is left alone. The same
+commits with other bytes in them - one machine settled a conflict, or rebased over the same revision again - is the
+normal week of a branch that lives on two machines, and goes: every commit the remote holds is here too, so nothing is
+lost. So do commits the remote holds that went to SVN from the other machine already, or were made again here: they
+are read by content, and a copy whose every extra commit is in this branch by content is behind it. A newer one is
 `behind`: `sg backup pull` puts its commits on top of the branch here and its uncommitted changes into the folder, or
-on a shelf when both sides changed the same files. A clean branch never deletes another machine's uncommitted changes.
-Only work that really differs is refused, with what differs named, and `--force --only branch/<name>` keeps this
-machine's copy of that one thing.
+on a shelf when both sides changed the same files. In the app the card says "newer on the backup" or "differs from
+the backup" and has Pull from backup behind its chevron; the toast has a Pull button too. A clean branch never deletes another
+machine's uncommitted changes. Only work that really differs is refused - commits only the remote has beside commits
+only this branch has - with what differs named and when the copy was written; `sg backup pull <name>` puts the
+remote's commits on top of this branch, and `--force --only branch/<name>` keeps this machine's copy instead.
 
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
 default). The app also backs up a few seconds after a commit, a shelve or a rebase made in it. Every worktree card

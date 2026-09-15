@@ -301,6 +301,16 @@
                                         </controls:SettingsCard.HeaderIcon>
                                         <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Rebase" Tag="{x:Bind}" Click="Rebase_Click" />
                                     </controls:SettingsCard>
+                                    <!-- Only while the last backup found the remote holding something this machine does not: the
+                                         row is the way to take it, where the reader is, instead of a toast that points at another page. -->
+                                    <controls:SettingsCard Header="Pull from backup" Description="{x:Bind BackupTip, Mode=OneWay}"
+                                                           Visibility="{x:Bind PullVisibility, Mode=OneWay}">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE74E;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <local:IconButton MinWidth="124" Glyph="&#xE896;" Text="Pull" Tag="{x:Bind}" Click="Pull_Click"
+                                                          ToolTipService.ToolTip="Put the commits the backup holds past this branch's own on top of it, and its uncommitted changes into the worktree, or on a shelf when both sides changed the same files." />
+                                    </controls:SettingsCard>
                                     <controls:SettingsCard Header="Resolve conflicts" Description="Whatever stopped here, a rebase or an import: pick a version per file, then continue, skip that one, or put it all back."
                                                            Visibility="{x:Bind ResolveVisibility, Mode=OneWay}" IsClickEnabled="True" Tag="{x:Bind}" Click="Resolve_Click">
                                         <controls:SettingsCard.HeaderIcon>

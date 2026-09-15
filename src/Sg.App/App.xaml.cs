@@ -124,15 +124,17 @@ public partial class App : Application
                 WindowHelper.Show(main);
                 return OutputWindow.Show();
             }
-            case "sync" or "backup" or "update" or "overview":
+            case "sync" or "backup" or "update" or "overview" or "pull":
             {
                 if (_main == null)
                 {
-                    var main = EnsureMain(action == "overview" ? null : action, co?.Path);
+                    var main = EnsureMain(action is "overview" or "pull" ? null : action, co?.Path);
                     WindowHelper.Show(main);
+                    // A pull from a toast that started the app: the overview is up, and the pull runs on it.
+                    if (action == "pull" && Get("name") is { } pulled) main.FromToast("pull", co?.Name, pulled);
                     return main;
                 }
-                _main.FromToast(action, co?.Name);
+                _main.FromToast(action, co?.Name, Get("name"));
                 WindowHelper.Show(_main);
                 return _main;
             }

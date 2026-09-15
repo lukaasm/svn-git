@@ -23,6 +23,13 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     PushScope _scope = PushScope.Whole;
 
+    /// <summary>
+    /// The message the page last wrote into the box on its own. When the box still holds exactly that,
+    /// nobody has typed in it, and a new scope may write its own: picking the oldest three commits used
+    /// to leave the message of all twenty in the box, and that went to SVN over three commits' worth.
+    /// </summary>
+    string _lastDefault = "";
+
     /// <summary>Set while the code fills the list, so rebinding it does not read as the user picking a line.</summary>
     bool _binding;
 
@@ -143,7 +150,12 @@ public sealed partial class PushPage : SgPage
             OldPath = e.OldPath,
             Display = $"{(g.Wc.Length == 0 ? "root" : g.Wc)}  {e.Status}  {e.Path}" + (e.OldPath != null ? $"  (was {e.OldPath})" : ""),
         })).ToList(), "Files, one SVN commit per working copy");
-        if (Message.Text.Trim().Length == 0) Message.Text = p.DefaultMessage;
+        // The message follows the commits being sent, until a hand has been in the box.
+        if (Message.Text.Trim().Length == 0 || Message.Text.Trim() == _lastDefault.Trim())
+        {
+            Message.Text = p.DefaultMessage;
+            _lastDefault = p.DefaultMessage;
+        }
         // The working copies the push commits to, in the order it commits them. A row that already
         // carries its own message keeps it across a refresh.
         var minimum = root.Config.MinMessageLength;

@@ -236,6 +236,9 @@ public sealed class Git
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
+    /// <summary>A file of sg's own inside the worktree's git folder: where git keeps its own state, and nowhere the branch would see it.</summary>
+    public string PrivateFile(string worktree, string name) => GitPath(worktree, "sg-" + name);
+
     /// <summary>A path inside the worktree's git folder. Falls back to git when the .git file cannot be read.</summary>
     string GitPath(string worktree, string name)
     {
@@ -466,9 +469,16 @@ public sealed class Git
     public List<string> RevList(string? worktree, string range) =>
         Ok(worktree, "rev-list", range).StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
 
+    /// <summary>
+    /// How every replay merges. The histogram diff lines the two sides up on the lines that matter
+    /// rather than on the braces and blank lines C++ repeats, so fewer commits stop on a conflict that
+    /// was only two functions ending the same way, and the ones that do stop hold a smaller one.
+    /// </summary>
+    static readonly string[] RebaseMergeOptions = ["-X", "diff-algorithm=histogram"];
+
     /// <summary>Replays the commits after upstream onto newBase and puts the branch there. Nothing to replay just moves it.</summary>
     public ProcResult RebaseOnto(string worktree, string newBase, string upstream, string branch) =>
-        Run(worktree, "rebase", "--onto", newBase, upstream, branch);
+        Run(worktree, ["rebase", .. RebaseMergeOptions, "--onto", newBase, upstream, branch]);
 
     /// <summary>
     /// Takes the changes of these commits back out, into the worktree and the index, without committing.
@@ -703,7 +713,7 @@ public sealed class Git
     public int CountCommits(string from, string to) => int.Parse(Out(null, "rev-list", "--count", from + ".." + to));
     public string LogBodies(string from, string to) => Ok(null, "log", "--reverse", "--format=%B", from + ".." + to).StdOut;
 
-    public ProcResult Rebase(string worktree, string onto) => Run(worktree, "rebase", onto);
+    public ProcResult Rebase(string worktree, string onto) => Run(worktree, ["rebase", .. RebaseMergeOptions, onto]);
     public void RebaseAbort(string worktree) => Run(worktree, "rebase", "--abort");
     public ProcResult RebaseContinue(string worktree) => Run(worktree, "rebase", "--continue");
 
@@ -746,6 +756,21 @@ public sealed class Git
     {
         var r = Run(worktree, "show", $":{stage}:{path}");
         return r.Ok ? r.StdOut : "";
+    }
+
+    /// <summary>
+    /// The same, byte for byte: every byte of the blob as one Latin-1 char, so a BOM and the line endings
+    /// are there to read and compare, where a decoded string has had its BOM eaten by the reader.
+    /// </summary>
+    public string ShowStageRaw(string worktree, int stage, string path)
+    {
+        var tmp = Path.GetTempFileName();
+        try
+        {
+            var r = Run(worktree, ["show", $":{stage}:{path}"], stdoutToFile: tmp);
+            return r.Ok ? File.ReadAllText(tmp, Encoding.Latin1) : "";
+        }
+        finally { File.Delete(tmp); }
     }
 
     /// <summary>Resolves conflicts by taking one whole side of them. ShowStage says which side is which.</summary>
@@ -800,6 +825,41 @@ public sealed class Git
 
     int Number(string worktree, string name) =>
         int.TryParse(ReadGitFile(worktree, name).Trim(), out var n) ? n : 0;
+
+    /// <summary>
+    /// The whole message of the commit or patch the replay stopped on, for whoever has to work out what
+    /// it meant to do. Empty when git wrote nothing to read.
+    /// </summary>
+    public string StoppedMessage(string worktree)
+    {
+        var kind = ReplayInProgress(worktree);
+        if (kind == Replay.None) return "";
+        var dir = Directory.Exists(GitPath(worktree, "rebase-apply")) ? "rebase-apply" : "rebase-merge";
+        foreach (var name in new[] { "message", "final-commit", "msg-clean" })
+        {
+            var text = ReadGitFile(worktree, Path.Combine(dir, name)).Trim();
+            if (text.Length > 0) return text;
+        }
+        var at = Number(worktree, Path.Combine(dir, "next"));
+        if (at <= 0) return "";
+        // A patch file: the subject is a header and the body follows the blank line, up to the diff.
+        var subject = "";
+        var body = new StringBuilder();
+        var inBody = false;
+        foreach (var raw in ReadGitFile(worktree, Path.Combine(dir, at.ToString("D4"))).Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (!inBody)
+            {
+                if (line.StartsWith("Subject: ", StringComparison.Ordinal)) subject = line[9..].Trim();
+                else if (line.Length == 0 && subject.Length > 0) inBody = true;
+                continue;
+            }
+            if (line == "---" || line.StartsWith("diff --git ", StringComparison.Ordinal)) break;
+            body.AppendLine(line);
+        }
+        return (subject + "\n\n" + body.ToString().Trim()).Trim();
+    }
 
     /// <summary>
     /// The subject of the commit or patch the replay stopped on. git writes the message it was about to

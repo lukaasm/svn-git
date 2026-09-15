@@ -43,7 +43,9 @@ public sealed class SgRoot
         if (!File.Exists(cfgPath)) throw new SgException("not an sg root: " + rootPath);
         var cfg = SgConfig.Load(cfgPath);
         cfg.Root = rootPath;
-        return new SgRoot(rootPath, cfg, log);
+        var root = new SgRoot(rootPath, cfg, log);
+        Ops.UpgradeStore(root);
+        return root;
     }
 
     /// <summary>Walks up from a folder. Finds the root from inside the root, a checkout, or a branch worktree.</summary>

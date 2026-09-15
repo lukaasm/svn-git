@@ -68,6 +68,8 @@ static class Cli
             sg resolve ours|theirs [<path>...]        keep one whole version, of the named files or of every conflict
             sg resolve resolved <path>...             say those files are done, after editing them by hand
             sg resolve force                          when a patch will not go in at all: write what fits, leave the rest as .rej
+            sg resolve auto [--all]                   hand the files in conflict to the resolver (Claude Code unless sg.json
+                                                      names another command); --all keeps going until the replay is through
             sg resolve continue|skip|abort            carry on, drop the one it stopped on, or put it all back
             sg push [-m <message>] [--check]          commit this branch to SVN, one commit per repository
                                                       --check only runs the pre-checks, and exits 10 when one fails
@@ -307,7 +309,8 @@ static class Cli
             Console.WriteLine($"{r.Branch} is on the latest svn/{r.Checkout}, {r.Ahead} commit(s) ahead");
             if (r.Refreshed.Count > 0) Console.WriteLine("shared folders refreshed from the checkout: " + string.Join(", ", r.Refreshed));
         }
-        else Console.WriteLine("conflict. Run 'sg resolve' to see it, pick a version per file, then 'sg resolve continue'.\n" + r.Output);
+        else Console.WriteLine("conflict. Run 'sg resolve auto --all' to have the resolver settle it, or 'sg resolve' to see it,"
+                               + " pick a version per file, then 'sg resolve continue'.\n" + r.Output);
         return r.Ok ? 0 : 2;
     }
 
@@ -405,6 +408,34 @@ static class Cli
                 return 0;
             }
 
+            case "auto":
+            {
+                if (!a.Has("--all"))
+                {
+                    var r = Conflicts.AutoResolve(root, here);
+                    if (a.Has("--json")) { Json(r); return r.AllResolved ? 0 : 2; }
+                    PrintStep(r);
+                    Console.WriteLine(r.AllResolved
+                        ? "every file is settled and staged. Read them if you like, then: sg resolve continue"
+                        : $"{r.Left.Count} file(s) still need a hand: pick a version, or edit them and 'sg resolve resolved <path>...'. Then: sg resolve continue");
+                    return r.AllResolved ? 0 : 2;
+                }
+                var run = Conflicts.AutoResolveAll(root, here);
+                if (a.Has("--json")) { Json(run); return run.Ok ? 0 : 2; }
+                foreach (var step in run.Steps) PrintStep(step);
+                if (run.Skipped > 0) Console.WriteLine($"  {run.Skipped} commit(s) changed nothing here any more and were skipped");
+                if (run.Ok)
+                {
+                    var f = run.Finished;
+                    Console.WriteLine($"the {run.Verb} is through: {run.Steps.Count} stop(s), {run.FilesResolved} file(s) settled by the resolver."
+                                      + (f != null ? $" {f.Branch} is {f.Ahead} commit(s) ahead of svn/{f.Checkout}." : ""));
+                    if (f != null && f.Refreshed.Count > 0) Console.WriteLine("shared folders refreshed from the checkout: " + string.Join(", ", f.Refreshed));
+                    return 0;
+                }
+                Console.WriteLine("it stopped short: " + run.Why + "\nRun 'sg resolve' to see where it stands.");
+                return 2;
+            }
+
             case "resolved":
             {
                 var s = Conflicts.State(root, here);
@@ -417,8 +448,16 @@ static class Cli
 
             default:
                 throw new SgException("unknown: sg resolve " + sub
-                                      + ". It takes status, ours, theirs, resolved, force, continue, skip or abort.");
+                                      + ". It takes status, ours, theirs, resolved, auto, force, continue, skip or abort.");
         }
+    }
+
+    /// <summary>One stop of the resolver: which commit, what it settled, what it left.</summary>
+    static void PrintStep(AutoResolveResult r)
+    {
+        Console.WriteLine("stopped" + (r.Of > 0 ? $" at {r.At} of {r.Of}" : "") + (r.Stopped.Length > 0 ? $" on '{r.Stopped}'" : "") + ":");
+        foreach (var p in r.Resolved) Console.WriteLine("  settled: " + p);
+        foreach (var l in r.Left) Console.WriteLine("  left:    " + l.Path + "  (" + l.Why + ")");
     }
 
     /// <summary>What is still in conflict after a version was picked, and what to do next.</summary>

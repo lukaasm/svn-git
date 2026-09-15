@@ -175,14 +175,15 @@ public static class Proc
     /// updates arrive one by one. Callbacks run on reader threads. stdout is kept only when keepStdout is set.
     /// </summary>
     public static ProcResult RunStreaming(string exe, IReadOnlyList<string> args, string? cwd, ILog log,
-        Action<string>? onStdoutLine, Action<string>? onStderrLine, IReadOnlyDictionary<string, string>? env = null, bool keepStdout = true)
+        Action<string>? onStdoutLine, Action<string>? onStderrLine, IReadOnlyDictionary<string, string>? env = null, bool keepStdout = true,
+        byte[]? stdin = null)
     {
         var psi = new ProcessStartInfo
         {
             FileName = exe,
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardInput = false,
+            RedirectStandardInput = stdin != null,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = cwd ?? Environment.CurrentDirectory,
@@ -193,16 +194,39 @@ public static class Proc
         if (env != null) foreach (var kv in env) psi.Environment[kv.Key] = kv.Value;
         log.Cmd((cwd != null ? "[" + cwd + "] " : "") + exe + " " + string.Join(" ", args.Select(a => a.Contains(' ') ? "\"" + a + "\"" : a)));
 
+        var cancel = Cancellation.Current;
+        cancel.ThrowIfCancellationRequested();
+
         using var p = new Process { StartInfo = psi };
         try { p.Start(); }
         catch (Exception ex) { throw new SgException($"cannot start {exe}: {ex.Message}"); }
+
+        // The same as Run: a stop from the user ends the child. An agent asked to settle a conflict
+        // runs for minutes, and is the one child a person is likely to want to stop.
+        using var kill = cancel.Register(() =>
+        {
+            try { if (!p.HasExited) p.Kill(entireProcessTree: true); }
+            catch (Exception) { /* already gone */ }
+        });
 
         var outSb = keepStdout ? new StringBuilder() : null;
         var errSb = new StringBuilder();
         var outTask = Task.Run(() => Pump(p.StandardOutput, onStdoutLine, outSb));
         var errTask = Task.Run(() => Pump(p.StandardError, onStderrLine, errSb));
+        // Both pipes are being drained on their own threads, so writing the input here cannot deadlock.
+        if (stdin != null)
+        {
+            try
+            {
+                p.StandardInput.BaseStream.Write(stdin, 0, stdin.Length);
+                p.StandardInput.BaseStream.Flush();
+            }
+            catch (IOException) { /* process may exit early */ }
+            p.StandardInput.Close();
+        }
         p.WaitForExit();
         Task.WaitAll(outTask, errTask);
+        if (cancel.IsCancellationRequested) throw new SgCancelledException();
         return new ProcResult
         {
             Exe = exe, Args = args, Cwd = cwd, ExitCode = p.ExitCode,

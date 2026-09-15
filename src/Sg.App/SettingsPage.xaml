@@ -41,6 +41,13 @@
                     </controls:SettingsCard.HeaderIcon>
                     <ToggleSwitch x:Name="AgentPush" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
                 </controls:SettingsCard>
+                <controls:SettingsCard Header="Conflict resolver"
+                                       Description="The command Auto-resolve runs when a rebase or an import stops. It runs in the worktree, gets the task on stdin and the files in SG_FILES, and edits them in place. Empty runs Claude Code in print mode, allowed to read and edit files and to ask git to show things.">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE945;" />
+                    </controls:SettingsCard.HeaderIcon>
+                    <TextBox x:Name="ResolveCommand" PlaceholderText="claude -p ..." Width="360" />
+                </controls:SettingsCard>
 
                 <TextBlock Text="Backup" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
                 <controls:SettingsCard Header="Backup repository URL"

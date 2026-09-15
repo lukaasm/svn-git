@@ -44,6 +44,9 @@ public sealed partial class ConflictPage : SgPage
     /// <summary>The file whose two versions are in the diff, so a reload can put it back there.</summary>
     string? _shownPath;
 
+    /// <summary>The row it came from, so a change of what to compare can draw the same file again.</summary>
+    TreeNode? _shownNode;
+
     async Task LoadAsync()
     {
         var root = Session.Require();
@@ -71,6 +74,11 @@ public sealed partial class ConflictPage : SgPage
         ShowEmpty(rows.Count == 0);
         ForceButton.Visibility = state.Stuck && state.Kind == Replay.Import ? Visibility.Visible : Visibility.Collapsed;
         EmptyForce.Visibility = ForceButton.Visibility;
+        // The resolver settles files at three stages and nothing else. Going on from here it can also
+        // continue and skip, so it is offered whenever something is stopped, except an import stuck
+        // on a patch that will not go in: forcing what fits of one is a choice for a hand.
+        AutoButton.IsEnabled = state.Conflicted.Count > 0;
+        AutoAllButton.IsEnabled = state.InProgress && !(state.Stuck && state.Kind == Replay.Import);
 
         if (!state.InProgress)
         {
@@ -172,6 +180,38 @@ public sealed partial class ConflictPage : SgPage
             ? "Drop the patch this stopped on and go on with the ones after it. Asks first."
             : "Drop the commit this stopped on and go on with the ones after it. Asks first.");
         AbortButton.SetValue(ToolTipService.ToolTipProperty, AbortCost(s));
+        // The pairs to compare are named from the same labels, and keep their place across reloads.
+        // Refilling the box fires its change event with nothing new to show, so that is told apart
+        // from a person picking a pair.
+        var keep = Compare.SelectedIndex < 0 ? 0 : Compare.SelectedIndex;
+        _naming = true;
+        try
+        {
+            Compare.ItemsSource = new[]
+            {
+                $"{s.OursLabel}  ↔  {s.TheirsLabel}",
+                $"base  →  {s.OursLabel}   (what that side changed)",
+                $"base  →  {s.TheirsLabel}   (what that side changed)",
+            };
+            Compare.SelectedIndex = keep;
+        }
+        finally { _naming = false; }
+    }
+
+    bool _naming;
+
+    /// <summary>Which two stages the diff shows: 2 and 3 are the sides, 1 is what both started from.</summary>
+    (int Left, int Right) Stages() => Compare.SelectedIndex switch
+    {
+        1 => (1, 2),
+        2 => (1, 3),
+        _ => (2, 3),
+    };
+
+    /// <summary>The same file again, between the two versions now picked.</summary>
+    void Compare_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_naming && _shownNode != null && _state.Conflicted.Count > 0) OnPicked(_shownNode);
     }
 
     /// <summary>"SVN version" reads as a name on a button; "the SVN version" reads as a sentence in a tooltip.</summary>
@@ -206,19 +246,24 @@ public sealed partial class ConflictPage : SgPage
         {
             // A conflict is two versions of one file; a folder has none to show, only a count to act on.
             _shownPath = null;
+            _shownNode = null;
             Diff.ShowText($"{node.FileCount} file(s) in conflict under {node.FullPath}.\n\nTick the folder to pick a side for all of them, or pick one file to see its two versions.", node.FullPath);
             return;
         }
         _shownPath = row.Path;
+        _shownNode = node;
         var git = Session.Require().Git;
-        // A file at three stages has two versions to compare. One a forced apply left behind has only
-        // itself, so it is read against what the branch holds - which is the change, half put in.
+        // A file at three stages has two versions to compare, and a third both started from. One a
+        // forced apply left behind has only itself, so it is read against what the branch holds -
+        // which is the change, half put in.
         var conflict = _state.Conflicted.Any(p => p.Equals(row.Path, StringComparison.OrdinalIgnoreCase));
+        var (left, right) = Stages();
         var reads = conflict
-            ? new DiffView.Reads(() => git.ShowStage(_worktree, 2, row.Path), () => git.ShowStage(_worktree, 3, row.Path))
+            ? new DiffView.Reads(() => git.ShowStage(_worktree, left, row.Path), () => git.ShowStage(_worktree, right, row.Path))
             : new DiffView.Reads(() => git.ShowTextIn(_worktree, "HEAD", row.Path), () => OnDisk(row.Path));
+        var name = (int stage) => stage == 1 ? "base" : stage == 2 ? _state.OursLabel : _state.TheirsLabel;
         var title = conflict
-            ? $"{row.Path}   {_state.OursLabel} (left)  →  {_state.TheirsLabel} (right)"
+            ? $"{row.Path}   {name(left)} (left)  →  {name(right)} (right)"
             : $"{row.Path}   branch (left)  →  on disk now (right)";
         await Diff.ShowFileAsync(row.Path, title, reads, () => _filter.IsCurrent(node),
             binaryNote: conflict ? "binary file, pick a version: " : "binary file: ");
@@ -265,6 +310,82 @@ public sealed partial class ConflictPage : SgPage
         await Runner.Run(Pane, "mark resolved", () => root.Git.MarkResolved(_worktree, paths));
         await LoadAsync();
     });
+
+    /// <summary>
+    /// The ticked files, or all of them, to the resolver, once. Nothing is continued: what it settled is
+    /// staged and still on the page, with the diff to read it by, and Continue is the next thing.
+    /// </summary>
+    async void Auto_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, async () =>
+    {
+        var ticked = _filter.Rows<FileRow>().Where(r => r.Checked).Select(r => r.Path).ToList();
+        var root = Session.Require();
+        var what = ticked.Count > 0 ? $"{ticked.Count} ticked file(s)" : $"{_state.Conflicted.Count} file(s)";
+        var r = await Runner.Run(Pane, "auto-resolve " + what, () => Conflicts.AutoResolve(root, _worktree, ticked));
+        if (r != null) ShowStep(r);
+        await LoadAsync();
+    }, restoreEnabled: false);
+
+    /// <summary>What one run of the resolver did, where the reader is looking.</summary>
+    void ShowStep(AutoResolveResult r)
+    {
+        foreach (var p in r.Resolved) Pane.Append("settled: " + p);
+        foreach (var l in r.Left) Pane.Append("left: " + l.Path + "  (" + l.Why + ")");
+        StateBar.Severity = r.AllResolved ? InfoBarSeverity.Informational : InfoBarSeverity.Warning;
+        StateBar.Message = r.AllResolved
+            ? $"The resolver settled {r.Resolved.Count} file(s). They are marked resolved: read them in the diff if you like, then continue."
+            : $"The resolver settled {r.Resolved.Count} file(s) and left {r.Left.Count}: "
+              + string.Join("; ", r.Left.Select(l => l.Path + " - " + l.Why)) + ". Pick a version for those, or edit them and mark them resolved.";
+    }
+
+    /// <summary>
+    /// From here to the end, or to the first file the resolver cannot settle: settle, continue, settle
+    /// the next commit's files. Every stop it went through is a commit on the branch by the time this
+    /// returns, so it asks first; the log pane says what it did at each one.
+    /// </summary>
+    async void AutoAll_Click(object sender, RoutedEventArgs e)
+    {
+        var s = _state;
+        var what = s.Kind == Replay.Import ? "patch" : "commit";
+        var left = s.Of > 0 ? $" {s.Of - s.At + 1} {what}(s) are left to replay, this one included." : "";
+        if (!await Dialogs.Confirm(this, "Auto-resolve and continue",
+                $"Let the resolver settle every stop from here on?{left}\n\n"
+                + $"It settles the files, the {s.Verb} continues, and the next {what} that stops is handed over too, until it is through "
+                + $"or a file comes back that it could not settle. A {what} left with nothing to commit is skipped. "
+                + "Each stop it goes through becomes a commit on the branch; the log below says what it did at every one, "
+                + "and the log of the branch shows the result.",
+                "Go"))
+            return;
+        await Busy.During(sender, async () =>
+        {
+            var root = Session.Require();
+            var verb = s.Verb;
+            var run = await Runner.Run(Pane, "auto-resolve and continue", () => Conflicts.AutoResolveAll(root, _worktree));
+            if (run == null) { await LoadAsync(); return; }
+            foreach (var step in run.Steps)
+            {
+                Pane.Append("stopped" + (step.Of > 0 ? $" at {step.At} of {step.Of}" : "") + (step.Stopped.Length > 0 ? $" on \"{step.Stopped}\"" : "")
+                            + $": settled {step.Resolved.Count}, left {step.Left.Count}");
+            }
+            if (run.Skipped > 0) Pane.Append($"{run.Skipped} {what}(s) changed nothing here any more and were skipped");
+            if (run.Ok && run.Finished != null)
+            {
+                var f = run.Finished;
+                f.Output = $"{run.Steps.Count} stop(s), {run.FilesResolved} file(s) settled by the resolver" + (run.Skipped > 0 ? $", {run.Skipped} skipped" : "");
+                await AfterStep(f, verb);
+                return;
+            }
+            if (run.Ok) { await AfterStep(new ResolveResult { Ok = true, Kind = s.Kind, Branch = s.Branch, Checkout = s.Checkout }, verb); return; }
+            Pane.Append("it stopped short: " + run.Why);
+            await LoadAsync();
+            var last = run.Steps.LastOrDefault();
+            if (last != null && !last.AllResolved) ShowStep(last);
+            else
+            {
+                StateBar.Severity = InfoBarSeverity.Warning;
+                StateBar.Message = "The resolver stopped short. " + run.Why;
+            }
+        }, restoreEnabled: false);
+    }
 
     // sender, not ContinueButton: two buttons run this, and the empty state's one is the only one on
     // screen once every file is resolved. The ring used to spin inside a collapsed panel.

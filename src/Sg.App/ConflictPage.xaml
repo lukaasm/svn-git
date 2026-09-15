@@ -47,6 +47,8 @@
                             Click="OpenFile_Click" ToolTipService.ToolTip="Open the ticked files in their default editor. Each holds both versions between conflict markers. Edit it, save, then mark it resolved." />
                         <local:IconButton Glyph="&#xE73E;" Text="Mark resolved"
                             Click="MarkResolved_Click" ToolTipService.ToolTip="Tell git the ticked files are done, after you edited them by hand." />
+                        <local:IconButton x:Name="AutoButton" Glyph="&#xE945;" Text="Auto-resolve"
+                            Click="Auto_Click" ToolTipService.ToolTip="Hand the ticked files, or every file in conflict, to the resolver: Claude Code, unless Settings names another command. It edits them in place, keeping both sides' changes. What comes back whole is marked resolved and stays here to read before you continue." />
                     </StackPanel>
                     <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
                         <Grid>
@@ -60,15 +62,27 @@
 
                 <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
 
-                <Border Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                    <local:DiffView x:Name="Diff" Margin="1" />
-                </Border>
+                <Grid Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="6">
+                    <!-- Two versions side by side say what differs, not who changed it. The other two
+                         pairs show each side against what both started from, which is what a hand needs
+                         before it can carry one change over onto the other. -->
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Compare" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <ComboBox x:Name="Compare" MinWidth="300" SelectedIndex="0" SelectionChanged="Compare_Changed" FontSize="12"
+                                  ToolTipService.ToolTip="Which two versions of the picked file the diff shows." />
+                    </StackPanel>
+                    <Border Grid.Row="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <local:DiffView x:Name="Diff" Margin="1" />
+                    </Border>
+                </Grid>
             </Grid>
 
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
                 <local:IconButton x:Name="ContinueButton" Glyph="&#xE768;" Text="Continue"
                     Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"
                     ToolTipService.ToolTip="Go on. Works when no file is in conflict any more. The next commit may stop again." />
+                <local:IconButton x:Name="AutoAllButton" Glyph="&#xE945;" Text="Auto-resolve and continue"
+                    Click="AutoAll_Click" ToolTipService.ToolTip="Let the resolver settle every stop from here on: settle the files, continue, settle the next commit's, until the rebase is through or one file it cannot settle. A commit left with nothing to commit is skipped. Asks first." />
                 <local:IconButton x:Name="SkipButton" Glyph="&#xE72A;" Text="Skip this one"
                     Click="Skip_Click" ToolTipService.ToolTip="Drop the commit this stopped on and go on with the ones after it. Asks first." />
                 <local:IconButton x:Name="ForceButton" Glyph="&#xE7BA;" Text="Force what fits" Visibility="Collapsed"

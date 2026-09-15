@@ -196,7 +196,8 @@ public static class Push
         Ops.Sync(root, co);
         var rb = Ops.Rebase(root, worktree, abortOnConflict: true);
         if (rb.Conflict)
-            throw new SgException("the branch does not rebase cleanly on the new snapshot. Run 'sg rebase', then 'sg resolve' to pick a version per file, then push again.\n" + rb.Output);
+            throw new SgException("the branch does not rebase cleanly on the new snapshot. Run 'sg rebase', then 'sg resolve auto --all' to have the resolver settle it"
+                                  + " or 'sg resolve' to pick a version per file, then push again.\n" + rb.Output);
         var tip = git.HeadSha(worktree);
         var whole = git.DiffNameStatus(worktree, snapRef, tip);
         if (whole.Count == 0) throw new SgException("nothing to push: the branch equals " + snapRef);

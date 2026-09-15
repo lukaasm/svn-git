@@ -236,6 +236,87 @@ public static class Conflicts
         else git.RebaseAbort(worktree);
     }
 
+    /// <summary>
+    /// Hands the files this stop left in conflict to the resolver, once. What it settles is staged;
+    /// what it could not is still in conflict, named with the reason, and the step waits for a hand.
+    /// Nothing is continued: the answer is there to read before it goes into the branch.
+    /// </summary>
+    public static AutoResolveResult AutoResolve(SgRoot root, string worktree, IEnumerable<string>? only = null)
+    {
+        var state = State(root, worktree);
+        if (!state.InProgress) throw new SgException("nothing is stopped in " + worktree + ", so there is nothing to resolve.");
+        if (state.Conflicted.Count == 0)
+            throw new SgException(state.Stuck
+                ? StuckNote(state.Kind) + " There is nothing for a resolver to settle either. Skip it."
+                : "nothing is in conflict any more. Carry on with: sg resolve continue");
+        var pick = only?.Select(PathUtil.Rel).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (pick is { Count: > 0 })
+        {
+            state.Conflicted = state.Conflicted.Where(pick.Contains).ToList();
+            if (state.Conflicted.Count == 0) throw new SgException("none of the named files is in conflict.");
+        }
+        return Resolver.Resolve(root, state);
+    }
+
+    /// <summary>
+    /// The same, and then on: continue, and when the next commit stops, ask again, until the replay is
+    /// through or one stop holds a file the resolver could not settle. A rebase step that is left with
+    /// nothing to commit is dropped the way Skip drops it, because that is the only way on from one and
+    /// what it carried is in the branch already. An import stops on such a step instead: forcing what
+    /// fits of a patch is a choice for a hand.
+    /// </summary>
+    public static AutoResolveRun AutoResolveAll(SgRoot root, string worktree)
+    {
+        var git = root.Git;
+        worktree = git.Toplevel(worktree);
+        var kind = Started(git, worktree);
+        var first = State(root, worktree);
+        var run = new AutoResolveRun { Kind = kind, Branch = first.Branch, Checkout = first.Checkout };
+        // One pass per commit of the series and then some; a replay cannot stop more often than that.
+        var most = Math.Max(first.Of, 1) * 2 + 10;
+        for (var pass = 0; pass < most; pass++)
+        {
+            Cancellation.ThrowIfRequested();
+            var state = State(root, worktree);
+            if (!state.InProgress) { run.Ok = true; return run; }
+            if (state.Conflicted.Count > 0)
+            {
+                root.Log.Info($"the {state.Verb} stopped" + (state.Of > 0 ? $" at {state.At} of {state.Of}" : "")
+                              + (state.Stopped.Length > 0 ? $", on \"{state.Stopped}\"" : "") + $": {state.Conflicted.Count} file(s) in conflict");
+                var step = Resolver.Resolve(root, state);
+                run.Steps.Add(step);
+                if (!step.AllResolved)
+                {
+                    run.Why = $"{step.Left.Count} file(s) the resolver could not settle: "
+                              + string.Join(", ", step.Left.Select(l => l.Path + " (" + l.Why + ")"));
+                    return run;
+                }
+                root.Log.Info($"settled {step.Resolved.Count} file(s), carrying on");
+            }
+            ResolveResult r;
+            if (git.NothingStaged(worktree))
+            {
+                if (kind == Replay.Import)
+                {
+                    run.Why = StuckNote(kind) + " Skip it, or force what fits, by hand.";
+                    return run;
+                }
+                root.Log.Info("this commit changes nothing here any more, skipping it");
+                run.Skipped++;
+                r = Skip(root, worktree);
+            }
+            else r = Continue(root, worktree);
+            if (r.Ok)
+            {
+                run.Ok = true;
+                run.Finished = r;
+                return run;
+            }
+        }
+        run.Why = "it stopped more often than the series is long, which should not happen; the rest is left as it is.";
+        return run;
+    }
+
     static Replay Started(Git git, string worktree)
     {
         var kind = git.ReplayInProgress(worktree);

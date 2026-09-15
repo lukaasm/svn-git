@@ -18,6 +18,12 @@ public sealed class SgConfig
     public Dictionary<string, string> BranchUrlOverrides { get; set; } = new();
     /// <summary>When false, sg push refuses to run without an interactive terminal.</summary>
     public bool AllowAgentPush { get; set; }
+    /// <summary>
+    /// The command that settles the files a rebase or an import stops on: it runs in the worktree, gets
+    /// the prompt on stdin and the file list in SG_FILES, and edits the files in place. Null runs Claude
+    /// Code the way Resolver.DefaultCommand says.
+    /// </summary>
+    public string? ResolveCommand { get; set; }
     public List<CheckoutConfig> Checkouts { get; set; } = new();
     /// <summary>Where the branches, the uncommitted changes and the shelves are copied to, as thin histories. Null when nowhere.</summary>
     public BackupConfig? Backup { get; set; }

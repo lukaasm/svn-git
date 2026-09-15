@@ -267,6 +267,8 @@ sg resolve                         # what stopped, how far it got, and what is i
 sg resolve theirs src\app.cpp      # keep the incoming version of one file
 sg resolve ours                    # keep the version already here, for every file in conflict
 sg resolve resolved src\app.cpp    # after editing it by hand between the markers
+sg resolve auto                    # hand every file in conflict to the resolver, read what it did, then continue
+sg resolve auto --all              # the same, and keep going: continue, settle the next stop, until it is through
 sg resolve continue                # go on. The next commit may stop too, and then this repeats
 sg resolve skip                    # drop the one it stopped on, and go on with the rest
 sg resolve abort                   # put it back
@@ -287,6 +289,32 @@ Then put the refused hunks in by hand, delete the `.rej` files, `sg resolve reso
 `ours` and `theirs` mean different things in the two: rebasing, ours is the SVN version and theirs is your
 branch's; importing, ours is the branch as it stands here and theirs is what came in the file. `sg resolve`
 says which is which every time it prints, and so does the page in the app.
+
+### The resolver
+
+What git leaves in conflict is two changes to the same lines, and which survives is a question about what the
+code means. `sg resolve auto` hands that question to a coding agent: Claude Code in print mode, unless
+`resolveCommand` in `sg.json` (or Settings in the app) names another command. It runs in the worktree, gets
+the task on stdin - the files, which side is which, the version both started from, the commit's own message -
+and edits the files in place. It may read anything and ask git to show things; it cannot stage, commit or
+push. sg then checks every file: markers gone and the file changed is settled and staged; anything else, or a
+file the agent said it left, stays in conflict for you, with the reason. Line endings both sides had are put
+back, so an agent that writes LF into a CRLF file does not turn every line into a change.
+
+`--all` keeps going: continue, and when the next commit stops, ask again, until the rebase is through or a
+file comes back unsettled. A commit left with nothing to commit - what it did is on the server already - is
+skipped. In the app: Auto-resolve on the Resolve conflicts page settles the ticked files, or all of them, and
+leaves them to read in the diff; Auto-resolve and continue is the run. The Compare box over the diff shows
+either side against the base, which is what you need before carrying one change over onto the other.
+
+Underneath, every rebase now merges with the histogram diff, `rerere` is on so a conflict you settled once is
+settled the same way by git the next time it comes up - a push that stopped on one, then the rebase by hand -
+and the markers are `zdiff3`, with the base in the middle.
+
+Your own resolver gets `SG_WORKTREE`, `SG_FILES` (one path per line), `SG_REPLAY` (`rebase` or `import`),
+`SG_STOPPED` (the commit's subject) and `SG_PROMPT_FILE` (the task as a file), and should print
+`resolved: <path>` or `left: <path> - <why>` per file when it is done. Claude Code has to be logged in for
+the default: run `claude` once in a terminal and sign in if `sg resolve auto` says it could not authenticate.
 
 Abort costs different things too. A rebase goes back exactly as it was. An import comes off whole, the
 commits that already went in included, because git undoes a patch series as one thing - the export file

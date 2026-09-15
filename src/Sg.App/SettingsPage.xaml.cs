@@ -22,6 +22,9 @@ public sealed partial class SettingsPage : SgPage
         MinLength.Value = root?.Config.MinMessageLength ?? 10;
         AgentPush.IsOn = root?.Config.AllowAgentPush ?? false;
         MinLength.IsEnabled = AgentPush.IsEnabled = root != null;
+        ResolveCommand.Text = root?.Config.ResolveCommand ?? "";
+        ResolveCommand.PlaceholderText = Sg.Core.Resolver.DefaultCommand;
+        ResolveCommand.IsEnabled = root != null;
         BackupUrl.Text = root?.Config.Backup?.Url ?? "";
         BackupPrefix.Text = root?.Config.Backup?.Prefix ?? "";
         BackupUncommitted.IsOn = root?.Config.Backup?.Uncommitted ?? true;
@@ -48,6 +51,7 @@ public sealed partial class SettingsPage : SgPage
         EditorCommand.TextChanged += (_, _) => Type();
         BackupUrl.TextChanged += (_, _) => Type();
         BackupPrefix.TextChanged += (_, _) => Type();
+        ResolveCommand.TextChanged += (_, _) => Type();
     }
 
     /// <summary>
@@ -165,6 +169,7 @@ public sealed partial class SettingsPage : SgPage
         {
             root.Config.MinMessageLength = double.IsNaN(MinLength.Value) ? 10 : (int)MinLength.Value;
             root.Config.AllowAgentPush = AgentPush.IsOn;
+            root.Config.ResolveCommand = ResolveCommand.Text.Trim().Length > 0 ? ResolveCommand.Text.Trim() : null;
             var url = BackupUrl.Text.Trim();
             root.Config.Backup = url.Length == 0 ? null
                 : new Sg.Core.BackupConfig { Url = url, Prefix = BackupPrefix.Text.Trim().Trim('/'), Uncommitted = BackupUncommitted.IsOn };

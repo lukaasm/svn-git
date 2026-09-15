@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -125,7 +126,37 @@ public static class Ops
         ("core.looseCompression", "0"),
         ("gc.auto", "0"),
         ("core.quotePath", "false"),
+        // The rest is for a rebase that stops. rerere remembers how a conflict was settled and settles
+        // the same one again by itself: a push rebases and aborts on the first conflict, and the rebase
+        // that follows by hand used to meet every one of them twice. zdiff3 puts the version both sides
+        // started from between the markers, which is what a hand or an agent needs to see what each side
+        // did. The rename limit is for a snapshot that moved a folder: past it git stops looking for
+        // renames and every file the branch touched in there conflicts as changed against deleted.
+        ("rerere.enabled", "true"),
+        ("rerere.autoUpdate", "true"),
+        ("merge.conflictStyle", "zdiff3"),
+        ("merge.renameLimit", "32767"),
     };
+
+    /// <summary>
+    /// Bumped when StoreConfig gains a key, so a store made by an older sg gets it on the next open.
+    /// The version is a key in the store's own config, read from the file rather than from git, so an
+    /// open that has nothing to do costs a file read and no process.
+    /// </summary>
+    const int StoreConfigVersion = 2;
+
+    /// <summary>Writes every StoreConfig key a store made by an older sg lacks. Nothing when it is current.</summary>
+    public static void UpgradeStore(SgRoot root)
+    {
+        var file = Path.Combine(root.StorePath, "config");
+        string text;
+        try { text = File.Exists(file) ? File.ReadAllText(file) : ""; }
+        catch (IOException) { return; }
+        if (Regex.IsMatch(text, @"(?im)^\s*configVersion\s*=\s*" + StoreConfigVersion + @"\s*$")) return;
+        foreach (var (k, v) in StoreConfig) root.Git.Config(k, v);
+        root.Git.Config("sg.configVersion", StoreConfigVersion.ToString(CultureInfo.InvariantCulture));
+        root.Log.Info("store settings brought up to date: " + root.StorePath);
+    }
 
     // ---- init ----
 
@@ -138,6 +169,7 @@ public static class Ops
         var root = SgRoot.Create(rootPath, cfg, log);
         root.Git.InitBare();
         foreach (var (k, v) in StoreConfig) root.Git.Config(k, v);
+        root.Git.Config("sg.configVersion", StoreConfigVersion.ToString(CultureInfo.InvariantCulture));
         if (fsmonitor) root.Git.Config("core.fsmonitor", "true");
         root.Git.EnsureRootCommit();
         root.RefreshExcludes();

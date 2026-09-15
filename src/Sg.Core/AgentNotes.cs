@@ -24,7 +24,8 @@ public static class AgentNotes
             4. When a rebase or an import stops on conflicts, `sg resolve` says what stopped and what is in conflict.
                Then `sg resolve ours|theirs <path>...` to keep one whole version, or edit the file and
                `sg resolve resolved <path>...`. Then `sg resolve continue`, or `sg resolve skip` to drop that one
-               commit, or `sg resolve abort` to put it all back.
+               commit, or `sg resolve abort` to put it all back. You are an agent: settle the files yourself,
+               keeping both sides' changes, rather than running `sg resolve auto`, which starts another one.
             5. Do not push to SVN. When the work is committed and ready, say so. A human runs `sg push`.
             6. `sg status --json` shows every checkout and worktree.
             7. Do not create files with reserved Windows names: nul, con, aux, prn, com1-9, lpt1-9.

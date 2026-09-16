@@ -290,6 +290,8 @@ public sealed class RestoreResult
     public string? Why;
     /// <summary>A branch of this name was here already and force wrote over it.</summary>
     public bool Replaced;
+    public string? RecoveryBranch;
+    public string? RecoveryPath;
     /// <summary>The shelf the uncommitted changes came back as, when they came back.</summary>
     public string? WipShelf;
     /// <summary>And they were written into the folder, so the shelf is gone again.</summary>
@@ -368,6 +370,7 @@ public static partial class Backup
     /// <summary>Where backups go. The URL is tried before it is kept, so a typo is found now and not on the timer.</summary>
     public static BackupConfig Set(SgRoot root, string url, string? prefix = null, bool? uncommitted = null, int? maxFileMb = null, int? maxPushMb = null)
     {
+        using var operation = root.Lock();
         var b = root.Config.Backup ?? new BackupConfig();
         var u = url.Trim();
         if (u.Length == 0) throw new SgException("give the URL of a git repository: a bare folder, a share, or a hosted repository.");
@@ -968,15 +971,33 @@ public static partial class Backup
         var target = (asBranch ?? name).Trim();
         if (target.Length == 0) throw new SgException("give the branch a name with --name.");
         var into = intoCheckout != null ? root.Checkout(intoCheckout) : Export.MatchCheckout(root, meta) ?? throw new SgException(Export.NoMatch(root, meta));
+        var snapshot = git.RefSha(root.SnapshotRef(into)) ?? throw new SgException($"no snapshot of {into.Name} yet. Run: sg sync {into.Name}");
         if (git.RefSha("refs/heads/" + target) != null)
         {
             if (!force) throw new SgException($"branch exists here: {target}. Restore it under another name with --name, or force to write over it.");
-            // Force writes over the branch and its worktree with what the backup holds, uncommitted
-            // changes in it and all. Removing it first lets the rest of restore make it the usual way.
-            Ops.Remove(root, target, force: true);
+            // Keep the entire original worktree, including ignored and untracked files.
+            // A failed replacement must leave an accessible recovery branch.
+            var recovery = target + "-before-restore-" + Guid.NewGuid().ToString("N")[..8];
+            var original = git.WorktreeList().FirstOrDefault(w => w.Branch == target
+                || (!w.Bare && Directory.Exists(w.Path) && git.RebaseHeadName(w.Path) == target));
+            var savedPath = original == null ? null : original.Path + "-before-restore-" + Guid.NewGuid().ToString("N")[..8];
+            if (original != null)
+            {
+                if (git.ReplayInProgress(original.Path) != Replay.None || ReplayName(git, original.Path) != null)
+                    throw new SgException("Finish the pending operation before replacing " + target);
+                git.Ok(null, "worktree", "move", original.Path, savedPath!);
+            }
+            try { git.Ok(null, "branch", "-m", target, recovery); }
+            catch
+            {
+                if (original != null) git.Ok(null, "worktree", "move", savedPath!, original.Path);
+                throw;
+            }
+            res.RecoveryBranch = recovery;
+            res.RecoveryPath = savedPath;
+            root.Log.Info("Original work preserved as " + recovery + (savedPath == null ? "" : " in " + savedPath));
             res.Replaced = true;
         }
-        var snapshot = git.RefSha(root.SnapshotRef(into)) ?? throw new SgException($"no snapshot of {into.Name} yet. Run: sg sync {into.Name}");
 
         res.Branch = target;
         res.Checkout = into.Name;
@@ -1084,6 +1105,7 @@ public static partial class Backup
     /// </summary>
     public static List<string> Prune(SgRoot root, bool delete)
     {
+        using var operation = root.Lock();
         var cfg = Require(root);
         var git = root.Git;
         var remote = git.LsRemote(cfg.Url);

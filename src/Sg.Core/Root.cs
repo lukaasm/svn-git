@@ -18,6 +18,7 @@ public sealed class SgRoot
 
     FileStream? _lock;
     int _lockDepth;
+    readonly object _operationGate = new();
 
     SgRoot(string rootPath, SgConfig config, ILog log)
     {
@@ -93,42 +94,72 @@ public sealed class SgRoot
             .FirstOrDefault();
     }
 
+    /// <summary>Find a branch worktree by path, including detached worktrees stopped in rebase.</summary>
+    public WorktreeInfo? WorktreeContaining(string path)
+    {
+        var p = Path.GetFullPath(path).TrimEnd('\\', '/');
+        var coPaths = Config.Checkouts.Select(c => c.Path.TrimEnd('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Git.WorktreeList()
+            .Where(w => !w.Bare && !coPaths.Contains(w.Path.TrimEnd('\\', '/')))
+            .Where(w => p.Equals(w.Path.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)
+                        || p.StartsWith(w.Path.TrimEnd('\\', '/') + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(w => w.Path.Length)
+            .FirstOrDefault();
+    }
+
+
     public string WorktreePathFor(string branch) =>
         Path.Combine(Config.WorktreeRoot ?? RootPath, branch.Replace('/', '-').Replace('\\', '-'));
 
-    /// <summary>One bridge operation at a time per root. Re-entrant inside one process.</summary>
+    /// <summary>One bridge operation at a time per root. Re-entrant on the owning thread; core operations are synchronous.</summary>
     public IDisposable Lock(int timeoutSeconds = 600)
     {
-        if (_lockDepth > 0)
-        {
-            _lockDepth++;
-            return new Releaser(this);
-        }
-        var lockPath = Path.Combine(StorePath, "sg.lock");
         var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
-        var warned = false;
-        while (true)
+        while (!System.Threading.Monitor.TryEnter(_operationGate))
         {
-            try
+            Cancellation.ThrowIfRequested();
+            if (DateTime.UtcNow >= deadline) throw new SgException("another sg operation holds " + StorePath);
+            Thread.Sleep(50);
+        }
+        try
+        {
+            Cancellation.ThrowIfRequested();
+            if (_lockDepth > 0)
             {
-                _lock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-                _lockDepth = 1;
+                _lockDepth++;
                 return new Releaser(this);
             }
-            catch (IOException)
+            var lockPath = Path.Combine(StorePath, "sg.lock");
+            var warned = false;
+            while (true)
             {
-                if (DateTime.UtcNow > deadline) throw new SgException("another sg operation holds " + lockPath);
-                if (!warned) { Log.Info("waiting for " + lockPath); warned = true; }
-                Thread.Sleep(500);
+                Cancellation.ThrowIfRequested();
+                try
+                {
+                    _lock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                    _lockDepth = 1;
+                    return new Releaser(this);
+                }
+                catch (IOException)
+                {
+                    if (DateTime.UtcNow >= deadline) throw new SgException("another sg operation holds " + lockPath);
+                    if (!warned) { Log.Info("waiting for " + lockPath); warned = true; }
+                    Thread.Sleep(100);
+                }
             }
         }
+        catch { System.Threading.Monitor.Exit(_operationGate); throw; }
     }
 
     void Unlock()
     {
-        if (--_lockDepth > 0) return;
-        _lock?.Dispose();
-        _lock = null;
+        try
+        {
+            if (--_lockDepth > 0) return;
+            _lock?.Dispose();
+            _lock = null;
+        }
+        finally { System.Threading.Monitor.Exit(_operationGate); }
     }
 
     sealed class Releaser(SgRoot root) : IDisposable

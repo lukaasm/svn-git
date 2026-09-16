@@ -344,18 +344,18 @@ public sealed partial class MergePage : SgPage
 
         if (dryRun)
         {
-            Summary.Text = r.Changed.Count == 0
+            Summary.Text = r.Failure ?? (r.Changed.Count == 0
                 ? "Nothing would change."
-                : $"{r.Changed.Count} path(s) would change" + (r.Clean ? "." : $", {r.Conflicts.Count} in conflict.");
+                : $"{r.Changed.Count} path(s) would change" + (r.Clean ? "." : $", {r.Conflicts.Count} in conflict."));
             return;
         }
 
         ResultBar.Severity = r.Clean ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-        ResultBar.Message = r.Changed.Count == 0
+        ResultBar.Message = r.Failure ?? (r.Changed.Count == 0
             ? "Nothing changed: there was nothing to bring in."
             : r.Clean
                 ? $"{r.Changed.Count} path(s) changed in the checkout. Nothing is committed yet."
-                : $"{r.Changed.Count} path(s) changed, {r.Conflicts.Count} in conflict. Solve the conflicts in the checkout, then commit.";
+                : $"{r.Changed.Count} path(s) changed, {r.Conflicts.Count} in conflict. Solve the conflicts in the checkout, then commit.");
         ResultBar.ActionButton = ChangesButton();
         ResultBar.IsOpen = true;
         // The revisions this branch has already taken change what a further merge would do.
@@ -373,6 +373,7 @@ public sealed partial class MergePage : SgPage
 
     static string Describe(MergeResult r)
     {
+        if (r.Failure != null) return r.Failure + "\n\n" + r.Output;
         if (r.Changed.Count == 0) return "Nothing would change.\n\n" + r.Output;
         var lines = new List<string>();
         lines.Add(r.Revisions.Count == 0

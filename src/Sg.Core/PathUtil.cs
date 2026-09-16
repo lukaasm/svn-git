@@ -80,7 +80,7 @@ public static class PathUtil
     public static string RelativeTo(string baseAbs, string abs)
     {
         var r = Path.GetRelativePath(Path.GetFullPath(baseAbs), Path.GetFullPath(abs));
-        if (r.StartsWith("..")) throw new SgException($"{abs} is not inside {baseAbs}");
+        if (Path.IsPathRooted(r) || r == ".." || r.StartsWith(".." + Path.DirectorySeparatorChar) || r.StartsWith("../")) throw new SgException($"{abs} is not inside {baseAbs}");
         return Rel(r);
     }
 

@@ -257,7 +257,7 @@ public static partial class Backup
         {
             var worktree = git.WorktreeList().FirstOrDefault(w => !w.Bare && w.Branch == name)?.Path
                            ?? throw new SgException($"{name} has no worktree here to pull into.");
-            if (git.ReplayInProgress(worktree) != Replay.None)
+            if (Conflicts.HasPending(git, worktree))
                 throw new SgException($"{name} is in the middle of a rebase or an import. Finish it, then pull.");
             var coName = git.BranchBases().GetValueOrDefault(name) ?? throw new SgException($"{name} is not a branch of a checkout here.");
             var co = root.Checkout(coName);

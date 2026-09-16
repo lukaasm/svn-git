@@ -13,6 +13,7 @@ public static partial class Backup
         public string Checkout { get; set; } = "";
         public string? Wip { get; set; }
         public bool Pull { get; set; }
+        public bool RestoringEdits { get; set; }
         public string Token { get; set; } = "";
         public string Start { get; set; } = "";
         public int Commits { get; set; }
@@ -59,7 +60,7 @@ public static partial class Backup
                 Name = result.Name, Branch = result.Branch, Checkout = result.Checkout, Wip = wip, Pull = pull,
                 Token = Guid.NewGuid().ToString("N"), Start = start, Commits = changes.Count,
             };
-            File.WriteAllText(git.PrivateFile(result.Path, "backup-replay.json"), JsonSerializer.Serialize(pending));
+            AtomicFile.WriteAllText(git.PrivateFile(result.Path, "backup-replay.json"), JsonSerializer.Serialize(pending));
             // Keep the original objects even if a background fetch replaces the fetched backup refs.
             git.UpdateRef("refs/sg/replay/" + pending.Token + "/branch", changes[^1].Sha);
             if (wip != null) git.UpdateRef("refs/sg/replay/" + pending.Token + "/wip", wip);
@@ -99,7 +100,17 @@ public static partial class Backup
         if (pending.Wip != null)
         {
             var co = root.Checkout(pending.Checkout);
-            if (pending.Pull)
+            var interrupted = pending.RestoringEdits;
+            pending.RestoringEdits = true;
+            AtomicFile.WriteAllText(git.PrivateFile(path, "backup-replay.json"), JsonSerializer.Serialize(pending));
+            // An interrupted write may have applied some or all edits. Never apply them twice.
+            // Present a shelf for comparison instead, while preserving the current working files.
+            if (interrupted)
+            {
+                Adopt(root, result, pending.Wip, git.HeadSha(path), path, co, pending.Branch, write: false);
+                result.WipWhy = "Recovery was interrupted while restoring edits. Review the saved edits against the working files.";
+            }
+            else if (pending.Pull)
                 PullChanges(root, root.Config.Backup ?? new BackupConfig(), result, pending.Wip, path, co, pending.Branch, PushedRef("wip", pending.Name));
             else Adopt(root, result, pending.Wip, git.HeadSha(path), path, co, pending.Branch, write: true);
         }

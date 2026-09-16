@@ -39,7 +39,8 @@ public sealed class ConflictState
     /// </summary>
     public List<string> ByHand = new();
 
-    public bool InProgress => Kind != Replay.None;
+    public bool Finalizing => Kind == Replay.None && BackupName != null;
+    public bool InProgress => Kind != Replay.None || Finalizing;
 
     /// <summary>The word for what stopped, for a sentence that has to name it.</summary>
     public string Verb => BackupName != null ? "backup replay" : Conflicts.Verb(Kind);
@@ -104,6 +105,9 @@ public sealed class ResolveResult
 /// </summary>
 public static class Conflicts
 {
+    /// <summary>Includes pending backup finalization when Git has already finished its queue.</summary>
+    public static bool HasPending(Git git, string path) => git.ReplayInProgress(path) != Replay.None || Backup.ReplayName(git, path) != null;
+
     public static string Verb(Replay kind) => kind switch
     {
         Replay.Rebase => "rebase",
@@ -119,7 +123,7 @@ public static class Conflicts
     {
         Replay.Import => "an import stopped part way in " + worktree,
         Replay.Rebase => "a rebase stopped part way in " + worktree,
-        _ => "nothing is stopped in " + worktree,
+        _ => Backup.ReplayName(git, worktree) != null ? "backup edits await recovery in " + worktree : "nothing is stopped in " + worktree,
     };
 
     /// <summary>The sentence that follows it: where the two buttons that finish it are.</summary>
@@ -145,7 +149,7 @@ public static class Conflicts
             Of = at.Of,
             Stopped = at.Subject,
         };
-        state.Stuck = state.InProgress && state.Conflicted.Count == 0 && git.NothingStaged(worktree);
+        state.Stuck = state.Kind != Replay.None && state.Conflicted.Count == 0 && git.NothingStaged(worktree);
         // Only then, and only because a stuck step is the one place the worktree's own changes are the
         // thing to look at: everywhere else they are noise, and a replay leaves the worktree clean.
         if (state.Stuck)
@@ -159,8 +163,11 @@ public static class Conflicts
     /// </summary>
     public static ResolveResult Continue(SgRoot root, string worktree)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
+        if (git.ReplayInProgress(worktree) == Replay.None && Backup.ReplayName(git, worktree) != null)
+            return Step(root, worktree, Replay.Import, new ProcResult { Exe = "sg", Args = ["recover-edits"], ExitCode = 0 });
         var kind = Started(git, worktree);
         var left = git.ConflictedFiles(worktree);
         if (left.Count > 0)
@@ -189,6 +196,7 @@ public static class Conflicts
     /// </summary>
     public static ForcedApply ApplyWhatFits(SgRoot root, string worktree)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         if (Started(git, worktree) != Replay.Import)
@@ -220,6 +228,7 @@ public static class Conflicts
     /// </summary>
     public static ResolveResult Skip(SgRoot root, string worktree)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         var kind = Started(git, worktree);
@@ -233,6 +242,7 @@ public static class Conflicts
     /// </summary>
     public static void Abort(SgRoot root, string worktree)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         if (Started(git, worktree) == Replay.Import) git.AbortMailbox(worktree);
@@ -247,6 +257,7 @@ public static class Conflicts
     /// </summary>
     public static AutoResolveResult AutoResolve(SgRoot root, string worktree, IEnumerable<string>? only = null)
     {
+        using var operation = root.Lock();
         var state = State(root, worktree);
         if (!state.InProgress) throw new SgException("nothing is stopped in " + worktree + ", so there is nothing to resolve.");
         if (state.Conflicted.Count == 0)
@@ -271,6 +282,7 @@ public static class Conflicts
     /// </summary>
     public static AutoResolveRun AutoResolveAll(SgRoot root, string worktree)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         var kind = Started(git, worktree);

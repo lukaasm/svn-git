@@ -749,8 +749,8 @@ public sealed partial class MainWindow : Window
                 var wt = Session.WorktreeAt(path);
                 if (wt != null)
                 {
-                    if (!root.Git.RebaseInProgress(wt.Path)) await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, wt.Path));
-                    if (root.Git.RebaseInProgress(wt.Path)) Host.Go(() => new ConflictPage(wt.Path), "resolve:" + wt.Path);
+                    if (!Conflicts.HasPending(root.Git, wt.Path)) await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, wt.Path));
+                    if (Conflicts.HasPending(root.Git, wt.Path)) Host.Go(() => new ConflictPage(wt.Path), "resolve:" + wt.Path);
                 }
                 else Pane.Append(path + " is not inside a worktree");
                 await RefreshAsync();

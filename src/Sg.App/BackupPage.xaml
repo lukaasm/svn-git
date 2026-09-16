@@ -143,8 +143,8 @@
             <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="24">
                 <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True"
                           ToolTipService.ToolTip="The changes that were not committed when the backup was made come back too, through the shelf: written into the worktree when they merge, left on the shelf when one does not." />
-                <CheckBox x:Name="ForceBox" Content="Overwrite if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
-                          ToolTipService.ToolTip="A branch of this name already here is written over with the backup version - its worktree reset to it, any uncommitted changes in it dropped. Off, restore refuses a name that is taken." />
+                <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
+                          ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name. Off, restore refuses a name that is taken." />
             </StackPanel>
         </Grid>
 

@@ -842,7 +842,7 @@ static class Cli
                 var name = a.Arg(1, "the branch to restore");
                 var r = Backup.Restore(root, name, a.Get("--name"), a.Get("--into"), a.Has("--wip"), a.Has("--force"));
                 if (json) { Json(r); return r.Ok ? 0 : 1; }
-                if (r.Replaced) Console.WriteLine($"wrote over the branch {r.Branch} that was here");
+                if (r.Replaced) Console.WriteLine($"original work preserved as {r.RecoveryBranch}" + (r.RecoveryPath == null ? "" : " in " + r.RecoveryPath));
                 if (r.Branch.Length == 0)
                 {
                     Console.WriteLine($"the local edits of {r.Checkout} came back" + (r.WipWritten ? " into " + r.Path : " as shelf " + r.WipShelf));

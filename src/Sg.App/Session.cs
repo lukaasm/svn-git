@@ -88,7 +88,7 @@ public sealed class AppSettings
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
     }
 }
 
@@ -128,19 +128,7 @@ public static class Session
     public static SgRoot Require() => Root ?? throw new SgException("no sg root is open. Use 'Open root' first.");
 
     /// <summary>The branch worktree that holds the path. Checkouts do not count.</summary>
-    public static WorktreeInfo? WorktreeAt(string path)
-    {
-        var root = Root;
-        if (root == null) return null;
-        var p = Path.GetFullPath(path).TrimEnd('\\', '/');
-        var coPaths = root.Config.Checkouts.Select(c => c.Path.TrimEnd('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return root.Git.WorktreeList()
-            .Where(w => !w.Bare && w.Branch != null && !coPaths.Contains(w.Path.TrimEnd('\\', '/')))
-            .Where(w => p.Equals(w.Path.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)
-                        || p.StartsWith(w.Path.TrimEnd('\\', '/') + "\\", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(w => w.Path.Length)
-            .FirstOrDefault();
-    }
+    public static WorktreeInfo? WorktreeAt(string path) => Root?.WorktreeContaining(path);
 
     /// <summary>
     /// Opens a folder in whatever the shell opens folders with. Starting explorer.exe by name walked
@@ -160,13 +148,13 @@ public static class Session
 public static class Runner
 {
     /// <summary>
-    /// The log sink is one field for the whole app, so an operation has to give it back. A push runs
-    /// for minutes, and until this restored the previous sink, any window that finished a read in the
-    /// meantime kept the sink and the push's own log went quiet with nothing said about it.
+    /// The sink follows the asynchronous operation into its worker and is restored for nested calls.
+    /// Concurrent operations keep independent panes.
     /// </summary>
     /// <remarks>failed hears the message the strip shows when the work throws, so a page can say it where the reader is looking. Not on a cancel.</remarks>
     public static async Task<T?> Run<T>(StatusStrip pane, string title, Func<T> work, Action<string>? failed = null) where T : class
     {
+        var operationRoot = Session.Root;
         var previous = Session.Log.Sink;
         Session.Log.Sink = pane;
         pane.Begin(title);
@@ -177,7 +165,11 @@ public static class Runner
             // The token rides the async flow into Proc, which ends the child process on cancel.
             using (Cancellation.Use(cancel.Token))
             {
-                var result = await Task.Run(work);
+                var result = await Task.Run(() =>
+                {
+                    using var operation = operationRoot?.Lock();
+                    return work();
+                });
                 pane.End(title + ": done");
                 return result;
             }

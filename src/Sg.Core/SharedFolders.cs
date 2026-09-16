@@ -177,17 +177,30 @@ public static class SharedFolders
         var goneDirs = tDirs.Where(d => !keep.Contains(d)).OrderByDescending(d => d.Length).ToList();
 
         log.Info($"refreshing {label}: {over.Count - replaced} new, {replaced} changed, {goneFiles.Count + goneDirs.Count} gone");
-        foreach (var d in sDirs) Directory.CreateDirectory(Path.Combine(target, d));
-        foreach (var rel in goneFiles) { Cancellation.ThrowIfRequested(); DeleteFile(Path.Combine(target, rel)); }
-        foreach (var rel in goneDirs)
+        // Read replacement contents before deleting anything: a disappearing source must not
+        // leave the target with its old files removed and no replacements available.
+        var staging = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(target))!, ".sg-mirror-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging);
+        try
         {
-            // Deepest first, and each one is empty by now unless it holds a junction, which stays.
-            try { Directory.Delete(Path.Combine(target, rel)); }
-            catch (IOException e) { log.Warn($"left in place: {rel} ({e.Message})"); }
+            foreach (var f in over) Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(staging, f.Rel))!);
+            Transfer(log, "refreshing " + label, over, source, staging, clone);
+            foreach (var rel in goneFiles) { Cancellation.ThrowIfRequested(); DeleteFile(Path.Combine(target, rel)); }
+            foreach (var rel in goneDirs)
+            {
+                // Deepest first; junctions are retained.
+                try { Directory.Delete(Path.Combine(target, rel)); }
+                catch (IOException e) { log.Warn($"left in place: {rel} ({e.Message})"); }
+            }
+            foreach (var d in sDirs) Directory.CreateDirectory(Path.Combine(target, d));
+            foreach (var f in over)
+            {
+                var dest = Path.Combine(target, f.Rel);
+                if (File.Exists(dest)) File.SetAttributes(dest, FileAttributes.Normal);
+                File.Move(Path.Combine(staging, f.Rel), dest, overwrite: true);
+            }
         }
-        // A file that differs is replaced under its old name, so the old one goes first.
-        foreach (var f in over) if (File.Exists(Path.Combine(target, f.Rel))) DeleteFile(Path.Combine(target, f.Rel));
-        Transfer(log, "refreshing " + label, over, source, target, clone);
+        finally { SgRoot.SweepTempDir(staging); }
         return new MirrorResult(over.Count - replaced, replaced, goneFiles.Count + goneDirs.Count);
     }
 
@@ -258,7 +271,7 @@ public static class SharedFolders
             var abs = rel.Length == 0 ? root : Path.Combine(root, rel);
             IEnumerable<FileSystemInfo> entries;
             try { entries = new DirectoryInfo(abs).EnumerateFileSystemInfos("*", EnumerateAll); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new SgException("Cannot inventory " + abs + ": " + e.Message); }
             foreach (var e in entries)
             {
                 if ((e.Attributes & FileAttributes.ReparsePoint) != 0) continue;
@@ -276,7 +289,7 @@ public static class SharedFolders
     }
 
     // Hidden and system entries are part of the folder too. The default listing leaves them out.
-    static readonly EnumerationOptions EnumerateAll = new() { AttributesToSkip = 0, IgnoreInaccessible = true };
+    static readonly EnumerationOptions EnumerateAll = new() { AttributesToSkip = 0, IgnoreInaccessible = false };
 
     // ---- the block clone itself ----
 

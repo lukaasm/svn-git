@@ -58,7 +58,8 @@ public sealed class MergeResult
     /// <summary>What each working copy did, when the merge covered more than one.</summary>
     public List<MergeResult> Parts = new();
 
-    public bool Clean => Conflicts.Count == 0;
+    public string? Failure;
+    public bool Clean => Failure == null && Conflicts.Count == 0;
 }
 
 /// <summary>
@@ -229,6 +230,7 @@ public static class Merge
     public static MergeResult Run(SgRoot root, CheckoutConfig co, MergeTarget target, string sourceUrl,
         IReadOnlyList<long>? revisions, bool dryRun, bool reverse = false)
     {
+        using var operation = root.Lock();
         if (reverse && (revisions == null || revisions.Count == 0))
             throw new SgException("taking a revision back out needs the revisions named. Pick them in the list first.");
         var problems = Problems(root, co, target, sourceUrl);
@@ -273,6 +275,7 @@ public static class Merge
     public static MergeResult RunAll(SgRoot root, CheckoutConfig co, IReadOnlyList<MergePair> pairs,
         IReadOnlyList<MergeRevision>? picked, bool dryRun, bool reverse = false)
     {
+        using var operation = root.Lock();
         var whole = new MergeResult
         {
             DryRun = dryRun,
@@ -284,15 +287,22 @@ public static class Merge
             var mine = picked?.Where(p => p.Pair == pair).Select(p => p.Revision).ToList();
             // Named revisions that belong to another working copy are not this one's business.
             if (picked != null && (mine == null || mine.Count == 0)) continue;
-            var part = Run(root, co, pair.Target, pair.SourceUrl, mine, dryRun, reverse);
+            MergeResult part;
+            try { part = Run(root, co, pair.Target, pair.SourceUrl, mine, dryRun, reverse); }
+            catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException or OperationCanceledException)
+            {
+                whole.Failure = $"{pair.Label}: {ex.Message}. Earlier targets may already have changed; inspect checkout changes before retrying.";
+                whole.Output += "\n" + whole.Failure;
+                break;
+            }
             whole.Parts.Add(part);
             whole.Changed.AddRange(part.Changed);
             whole.Conflicts.AddRange(part.Conflicts);
             whole.Revisions.AddRange(part.Revisions);
             whole.Output += (whole.Output.Length > 0 ? "\n\n" : "") + $"--- {pair.Label} ---\n" + part.Output;
         }
-        if (whole.Parts.Count == 0) throw new SgException("none of the picked revisions belong to a working copy this merge covers");
-        whole.SourceUrl = whole.Parts[0].SourceUrl;
+        if (whole.Parts.Count == 0 && whole.Failure == null) throw new SgException("none of the picked revisions belong to a working copy this merge covers");
+        whole.SourceUrl = whole.Parts.FirstOrDefault()?.SourceUrl ?? "";
         return whole;
     }
 

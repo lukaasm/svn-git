@@ -70,6 +70,10 @@ public sealed class BackupTests : IDisposable
         r.Items.Single(i => i.Kind == kind && i.Name == name);
 
     [Theory]
+    [InlineData(false, "recover-edits")]
+    [InlineData(true, "recover-edits")]
+    [InlineData(false, "recover")]
+    [InlineData(true, "recover")]
     [InlineData(false, "continue")]
     [InlineData(false, "skip")]
     [InlineData(false, "abort")]
@@ -103,17 +107,38 @@ public sealed class BackupTests : IDisposable
         if (action == "abort") Conflicts.Abort(reopened, result.Path);
         else
         {
-            if (action == "continue") far.Root.Git.TakeSide(result.Path, result.Conflicted, ours: false);
-            var finished = action == "continue" ? Conflicts.Continue(reopened, result.Path) : Conflicts.Skip(reopened, result.Path);
+            if (action is "continue" or "recover" or "recover-edits") far.Root.Git.TakeSide(result.Path, result.Conflicted, ours: false);
+            if (action is "recover" or "recover-edits")
+            {
+                far.Root.Git.ContinueMailbox(result.Path).EnsureOk();
+                Assert.True(Conflicts.State(reopened, result.Path).Finalizing);
+                Assert.True(Conflicts.State(reopened, result.Path).InProgress);
+                Assert.True(Ops.Status(reopened, false).Worktrees.Single(w => w.Path == result.Path).BackupFinalizing);
+                if (action == "recover-edits")
+                {
+                    var file = far.Root.Git.PrivateFile(result.Path, "backup-replay.json");
+                    var state = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!;
+                    state["RestoringEdits"] = true;
+                    File.WriteAllText(file, state.ToJsonString());
+                    Fixture.Put(result.Path, "notes.txt", "edits made after interruption\n");
+                }
+            }
+            var finished = action is "continue" or "recover" or "recover-edits" ? Conflicts.Continue(reopened, result.Path) : Conflicts.Skip(reopened, result.Path);
             Assert.True(finished.Ok, finished.Output);
-            Assert.Equal("unfinished backup edits\n", Read(result.Path, "notes.txt"));
+            Assert.Equal(action == "recover-edits" ? "edits made after interruption\n" : "unfinished backup edits\n", Read(result.Path, "notes.txt"));
+            if (action == "recover-edits")
+            {
+                Assert.NotNull(finished.Backup?.WipShelf);
+                Assert.Contains(Shelf.List(reopened), shelf => shelf.Id == finished.Backup.WipShelf);
+                Assert.False(finished.Backup.WipWritten);
+            }
             Assert.True(File.Exists(Path.Combine(result.Path, "fort/dev/game_renamed.cpp")));
             Assert.False(File.Exists(Path.Combine(result.Path, "fort/tools/tool.py")));
         }
         Assert.Equal(Replay.None, far.Root.Git.ReplayInProgress(result.Path));
         Assert.Null(Backup.ReplayName(far.Root.Git, result.Path));
         Assert.Equal("", far.Root.Git.Out(null, "for-each-ref", "--format=%(refname)", "refs/sg/replay/"));
-        Assert.Equal(action == "continue" ? "int engine = 2;\n" : "int engine = 9;\n", Read(result.Path, "schmetterling/engine.cpp"));
+        Assert.Equal(action is "continue" or "recover" or "recover-edits" ? "int engine = 2;\n" : "int engine = 9;\n", Read(result.Path, "schmetterling/engine.cpp"));
         if (action == "abort")
         {
             Assert.True(File.Exists(Path.Combine(result.Path, "fort/dev/game.cpp")));
@@ -499,6 +524,40 @@ public sealed class BackupTests : IDisposable
     }
 
     [Fact]
+    public void ForceRestore_RefusesBranchWithDetachedRebaseInProgress()
+    {
+        f.Setup();
+        var wt = MakeBranch("feature-paused");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        var other = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        Fixture.Put(other, "engine.cpp", "int engine = 9;\n");
+        f.Svn.Ok(other, "commit", "--non-interactive", "-m", "server edit");
+        Ops.Sync(f.Root, f.Co);
+        Assert.True(Ops.Rebase(f.Root, wt).Conflict);
+        var original = f.Root.Git.RefSha("refs/heads/feature-paused");
+        Assert.Throws<SgException>(() => Backup.Restore(f.Root, "feature-paused", force: true));
+        Assert.Equal(original, f.Root.Git.RefSha("refs/heads/feature-paused"));
+        Assert.Equal("feature-paused", f.Root.Git.RebaseHeadName(wt));
+        Assert.True(Directory.Exists(wt));
+    }
+
+    [Fact]
+    public void ForceRestore_MissingSnapshotPreservesExistingWork()
+    {
+        f.Setup();
+        var wt = MakeBranch("feature-keep");
+        Fixture.Put(wt, "notes.txt", "local edits");
+        var head = f.Root.Git.HeadSha(wt);
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        f.Root.Git.DeleteRef(f.Root.SnapshotRef(f.Co));
+        Assert.Throws<SgException>(() => Backup.Restore(f.Root, "feature-keep", force: true));
+        Assert.Equal(head, f.Root.Git.HeadSha(wt));
+        Assert.Equal("local edits", Read(wt, "notes.txt"));
+    }
+
+    [Fact]
     public void ForceRestore_WritesOverABranchThatIsHere()
     {
         f.Setup();
@@ -513,13 +572,25 @@ public sealed class BackupTests : IDisposable
         // The branch drifts on the far side - a commit that is not in the backup, and an uncommitted edit.
         Fixture.Put(first.Path, "schmetterling/engine.cpp", "int engine = 123; // drifted away\n");
         far.Root.Git.Ok(first.Path, "commit", "-q", "-am", "far drift");
-        Fixture.Put(first.Path, "fort/dev/new/file.txt", "uncommitted, dropped on overwrite\n");
+        Fixture.Put(first.Path, "fort/dev/new/file.txt", "uncommitted, preserved on replacement\n");
+
+        File.AppendAllText(Path.Combine(first.Path, ".gitignore"), "\n/local-ignored.txt\n");
+        Fixture.Put(first.Path, "local-ignored.txt", "ignored work");
+        Fixture.Put(first.Path, "untracked.txt", "untracked work");
 
         // Without force, a name that is here is refused. With force, the branch and its worktree are the backup again.
         Assert.Throws<SgException>(() => Backup.Restore(far.Root, "feature-x"));
         var again = Backup.Restore(far.Root, "feature-x", force: true);
         Assert.True(again.Ok, again.Why);
         Assert.True(again.Replaced);
+        var saved = far.Root.Git.WorktreeList().Single(w => w.Branch?.StartsWith("feature-x-before-restore-") == true);
+        Assert.True(Directory.Exists(saved.Path));
+        Assert.Equal(saved.Path, again.RecoveryPath);
+        Assert.Equal(saved.Branch, again.RecoveryBranch);
+        Assert.Equal("int engine = 123; // drifted away\n", Read(saved.Path, "schmetterling/engine.cpp"));
+        Assert.Equal("uncommitted, preserved on replacement\n", Read(saved.Path, "fort/dev/new/file.txt"));
+        Assert.Equal("ignored work", Read(saved.Path, "local-ignored.txt"));
+        Assert.Equal("untracked work", Read(saved.Path, "untracked.txt"));
         Assert.Equal("int engine = 2;\n", Read(again.Path, "schmetterling/engine.cpp"));
         Assert.Equal("brand new\n", Read(again.Path, "fort/dev/new/file.txt"));
         Assert.Equal(2, far.Root.Git.CountCommits(far.Root.SnapshotRef(far.Co), "refs/heads/feature-x"));

@@ -81,7 +81,8 @@ public sealed class WorktreeStatus
     public Replay Stopped;
 
     /// <summary>Something is half done in this worktree, whichever of the two it is.</summary>
-    public bool RebaseInProgress => Stopped != Replay.None;
+    public bool BackupFinalizing;
+    public bool RebaseInProgress => Stopped != Replay.None || BackupFinalizing;
 
     public int Conflicts;
     public bool Dirty;
@@ -812,7 +813,7 @@ public static class Ops
         var snapRef = root.SnapshotRef(BaseCheckout(root, branch));
 
         if (shas.Count == 0) throw new SgException("no commits were picked");
-        if (git.RebaseInProgress(worktree))
+        if (Conflicts.HasPending(git, worktree))
             throw new SgException(Conflicts.Note(git, worktree) + ". " + Conflicts.Where);
         if (!git.IsClean(worktree))
             throw new SgException("the worktree has uncommitted changes: " + worktree
@@ -853,6 +854,7 @@ public static class Ops
     /// <summary>Joins an unbroken run of the branch's commits into one. The commits above it are replayed on top.</summary>
     public static RewriteResult Squash(SgRoot root, string worktree, IReadOnlyList<string> shas, string message)
     {
+        using var operation = root.Lock();
         if (shas.Count < 2) throw new SgException("squashing joins two commits or more");
         return Replace(root, Check(root, worktree, shas), message, shas.Count);
     }
@@ -867,6 +869,7 @@ public static class Ops
     /// </summary>
     public static string RevertMessage(SgRoot root, string worktree, IReadOnlyList<string> shas)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         var picked = Reachable(root, worktree, shas);
         if (picked.Count == 1) return $"Revert \"{git.Subject(picked[0])}\"\n\nThis undoes commit {Short(picked[0])}.\n";
@@ -882,11 +885,12 @@ public static class Ops
     /// </summary>
     public static RewriteResult Revert(SgRoot root, string worktree, IReadOnlyList<string> shas, string message)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         var branch = git.CurrentBranch(worktree);
         if (message.Trim().Length == 0) throw new SgException("a commit needs a message");
-        if (git.RebaseInProgress(worktree))
+        if (Conflicts.HasPending(git, worktree))
             throw new SgException(Conflicts.Note(git, worktree) + ". " + Conflicts.Where);
         if (!git.IsClean(worktree))
             throw new SgException("the worktree has uncommitted changes: " + worktree
@@ -971,12 +975,13 @@ public static class Ops
 
     public static RebaseResult Rebase(SgRoot root, string worktree, bool abortOnConflict = false)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         var branch = git.CurrentBranch(worktree);
         var co = BaseCheckout(root, branch);
         var snapRef = root.SnapshotRef(co);
-        if (git.RebaseInProgress(worktree))
+        if (Conflicts.HasPending(git, worktree))
             throw new SgException(Conflicts.Note(git, worktree) + ". " + Conflicts.Where);
         if (!git.IsClean(worktree))
             throw new SgException("worktree has uncommitted changes: " + worktree
@@ -1121,6 +1126,7 @@ public static class Ops
     {
         var (info, branch, stopped, missing) = w;
         var ws = new WorktreeStatus { Branch = branch, Path = info.Path, Missing = missing, Stopped = stopped };
+        ws.BackupFinalizing = !missing && stopped == Replay.None && Backup.ReplayName(git, info.Path) != null;
         var rebasing = ws.RebaseInProgress;
         if (shared.TryGetValue(branch, out var how)) ws.Shared = how;
         var branchRef = "refs/heads/" + branch;

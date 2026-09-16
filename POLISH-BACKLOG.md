@@ -50,9 +50,7 @@ were fixed, bar the two named at the end. These are the 81 that are left.
 
 ### CommitPage.xaml.cs
 
-- **:71** (stale-state) A read started by the Not staged / Staged switch is never dropped, so it can draw over a newer selection
-  - The side switch calls ShowFileAsync with `node` defaulted to null, so the stillWanted predicate is `node == null || ...` — always true. Click "Staged" and then pick another file before the three git reads return, and the switch's answer lands last: the diff, the title, `_shownPath` and `_shownPatch`
-  - Fix: No new parameter is needed: strengthen the guard in place at CommitPage.xaml.cs:247, where the effective side is already known. Replace `() => node == null || _filter.IsCurrent(node)` with `() => (node != null ? _filter.IsCurrent(node) : ReferenceEquals(_filter.Selected&lt;ChangeRow&gt;(), row)) && _showStaged == staged` — `staged` is the
+- Fixed 2026-09-16: staged/working diff reads now use a request generation and side check; changing selection invalidates pending reads.
 - **:219** (animation) The diff's action row and side switch are torn down before every read and rebuilt after, so the header blinks and the diff jumps on each selection
   - ShowFileAsync calls Clear() before the reads, which empties the action list; DiffView.SyncActions then collapses the whole ActionRow (DiffView.xaml.cs:355) and the Extras panel with the Not staged / Staged pair goes with it. The buttons only come back at line 254 after the git reads return. So movin
   - Fix: Split Clear() into two: `ClearShown()` keeping only the `_shownPath/_shownPatch/_shownModified/_shownOnDisk` reset, and `ClearHeader()` keeping `Diff.SetActions(Array.Empty<...>())` plus the `_workingSide/_stagedSide` collapse. ShowFileAsync (219) calls `ClearShown()` alone so the action row stays put across a file-to-file move, while lin

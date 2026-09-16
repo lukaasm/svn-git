@@ -65,6 +65,19 @@ public sealed class ResolveTests : IDisposable
     /// what --keep-cr is for, and it is why 44 of 45 commits stayed in the file they came in.
     /// </summary>
     [Fact]
+    public void DetachedWorktreeIsFoundByAnInnerPath()
+    {
+        f.Setup();
+        var wt = Ops.Branch(f.Root, "detached", f.Co).Path;
+        f.Root.Git.Ok(wt, "checkout", "--detach");
+        var found = f.Root.WorktreeContaining(Path.Combine(wt, "src", "app.txt"));
+        Assert.NotNull(found);
+        Assert.Equal(Path.GetFullPath(wt), Path.GetFullPath(found.Path));
+        Assert.Null(found.Branch);
+        Assert.Null(f.Root.WorktreeContaining(f.Co.Path));
+    }
+
+    [Fact]
     public void Import_OfAFileStoredWithCrlf_GoesIn()
     {
         f.Setup();

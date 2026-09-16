@@ -42,7 +42,7 @@ public sealed class SgConfig
     public static SgConfig Load(string path) =>
         JsonSerializer.Deserialize<SgConfig>(File.ReadAllText(path), JsonOptions) ?? throw new SgException("bad config: " + path);
 
-    public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions) + "\n");
+    public void Save(string path) => AtomicFile.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions) + "\n");
 }
 
 /// <summary>One SVN checkout that the tool mirrors. Its snapshot ref is refs/remotes/svn/&lt;Name&gt;.</summary>

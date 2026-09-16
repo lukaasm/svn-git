@@ -422,6 +422,7 @@ public static class Shelf
     /// </summary>
     public static ShelfInfo Adopt(SgRoot root, string tree, string body, string path, string baseSha, CheckoutConfig? co, string? branch)
     {
+        using var operation = root.Lock();
         var old = Parse("", "", body);
         var info = new ShelfInfo
         {
@@ -587,6 +588,7 @@ public static class Shelf
     /// <summary>Throws a shelf away. The commit stays in the store until git collects it, so this is not a shredder.</summary>
     public static void Drop(SgRoot root, string id)
     {
+        using var operation = root.Lock();
         var info = Read(root, id);
         root.Git.DeleteRef(info.RefName);
         root.Log.Info("dropped shelf " + info.Id);

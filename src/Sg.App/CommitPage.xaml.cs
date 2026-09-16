@@ -187,6 +187,7 @@ public sealed partial class CommitPage : SgPage
 
     void Clear()
     {
+        ++_diffRequest;
         _shownPath = null;
         _shownPatch = null;
         _shownModified = "";
@@ -207,6 +208,8 @@ public sealed partial class CommitPage : SgPage
         var patch = await Task.Run(() => Session.Require().Git.UnifiedDiff(_worktree, "HEAD", null, folder));
         if (_filter.IsCurrent(node)) Diff.ShowUnified(patch, title);
     }
+
+    int _diffRequest;
 
     /// <summary>
     /// One file, on whichever side the switch is on. The two sides are read the same way: the text
@@ -236,6 +239,7 @@ public sealed partial class CommitPage : SgPage
             ? $"{entry.Path}   HEAD → staged"
             : $"{entry.Path}   {(entry.Staged ? "staged" : "HEAD")} → working tree";
 
+        var request = _diffRequest;
         var staged = _showStaged;
         var sides = await Diff.ShowFileAsync(entry.Path, title, new DiffView.Reads(
                 () => staged
@@ -245,7 +249,7 @@ public sealed partial class CommitPage : SgPage
                     ? git.ShowIndexText(_worktree, entry.Path)
                     : (File.Exists(abs) ? ReadTextSafe(abs) : ""),
                 () => staged ? git.DiffStaged(_worktree, entry.Path) : git.DiffUnstaged(_worktree, entry.Path)),
-            () => node == null || _filter.IsCurrent(node), editable: !staged && File.Exists(abs));
+            () => request == _diffRequest && staged == _showStaged && (node == null || _filter.IsCurrent(node)), editable: !staged && File.Exists(abs));
 
         if (sides == null) return;
         _shownPath = entry.Path;

@@ -220,7 +220,7 @@ public sealed partial class BackupPage : SgPage
         var confirmed = overwrite
             ? await Dialogs.Confirm(this, "Overwrite " + name,
                 $"A branch {name} is already here. Write over it with the backup version?\n\n"
-                + $"Its worktree at {root.WorktreePathFor(name)} is reset to what the backup holds, and any uncommitted changes in it are dropped. "
+                + $"The existing branch and its entire worktree are kept under a recovery name before the backup is restored. "
                 + $"{entry.Commits} commit(s) are merged onto the snapshot this checkout has now" + (wip ? ", and the uncommitted changes come back after them" : "")
                 + ". Nothing goes to SVN.", "Overwrite")
             : await Dialogs.Confirm(this, "Restore " + name,
@@ -235,7 +235,7 @@ public sealed partial class BackupPage : SgPage
 
         var lines = new List<string>();
         lines.Add(res.Ok
-            ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}." + (res.Replaced ? " It wrote over the branch that was here." : "") + (res.Relinked ? " The store still had them, so nothing was replayed." : "")
+            ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}." + (res.Replaced ? $" Original work is preserved as {res.RecoveryBranch}" + (res.RecoveryPath == null ? "." : $" in {res.RecoveryPath}.") : "") + (res.Relinked ? " The store still had them, so nothing was replayed." : "")
               + (res.Drift.Count == 0 ? "" : $" They were merged across {res.Drift.Count} revision(s) that had moved on.")
             : $"{res.Applied} of {res.Commits} commit(s) applied. Paused on \"{res.Stopped}\"; the remaining commits are queued."
               + (res.Why == null ? "" : "\n" + res.Why.Split('\n')[0]));

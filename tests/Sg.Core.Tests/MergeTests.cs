@@ -39,6 +39,21 @@ public sealed class MergeTests : IDisposable
     static string Read(string dir, string rel) => File.ReadAllText(Path.Combine(dir, rel.Replace('/', Path.DirectorySeparatorChar)));
 
     [Fact]
+    public void BatchFailureReportsEarlierAppliedChanges()
+    {
+        f.Setup();
+        var url = MakeFixBranch(("bugfix.cpp", "fixed\n", "the fix"));
+        var target = GameTarget();
+        var invalid = new MergeTarget("missing-working-copy", target.Url, target.ReposRoot);
+        var result = Merge.RunAll(f.Root, f.Co, [new(target, url), new(invalid, url)], null, dryRun: false);
+        Assert.NotNull(result.Failure);
+        Assert.False(result.Clean);
+        Assert.Single(result.Parts);
+        Assert.Contains(result.Changed, c => c.Path.EndsWith("bugfix.cpp"));
+        Assert.True(File.Exists(Path.Combine(f.Checkout, "fort", "dev", "bugfix.cpp")));
+    }
+
+    [Fact]
     public void The_targets_are_the_checkout_root_and_every_external()
     {
         f.Setup();

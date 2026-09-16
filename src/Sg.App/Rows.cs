@@ -238,7 +238,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// <summary>What stopped half way in this worktree, if anything: a rebase, or an import.</summary>
     public Replay Stopped { get; set; }
 
-    public bool RebaseInProgress => Stopped != Replay.None;
+    public bool BackupFinalizing { get; set; }
+    public bool RebaseInProgress => Stopped != Replay.None || BackupFinalizing;
 
     /// <summary>"rebase" or "import", for the sentences that have to name it. Empty when nothing stopped.</summary>
     public string StoppedVerb => Sg.Core.Conflicts.Verb(Stopped);
@@ -378,6 +379,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         Pending = n.Pending;
         Missing = n.Missing;
         Stopped = n.Stopped;
+        BackupFinalizing = n.BackupFinalizing;
         Conflicts = n.Conflicts;
         Ahead = n.Ahead;
         BaseRevision = n.BaseRevision;
@@ -409,7 +411,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public bool SameAs(WorktreeRow o) =>
         Branch == o.Branch && Path == o.Path && Base == o.Base && Detail == o.Detail
         && Dirty == o.Dirty && DirtyFiles == o.DirtyFiles && Behind == o.Behind && Pending == o.Pending && Missing == o.Missing
-        && Stopped == o.Stopped && Conflicts == o.Conflicts && Ahead == o.Ahead
+        && BackupFinalizing == o.BackupFinalizing && Stopped == o.Stopped && Conflicts == o.Conflicts && Ahead == o.Ahead
         && BaseRevision == o.BaseRevision && Shelves == o.Shelves
         && NotBackedUp == o.NotBackedUp && BackedUp == o.BackedUp && BackupOn == o.BackupOn
         && BackupFailed == o.BackupFailed && BackupRemote == o.BackupRemote && BackupExcluded == o.BackupExcluded;
@@ -435,6 +437,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// </summary>
     public string NextAction =>
         Missing ? "The folder is gone. Remove the branch, or put the folder back."
+        : BackupFinalizing ? "The commits are applied. Resume to recover saved local edits."
         : RebaseInProgress ? (Conflicts == 0
             ? $"The {StoppedVerb} is paused with no files in conflict. Resume to review the next step."
             : Conflicts == 1
@@ -528,7 +531,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         : $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} changed and not committed. Commit or discard them before a rebase or a push, or shelve them for later.";
     public string BehindTip => (Behind == 1 ? "1 snapshot" : $"{Behind} snapshots")
         + " taken since this branch was made or last rebased. Rebase onto the current SVN snapshot; sync the checkout first to fetch newer SVN changes.";
-    public string ConflictTip => Conflicts == 0 ? $"The {StoppedVerb} is paused. Resume to review, continue, or skip the current step." : $"The {StoppedVerb} stopped on {(Conflicts == 1 ? "1 file" : $"{Conflicts} files")} in conflict. "
+    public string ConflictTip => BackupFinalizing ? "Resume to recover saved local edits." : Conflicts == 0 ? $"The {StoppedVerb} is paused. Resume to review, continue, or skip the current step." : $"The {StoppedVerb} stopped on {(Conflicts == 1 ? "1 file" : $"{Conflicts} files")} in conflict. "
         + "Use Resolve to pick a version for each, then continue.";
     public string ShelvedTip => (Shelves == 1 ? "1 set" : $"{Shelves} sets")
         + " of changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back.";

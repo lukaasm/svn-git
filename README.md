@@ -410,3 +410,24 @@ A repository that breaks the rule gets an entry in `branchUrlOverrides` in `sg.j
 
 `sg branch x --minimal` leaves out `libs/tools` (4 GB instead of 16 GB).
 `sg push` refuses to run without an interactive terminal unless `allowAgentPush` is true in `D:\work\.sg\sg.json`.
+
+### Recovery and replacement safeguards
+
+A forced backup restore preserves the existing branch and its entire worktree under a
+`-before-restore-...` name, including ignored and untracked files. The result reports
+that recovery name and path. Remove the recovery copy only after checking the restored work.
+Missing snapshot prerequisites are rejected before the existing branch is moved.
+
+If backup commits have finished replaying but saved edits have not been recovered, the
+overview still offers Resume. Choose **Recover local edits**, or run `sg resolve continue`
+in the worktree. If an earlier edit-restoration attempt was interrupted, the saved edits
+are put on a shelf for comparison; they are not automatically applied a second time.
+
+Shared-folder refresh inventories the source without ignoring access errors and stages
+replacement contents before deleting destination entries. An unavailable source or an
+unreadable replacement stops refresh while the previous destination files remain intact.
+
+Updates keep original files in `.sg-update-recovery/files` until replacement finishes.
+A failed installation rolls back; an interrupted installation's journal is recovered on
+the next updater sweep or installation attempt. These copies also remain available for
+manual recovery if interruption prevents the application from starting.

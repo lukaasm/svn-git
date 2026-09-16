@@ -158,15 +158,7 @@ public static class Updater
                 throw new SgException("the downloaded build has no sg.exe. Nothing was replaced.");
 
             var retired = Sweep(installDir);
-            var files = 0;
-            foreach (var src in Directory.EnumerateFiles(payload, "*", SearchOption.AllDirectories))
-            {
-                var dest = Path.Combine(installDir, Path.GetRelativePath(payload, src));
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                if (File.Exists(dest)) { Retire(dest); retired++; }
-                File.Copy(src, dest, overwrite: true);
-                files++;
-            }
+            var files = InstallPayload(payload, installDir);
             log.Info($"wrote {files} file(s) into {installDir}");
             return new UpdateResult(check.Local, check.Remote, installDir, files, retired);
         }
@@ -176,10 +168,84 @@ public static class Updater
         }
     }
 
+    /// <summary>Installs an already validated payload, retaining originals until every replacement succeeds.</summary>
+    public static int InstallPayload(string payload, string installDir)
+    {
+        using var operation = new FileStream(Path.Combine(installDir, ".sg-update.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var recovery = Path.Combine(installDir, ".sg-update-recovery");
+        var journal = Path.Combine(recovery, "journal.json");
+        RecoverInstall(installDir);
+        var entries = Directory.GetFiles(payload, "*", SearchOption.AllDirectories)
+            .Select(p => PathUtil.RelativeTo(payload, p)).ToArray();
+        if (entries.Any(p => p.StartsWith(".sg-update-recovery", StringComparison.OrdinalIgnoreCase) || p.Equals(".sg-update.lock", StringComparison.OrdinalIgnoreCase)))
+            throw new SgException("The update contains a reserved recovery directory.");
+        Directory.CreateDirectory(recovery);
+        var originals = new Dictionary<string, bool>();
+        // Copy every original before publishing the journal or touching an installed file.
+        foreach (var rel in entries)
+        {
+            var dest = PathUtil.Join(installDir, rel);
+            originals[rel] = File.Exists(dest);
+            if (!originals[rel]) continue;
+            var saved = PathUtil.Join(Path.Combine(recovery, "files"), rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(saved)!);
+            File.Copy(dest, saved, overwrite: true);
+        }
+        AtomicFile.WriteAllText(journal, JsonSerializer.Serialize(originals));
+        try
+        {
+            foreach (var rel in entries)
+            {
+                Cancellation.ThrowIfRequested();
+                var dest = PathUtil.Join(installDir, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                if (File.Exists(dest)) Retire(dest);
+                File.Copy(PathUtil.Join(payload, rel), dest);
+            }
+            // Removing the journal commits the transaction. Leftover copies are safe to clean later.
+            File.Delete(journal);
+        }
+        catch (Exception installError)
+        {
+            try { RecoverInstall(installDir); }
+            catch (Exception recoveryError)
+            {
+                throw new SgException($"Update failed: {installError.Message}. Recovery also failed: {recoveryError.Message}. Original files remain in {recovery}.");
+            }
+            throw;
+        }
+        return entries.Length;
+    }
+
+    static void RecoverInstall(string installDir)
+    {
+        var recovery = Path.Combine(installDir, ".sg-update-recovery");
+        var journal = Path.Combine(recovery, "journal.json");
+        if (!File.Exists(journal)) return;
+        var originals = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(journal))
+            ?? throw new SgException("Invalid update recovery journal: " + journal);
+        foreach (var (rel, existed) in originals)
+        {
+            PathUtil.RelativeTo(installDir, PathUtil.Join(installDir, rel));
+            if (existed && !File.Exists(PathUtil.Join(Path.Combine(recovery, "files"), rel)))
+                throw new SgException("Missing update recovery file: " + rel);
+        }
+        foreach (var (rel, existed) in originals)
+        {
+            var dest = PathUtil.Join(installDir, rel);
+            PathUtil.RelativeTo(installDir, dest);
+            if (File.Exists(dest)) Retire(dest);
+            if (existed) File.Copy(PathUtil.Join(Path.Combine(recovery, "files"), rel), dest);
+        }
+        File.Delete(journal);
+    }
+
     /// <summary>Deletes the .sg-old files an earlier update left behind. They unlock once sg restarts.</summary>
     public static int Sweep(string dir)
     {
         if (!Directory.Exists(dir)) return 0;
+        using var operation = new FileStream(Path.Combine(dir, ".sg-update.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        RecoverInstall(dir);
         var n = 0;
         foreach (var f in Directory.EnumerateFiles(dir, "*" + OldSuffix, SearchOption.AllDirectories))
         {

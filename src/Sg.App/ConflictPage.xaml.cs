@@ -96,6 +96,16 @@ public sealed partial class ConflictPage : SgPage
             NoConflicts.Text = "The branch is in a normal state. There is nothing to resolve.";
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = false;
         }
+        else if (state.Finalizing)
+        {
+            StateBar.Severity = InfoBarSeverity.Informational;
+            StateBar.Message = "The commits are applied. Finish recovering the saved local edits.";
+            NoConflicts.Title = "Recover local edits";
+            NoConflicts.Text = StateBar.Message;
+            ContinueButton.Text = "Recover local edits";
+            ContinueButton.IsEnabled = true;
+            SkipButton.Visibility = AbortButton.Visibility = InspectButton.Visibility = Visibility.Collapsed;
+        }
         else if (state.Stuck)
         {
             // Never "every file is resolved" here. Continue can only fail, so it is off, and the two

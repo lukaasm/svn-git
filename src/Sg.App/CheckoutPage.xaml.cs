@@ -168,6 +168,7 @@ public sealed partial class CheckoutPage : SgPage
                 Pending = w.Pending,
                 Missing = w.Missing,
                 Stopped = w.Stopped,
+                BackupFinalizing = w.BackupFinalizing,
                 Conflicts = w.Conflicts,
                 Ahead = w.Ahead,
                 BaseRevision = co.Revision,

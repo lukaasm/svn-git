@@ -49,7 +49,7 @@ public sealed class MonitorStore
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Opts));
+        AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(this, Opts));
     }
 }
 

@@ -65,6 +65,8 @@ public sealed partial class ConflictPage : SgPage
             ? $"{state.Branch}  -  imported commits   {_worktree}"
             : $"{state.Branch}  onto  svn/{state.Checkout}   {_worktree}";
         NameButtons(state);
+        EmptySkip.Visibility = state.InProgress ? Visibility.Visible : Visibility.Collapsed;
+        EmptySkip.IsEnabled = state.InProgress;
         // Three shapes, and only the first is a conflict. A stuck step has no sides to pick between,
         // so what it lists is whatever a forced apply left in the worktree for a hand to finish.
         var rows = state.Conflicted.Count > 0
@@ -87,7 +89,7 @@ public sealed partial class ConflictPage : SgPage
             NoConflicts.Title = "Nothing is stopped here";
             NoConflicts.Text = "The branch is in a normal state. There is nothing to resolve.";
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = false;
-            EmptyContinue.Visibility = EmptyAbort.Visibility = Visibility.Collapsed;
+            EmptyContinue.Visibility = EmptySkip.Visibility = EmptyAbort.Visibility = Visibility.Collapsed;
         }
         else if (state.Stuck)
         {
@@ -169,7 +171,7 @@ public sealed partial class ConflictPage : SgPage
         var verb = s.InProgress ? " " + s.Verb : "";
         ContinueButton.Text = EmptyContinue.Text = "Continue" + verb;
         AbortButton.Text = EmptyAbort.Text = "Abort" + verb;
-        SkipButton.Text = s.Kind == Replay.Import ? "Skip this patch" : "Skip this commit";
+        SkipButton.Text = EmptySkip.Text = s.Kind == Replay.Import ? "Skip this patch" : "Skip this commit";
         TakeOurs.Text = "Keep " + Article(s.OursLabel);
         TakeTheirs.Text = "Keep " + Article(s.TheirsLabel);
         TakeOurs.SetValue(ToolTipService.ToolTipProperty,
@@ -179,6 +181,7 @@ public sealed partial class ConflictPage : SgPage
         SkipButton.SetValue(ToolTipService.ToolTipProperty, s.Kind == Replay.Import
             ? "Drop the patch this stopped on and go on with the ones after it. Asks first."
             : "Drop the commit this stopped on and go on with the ones after it. Asks first.");
+        EmptySkip.SetValue(ToolTipService.ToolTipProperty, SkipButton.GetValue(ToolTipService.ToolTipProperty));
         AbortButton.SetValue(ToolTipService.ToolTipProperty, AbortCost(s));
         // The pairs to compare are named from the same labels, and keep their place across reloads.
         // Refilling the box fires its change event with nothing new to show, so that is told apart
@@ -460,7 +463,7 @@ public sealed partial class ConflictPage : SgPage
             _filter.Clear("Files in conflict");
             NoConflicts.Title = $"The {verb} is through";
             NoConflicts.Text = $"{r.Branch} is on svn/{r.Checkout}, {r.Ahead} commit(s) ahead.";
-            EmptyContinue.Visibility = EmptyAbort.Visibility = Visibility.Collapsed;
+            EmptyContinue.Visibility = EmptySkip.Visibility = EmptyAbort.Visibility = Visibility.Collapsed;
             ShowEmpty(true);
             Diff.ShowText("", verb + " done");
             return;

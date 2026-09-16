@@ -12,6 +12,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <local:IconButton Glyph="&#xE768;" Text="Continue" x:Name="EmptyContinue" Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"
                         ToolTipService.ToolTip="Go on. The next commit may stop again." />
+                    <local:IconButton Glyph="&#xE72A;" Text="Skip this commit" x:Name="EmptySkip" Visibility="Collapsed" Click="Skip_Click" />
                     <local:IconButton Glyph="&#xE7BA;" Text="Force what fits" x:Name="EmptyForce" Visibility="Collapsed" Click="Force_Click"
                         ToolTipService.ToolTip="Write as much of the stopped patch into the worktree as still fits, and leave the rest beside each file as .rej. Asks first." />
                     <local:IconButton Glyph="&#xE711;" Text="Abort" x:Name="EmptyAbort" Click="Abort_Click"

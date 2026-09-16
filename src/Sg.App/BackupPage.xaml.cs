@@ -21,12 +21,14 @@ public sealed class BackupRow
                                              + (Entry.Last is { } t ? $"   {t.LocalDateTime:yyyy-MM-dd HH:mm}" : "");
 
     /// <summary>What stands between this and a restore, in two words: it is here already, or the checkout moved on.</summary>
-    public string Note => Entry.Unreadable != null ? "" : Entry.ExistsHere ? "here" : Entry.Drift.Count > 0 ? "checkout moved on" : Entry.Checkout.Length == 0 ? "no checkout matches" : "";
+    public string Note => Entry.Unreadable != null ? "" : Entry.Excluded ? "excluded here" : Entry.ExistsHere ? "here" : Entry.Drift.Count > 0 ? "checkout moved on" : Entry.Checkout.Length == 0 ? "no checkout matches" : "";
 
     public Brush NoteBrush => (Brush)Application.Current.Resources[
-        Entry.ExistsHere || Entry.Unreadable != null ? "TextFillColorTertiaryBrush" : Note.Length > 0 ? "StatusModifiedBrush" : "TextFillColorSecondaryBrush"];
+        Entry.ExistsHere || Entry.Excluded || Entry.Unreadable != null ? "TextFillColorTertiaryBrush" : Note.Length > 0 ? "StatusModifiedBrush" : "TextFillColorSecondaryBrush"];
 
-    public string Tip => Entry.Unreadable ?? (Entry.Url.Length > 0 ? Entry.Url + " r" + Entry.Revision : Entry.Name);
+    public string Tip => Entry.Unreadable
+        ?? (Entry.Excluded ? "The worktree is excluded from the backup on this machine, so this is what it sent before, or another machine's copy. No backup writes over it; Prune lists it.\n" : "")
+         + (Entry.Url.Length > 0 ? Entry.Url + " r" + Entry.Revision : Entry.Name);
 }
 
 /// <summary>
@@ -68,9 +70,13 @@ public sealed partial class BackupPage : SgPage
             return;
         }
         Subtitle = cfg!.Url;
-        // The URL is under the page title already. The card says only what the title does not: the prefix, when there is one.
-        UrlText.Text = cfg.Prefix.Length > 0 ? "everything under " + cfg.Prefix + "/" : "";
-        UrlText.Visibility = cfg.Prefix.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // The URL is under the page title already. The card says only what the title does not: the prefix, when
+        // there is one, and the worktrees left out, so a branch missing from the list is not read as lost.
+        var notes = new List<string>();
+        if (cfg.Prefix.Length > 0) notes.Add("everything under " + cfg.Prefix + "/");
+        if (cfg.Excluded.Count > 0) notes.Add("left out here: " + string.Join(", ", cfg.Excluded));
+        UrlText.Text = string.Join(". ", notes);
+        UrlText.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
         ShowReport(LastReport, Backup.Last(root), ActFor);
 
@@ -417,7 +423,7 @@ public sealed partial class BackupPage : SgPage
             return;
         }
         if (!await Dialogs.Confirm(this, "Delete from the backup",
-                $"{gone.Count} ref(s) on the backup answer to nothing here any more:\n\n" + string.Join("\n", gone.Take(20))
+                $"{gone.Count} ref(s) on the backup answer to nothing this machine backs up any more - removed, dropped, or left out:\n\n" + string.Join("\n", gone.Take(20))
                 + (gone.Count > 20 ? $"\nand {gone.Count - 20} more" : "") + "\n\nDelete them there? What is here is not touched.",
                 "Delete"))
             return;

@@ -268,6 +268,8 @@ public sealed class BackupEntry
     public DateTimeOffset? Last;
     /// <summary>Why it cannot be read, when it cannot: written by a newer sg, or not an sg backup at all.</summary>
     public string? Unreadable;
+    /// <summary>The worktree it belongs to is left out of the backup here, so no backup sends over this or reads it, and prune lists it.</summary>
+    public bool Excluded;
 }
 
 public sealed class RestoreResult
@@ -384,6 +386,36 @@ public static partial class Backup
         root.Save();
     }
 
+    /// <summary>
+    /// One worktree left out of the backup, or put back in. Nothing of a worktree left out goes: not the
+    /// branch, not its uncommitted changes, not its shelves. What the remote already holds of it is not
+    /// touched either - not sent over, not read, not deleted as stale - and prune lists it as answering to
+    /// nothing here. The name has to be a branch here, so a typo is refused now and not found on the timer.
+    /// </summary>
+    public static BackupConfig Exclude(SgRoot root, string branch, bool exclude = true)
+    {
+        var b = root.Config.Backup ?? new BackupConfig();
+        var name = branch.Trim();
+        if (name.Length == 0) throw new SgException("name the branch of the worktree, for example: sg backup exclude big-assets");
+        if (exclude)
+        {
+            var git = root.Git;
+            if (git.RefSha("refs/heads/" + name) == null) throw new SgException($"no branch named {name} here");
+            if (!b.Excluded.Contains(name, StringComparer.Ordinal)) b.Excluded.Add(name);
+            // The last backup's verdict on the branch stays on it for the card until a backup replaces it,
+            // and no backup will: so it goes now, or the card would say "backup failed" over a branch that does not go.
+            if (git.BranchConfig(FailedKey).ContainsKey(name)) git.ConfigUnset(KeyFailed(name));
+            if (git.BranchConfig(RemoteKey).ContainsKey(name)) git.ConfigUnset(KeyRemote(name));
+        }
+        else b.Excluded.RemoveAll(n => n == name);
+        root.Config.Backup = b;
+        root.Save();
+        return b;
+    }
+
+    /// <summary>Whether the worktree of this branch is left out of the backup.</summary>
+    public static bool IsExcluded(BackupConfig? b, string branch) => b != null && b.Excluded.Contains(branch, StringComparer.Ordinal);
+
     // ---- pushing ----
 
     /// <summary>
@@ -448,7 +480,7 @@ public static partial class Backup
         // Uncommitted changes on the remote for a folder that has none here now: this root's old ones, since
         // committed or dropped, or another machine's work in progress. The loop after the items tells which.
         var sourceRefs = sources.Select(s => RemoteRef(cfg, s.Kind, s.Name)).ToHashSet(StringComparer.Ordinal);
-        var here = LocalNames(root);
+        var here = LocalNames(root, cfg);
         var clean = new Dictionary<string, (string Kind, string Name)>(StringComparer.Ordinal);
         foreach (var r in remote.Keys)
             if (!sourceRefs.Contains(r) && Owned(cfg, r) is { } o
@@ -717,7 +749,7 @@ public static partial class Backup
         {
             if (w.Bare || coPaths.Contains(w.Path.TrimEnd('\\', '/'))) continue;
             var branch = w.Branch;
-            if (branch == null) continue;
+            if (branch == null || IsExcluded(cfg, branch)) continue;
             if (!bases.TryGetValue(branch, out var coName) || !snapshots.TryGetValue(coName, out var snap)) continue;
             var tip = git.RefSha("refs/heads/" + branch);
             if (tip == null) continue;
@@ -761,6 +793,8 @@ public static partial class Backup
 
         foreach (var s in Shelf.List(root))
         {
+            // A shelf of a worktree left out is that worktree's work, put aside: it stays with the rest.
+            if (!s.IsCheckout && IsExcluded(cfg, s.Branch)) continue;
             string? mb = null;
             if (s.Checkout.Length > 0 && snapshots.TryGetValue(s.Checkout, out var snap)) mb = git.MergeBase(s.Sha, snap);
             if (mb == null)
@@ -778,12 +812,16 @@ public static partial class Backup
 
     sealed record Local(HashSet<string> Branches, HashSet<string> Checkouts, HashSet<string> Shelves);
 
-    static Local LocalNames(SgRoot root)
+    /// <summary>
+    /// What is here, by name. With a config, only what its backup answers for: a worktree left out, and its
+    /// shelves, are not here as far as the remote is concerned, so what it holds of them is remote only.
+    /// </summary>
+    static Local LocalNames(SgRoot root, BackupConfig? sent = null)
     {
         var git = root.Git;
-        var branches = git.RefIndex("refs/heads/").Keys.Select(k => k["refs/heads/".Length..]).ToHashSet(StringComparer.Ordinal);
+        var branches = git.RefIndex("refs/heads/").Keys.Select(k => k["refs/heads/".Length..]).Where(b => !IsExcluded(sent, b)).ToHashSet(StringComparer.Ordinal);
         var checkouts = root.Config.Checkouts.Select(c => c.Name).ToHashSet(StringComparer.Ordinal);
-        var shelves = Shelf.List(root).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+        var shelves = Shelf.List(root).Where(s => s.IsCheckout || !IsExcluded(sent, s.Branch)).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
         return new Local(branches, checkouts, shelves);
     }
 
@@ -840,11 +878,13 @@ public static partial class Backup
                     e.Branch = name;
                     e.ExistsHere = here.Branches.Contains(name);
                     e.HasWip = wips.Contains(name);
+                    e.Excluded = IsExcluded(cfg, name);
                     break;
                 case "wip":
                     e.Branch = name;
                     e.ExistsHere = here.Branches.Contains(name);
                     e.Title = "uncommitted changes";
+                    e.Excluded = IsExcluded(cfg, name);
                     break;
                 case "edits":
                     e.Branch = name;
@@ -856,6 +896,7 @@ public static partial class Backup
                     e.Branch = s.IsCheckout ? "" : s.Branch;
                     e.Title = s.Title;
                     e.ExistsHere = here.Shelves.Contains(name);
+                    e.Excluded = !s.IsCheckout && IsExcluded(cfg, s.Branch);
                     break;
             }
         }
@@ -1030,13 +1071,16 @@ public static partial class Backup
 
     // ---- prune ----
 
-    /// <summary>Refs on the remote that nothing here answers to any more. Deleted only when asked.</summary>
+    /// <summary>
+    /// Refs on the remote that nothing here answers to any more - a branch removed, a shelf dropped, and
+    /// whatever a worktree left out of the backup sent before it was. Deleted only when asked.
+    /// </summary>
     public static List<string> Prune(SgRoot root, bool delete)
     {
         var cfg = Require(root);
         var git = root.Git;
         var remote = git.LsRemote(cfg.Url);
-        var here = LocalNames(root);
+        var here = LocalNames(root, cfg);
         var orphans = new List<string>();
         foreach (var r in remote.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {

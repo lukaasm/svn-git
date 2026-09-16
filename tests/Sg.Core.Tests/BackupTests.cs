@@ -880,6 +880,68 @@ public sealed class BackupTests : IDisposable
         Assert.True(Item(r, "branch", "feature-x").Rejected);
     }
 
+    /// <summary>
+    /// A worktree left out sends nothing - not its branch, not its uncommitted changes, not its shelves - and
+    /// a backup neither writes over nor deletes what the remote already holds of it: that is remote only,
+    /// for prune to name. Put back in, it goes again as it did.
+    /// </summary>
+    [Fact]
+    public void AnExcludedWorktree_SendsNothing_AndWhatTheRemoteHoldsOfItIsLeftForPrune()
+    {
+        f.Setup();
+        var wt = MakeBranch("big-assets");
+        MakeBranch("feature-y");
+        Fixture.Put(wt, "schmetterling/engine.cpp", "int engine = 3; // not committed\n");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        Assert.Contains("refs/sg/wip/big-assets", RemoteGit("ls-remote", "--refs", _remote));
+
+        Backup.Exclude(f.Root, "big-assets");
+        Assert.Equal(["big-assets"], SgConfig.Load(f.Root.ConfigPath).Backup!.Excluded);
+        Assert.Contains("no branch named", Assert.Throws<SgException>(() => Backup.Exclude(f.Root, "no-such-branch")).Message);
+        Assert.True(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "big-assets").BackupExcluded);
+        Assert.False(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-y").BackupExcluded);
+
+        // A shelf from it, and the uncommitted changes committed: a branch that is clean again would take
+        // its old wip off the remote, but a backup does not touch what a worktree left out sent before.
+        Fixture.Put(wt, "fort/dev/new/file.txt", "brand new\nand a shelved line\n");
+        var shelf = Shelf.Save(f.Root, wt, ["fort/dev/new/file.txt"], "put aside").Shelf;
+        f.Root.Git.Ok(wt, "commit", "-q", "-am", "third: stays here");
+        var r = Backup.Run(f.Root);
+        Assert.True(r.Ok, string.Join("\n", r.Items.Select(i => i.State + " " + i.Why)));
+        Assert.DoesNotContain(r.Items, i => i.Name == "big-assets");
+        Assert.DoesNotContain(r.Items, i => i.Kind == "shelf");
+        Assert.Equal("up to date", Item(r, "branch", "feature-y").State);
+        var refs = RemoteGit("ls-remote", "--refs", _remote);
+        Assert.Contains("refs/heads/big-assets", refs);
+        Assert.Contains("refs/sg/wip/big-assets", refs);
+        Assert.DoesNotContain("refs/sg/shelf/" + shelf.Id, refs);
+        Assert.Contains("refs/heads/big-assets", r.RemoteOnly);
+        Assert.Contains("refs/sg/wip/big-assets", r.RemoteOnly);
+        Assert.Equal(["refs/heads/big-assets", "refs/sg/wip/big-assets"], Backup.Prune(f.Root, delete: false));
+
+        // The remote's copy is still listed, and marked, so the page can say why prune will name it.
+        var list = Backup.List(f.Root);
+        Assert.True(list.Single(e => e.Kind == "branch" && e.Name == "big-assets").Excluded);
+        Assert.True(list.Single(e => e.Kind == "branch" && e.Name == "big-assets").ExistsHere);
+        Assert.False(list.Single(e => e.Kind == "branch" && e.Name == "feature-y").Excluded);
+
+        // Back in: the new commit goes over the copy this root pushed, the shelf goes, and the wip of a
+        // branch that is clean now comes off the remote as it would have.
+        Backup.Exclude(f.Root, "big-assets", exclude: false);
+        Assert.Empty(SgConfig.Load(f.Root.ConfigPath).Backup!.Excluded);
+        var again = Backup.Run(f.Root);
+        Assert.True(again.Ok, string.Join("\n", again.Items.Select(i => i.State + " " + i.Why)));
+        var back = Item(again, "branch", "big-assets");
+        Assert.Equal("pushed", back.State);
+        Assert.Equal(3, back.Commits);
+        Assert.Equal("pushed", Item(again, "shelf", shelf.Id).State);
+        Assert.DoesNotContain("refs/sg/wip/big-assets", RemoteGit("ls-remote", "--refs", _remote));
+        Assert.Empty(again.RemoteOnly);
+        Assert.Empty(Backup.Prune(f.Root, delete: false));
+        Assert.False(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "big-assets").BackupExcluded);
+    }
+
     [Fact]
     public void Set_RefusesAUrlThatIsNotARepository()
     {

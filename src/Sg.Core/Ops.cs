@@ -105,6 +105,8 @@ public sealed class WorktreeStatus
     /// A pull takes it, and clears this.
     /// </summary>
     public string? BackupRemote;
+    /// <summary>Left out of the backup on purpose: nothing of this worktree goes, and the counts above say nothing about it.</summary>
+    public bool BackupExcluded;
 }
 
 public sealed class StatusResult
@@ -1109,6 +1111,7 @@ public static class Ops
             ws.Shelves = shelves.Count(s => !s.IsCheckout && s.Branch.Equals(ws.Branch, StringComparison.OrdinalIgnoreCase));
             ws.BackupFailed = backupFailed.GetValueOrDefault(ws.Branch);
             ws.BackupRemote = backupRemote.GetValueOrDefault(ws.Branch);
+            ws.BackupExcluded = Backup.IsExcluded(root.Config.Backup, ws.Branch);
         }
         return res;
     }

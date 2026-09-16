@@ -344,6 +344,8 @@ machine. The URL is kept in `sg.json` and is never a git remote, so `git push` i
 ```powershell
 sg backup set \\nas\git\fort-backup.git     # or any git URL. --prefix laptop keeps two machines apart in one repository
                                             # --max-file 100 and --max-push 1024 (MB, the defaults) fit GitHub; 0 is no limit
+sg backup exclude big-assets                # leave one worktree out: its branch, its uncommitted changes and its shelves stay here
+sg backup include big-assets                # and back in. sg backup exclude alone lists what is left out
 sg backup                                   # every branch, the uncommitted changes, the shelves. Only what changed goes
 sg backup --check                           # what would go, and what is on the remote only
 sg backup list                              # what is there, and how far each checkout here has drifted from it
@@ -355,7 +357,8 @@ sg backup prune --yes                       # delete from the remote what is not
 
 A backup mirrors with a lease: a branch the remote holds another version of - another machine wrote it - is refused
 and named, exit code 10, and `--force` takes it over. Nothing is ever deleted by a backup; `prune` does that, and
-lists first. Restore matches the checkout by URL the way import does, merges every commit across whatever revision
+lists first. A worktree left out with `exclude` sends nothing and is not read either: what the remote already holds
+of it stays as it is, and `prune` lists that too. Restore matches the checkout by URL the way import does, merges every commit across whatever revision
 this checkout is at, and when the store still has the real commits simply points the branch at them again. Uncommitted
 changes come back through the shelf: written into the worktree when they merge, left on the shelf when one does not.
 
@@ -376,7 +379,8 @@ remote's commits on top of this branch, and `--force --only branch/<name>` keeps
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
 default). The app also backs up a few seconds after a commit, a shelve or a rebase made in it. Every worktree card
 says "backed up 3 min ago", "2 commits not backed up", "backup failed" with the reason, or "backing up...", and
-**Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item
+its Backup row has Exclude: the worktree stays out of every backup, the chip says "excluded from the backup", and
+Include puts it back. **Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item
 that was sent, failed, diverged or left files out - then what the remote holds, Restore, Back up now, Prune. When the
 last backup failed or could not run, the overview says so in a red bar above the worktrees, with Open backup on it.
 

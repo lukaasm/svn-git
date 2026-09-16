@@ -327,6 +327,16 @@
                                             <local:IconButton MinWidth="124" Glyph="&#xE70F;" Text="Editor" Tag="{x:Bind}" Click="Editor_Click" ToolTipService.ToolTip="Open the worktree in the editor set in Settings, or the Windows default for a folder." />
                                         </StackPanel>
                                     </controls:SettingsCard>
+                                    <!-- Whether this worktree goes with the backup at all. On the card rather than in Settings: the
+                                         choice is about one worktree, and the chip that says "excluded" is on this same card. -->
+                                    <controls:SettingsCard Header="Backup" Description="{x:Bind ExcludeDescription, Mode=OneWay}"
+                                                           Visibility="{x:Bind BackupVisibility, Mode=OneWay}">
+                                        <controls:SettingsCard.HeaderIcon>
+                                            <FontIcon Glyph="&#xE74E;" />
+                                        </controls:SettingsCard.HeaderIcon>
+                                        <local:IconButton MinWidth="124" Glyph="{x:Bind ExcludeGlyph, Mode=OneWay}" Text="{x:Bind ExcludeText, Mode=OneWay}" Tag="{x:Bind}" Click="Exclude_Click"
+                                                          ToolTipService.ToolTip="Leave this worktree out of every backup, or put it back in. Written to sg.json at once; nothing is sent or deleted by pressing it." />
+                                    </controls:SettingsCard>
                                     <controls:SettingsCard Header="Export the branch"
                                                            Description="Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.">
                                         <controls:SettingsCard.HeaderIcon>

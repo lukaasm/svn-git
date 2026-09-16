@@ -179,6 +179,7 @@ public sealed partial class CheckoutPage : SgPage
                 BackupOn = status.BackupUrl != null,
                 BackupFailed = w.BackupFailed,
                 BackupRemote = w.BackupRemote,
+                BackupExcluded = w.BackupExcluded,
             })
             // By name, and by nothing else. Sorting by what each worktree wants put the loudest first,
             // which reads well in a screenshot and badly in use: committing, rebasing or syncing changes
@@ -622,6 +623,24 @@ public sealed partial class CheckoutPage : SgPage
             _owner.BackupSoon();
             await _owner.RefreshAsync();
         });
+    }
+
+    /// <summary>
+    /// One worktree out of the backup, or back in. A config write and a refresh: nothing goes to the remote
+    /// and nothing comes off it, so no ring and no report - the chip on the card says the new state.
+    /// </summary>
+    async void Exclude_Click(object sender, RoutedEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row == null) return;
+        var root = Session.Require();
+        var exclude = !row.BackupExcluded;
+        var b = await Runner.Run(Pane, (exclude ? "exclude " : "include ") + row.Branch, () => Backup.Exclude(root, row.Branch, exclude));
+        if (b == null) return;
+        Pane.Append(exclude
+            ? $"{row.Branch} is left out of the backup. What the remote already holds of it stays there until Prune."
+            : $"{row.Branch} goes with the next backup again.");
+        await _owner.RefreshAsync();
     }
 
     void Open_Click(object sender, RoutedEventArgs e)

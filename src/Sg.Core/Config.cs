@@ -94,6 +94,11 @@ public sealed class BackupConfig
     /// bigger on its own stays here and is named. GitHub drops a push past 2 GB with an HTTP 500. 0 is no limit.
     /// </summary>
     public int MaxPushMb { get; set; } = 1024;
+    /// <summary>
+    /// Worktrees left out, by branch. Nothing of one goes: not the branch, not its uncommitted changes, not
+    /// its shelves. For a branch too big for the remote, or work that must not leave this machine.
+    /// </summary>
+    public List<string> Excluded { get; set; } = new();
 
     [JsonIgnore] public long MaxFileBytes => MaxFileMb > 0 ? MaxFileMb * (1L << 20) : 0;
     [JsonIgnore] public long MaxPushBytes => MaxPushMb > 0 ? MaxPushMb * (1L << 20) : 0;

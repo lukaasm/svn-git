@@ -146,6 +146,7 @@ Config: `D:\fort\.sg\sg.json`. It holds checkouts, skip lists, push order, messa
 | `sg resolve [status\|ours\|theirs\|resolved\|auto\|force\|continue\|skip\|abort]` | worktree | What stopped - a rebase or an import - and what is in conflict; one whole version kept, files marked done by hand, the resolver asked (`auto`, `auto --all` to keep going), what fits of a stuck patch forced in, and the three ways on. |
 | `sg backup [--check] [--force]` | anywhere | Every worktree's branch, the uncommitted changes, and the shelves, rewritten thin and pushed to the backup URL. `--check` prints what would go up and what is on the remote only. |
 | `sg backup set <url> [--prefix p] [--no-uncommitted] [--max-file MB] [--max-push MB]` | anywhere | Where backups go, and how big a file and a push may be. |
+| `sg backup exclude [<branch>...]`, `sg backup include <branch>...` | anywhere | Leaves a worktree out of the backup - its branch, its uncommitted changes and its shelves - or puts it back. `exclude` alone lists what is left out. |
 | `sg backup list` | anywhere | What the remote holds: each branch, the checkout it was cut from as URL and revision, its commits, its wip and shelves, and how far the checkouts here have drifted. |
 | `sg backup restore <branch> [--name n] [--into c] [--wip]` | anywhere | Makes the branch here and replays it, the way import does. `--wip` brings the uncommitted changes back through the shelf. |
 | `sg backup prune [--yes]` | anywhere | Lists what is on the remote and not here, and deletes it with `--yes`. |
@@ -386,7 +387,7 @@ are chips and rows there; they were a line in the log. `Runner.Run` hands its er
 the strip. A discard that could not go onto a shelf first says so on the page's bar, in amber, naming the files that
 went with no way back, and a shelve that left files behind names them on the bar that reports it.
 
-**Where it goes.** `sg.json` gets `backup: { url, prefix, uncommitted, maxFileMb, maxPushMb }`. The URL is never registered as a git
+**Where it goes.** `sg.json` gets `backup: { url, prefix, uncommitted, maxFileMb, maxPushMb, excluded }`. The URL is never registered as a git
 remote, on purpose: a `git push` typed in a worktree keeps having nowhere to go, where a remote named `backup`
 would have sent the real branch, snapshot and all, the first time someone typed `git push backup`. sg pushes with
 `git push <url> <thin sha>:refs/heads/<branch>` and fetches with the URL the same way; credential helpers and
@@ -426,7 +427,17 @@ wrote would have passed the lease on the next push, which is the one thing the l
    uncommitted pushes the marker alone, so the remote knows the worktree exists and restore can make it again.
 
 `sg backup` never deletes on the remote. A branch removed with `sg rm` stays there until `sg backup prune`, which
-lists those and, with `--yes`, deletes them. `--check` prints what would go up, what is already there, and what is
+lists those and, with `--yes`, deletes them.
+
+**Leaving a worktree out.** `excluded` in the config names branches whose worktrees do not go: not the branch, not
+its uncommitted changes, not its shelves - a branch of assets too big for the remote, or work that must not leave
+the machine. `sg backup exclude <branch>` adds one, after checking the branch exists here, and clears the failed and
+remote verdicts kept on it; `include` takes it out again. `Sources` skips them, and `LocalNames` with the config
+leaves them out of what this root answers for, so a backup neither writes over nor deletes as stale what the remote
+already holds of one - it is reported remote only, and `prune` lists it beside a removed branch. `List` still says
+it exists here, so a restore of it is refused as before, and marks it excluded so the page can say why. `sg status`
+says `backup-excluded`, and the card's chip says "excluded from the backup" in neutral, with Exclude and Include on
+the card's Backup row. `--check` prints what would go up, what is already there, and what is
 on the remote only. `sg status` says per worktree when it was last backed up and how many commits have not been;
 `--json` carries the same.
 

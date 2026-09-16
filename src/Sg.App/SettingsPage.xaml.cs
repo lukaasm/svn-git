@@ -171,8 +171,17 @@ public sealed partial class SettingsPage : SgPage
             root.Config.AllowAgentPush = AgentPush.IsOn;
             root.Config.ResolveCommand = ResolveCommand.Text.Trim().Length > 0 ? ResolveCommand.Text.Trim() : null;
             var url = BackupUrl.Text.Trim();
-            root.Config.Backup = url.Length == 0 ? null
-                : new Sg.Core.BackupConfig { Url = url, Prefix = BackupPrefix.Text.Trim().Trim('/'), Uncommitted = BackupUncommitted.IsOn };
+            if (url.Length == 0) root.Config.Backup = null;
+            else
+            {
+                // Onto the config that is there. The size limits and the worktrees left out are set elsewhere,
+                // and a new object here threw them away with every letter typed into the URL box.
+                var b = root.Config.Backup ?? new Sg.Core.BackupConfig();
+                b.Url = url;
+                b.Prefix = BackupPrefix.Text.Trim().Trim('/');
+                b.Uncommitted = BackupUncommitted.IsOn;
+                root.Config.Backup = b;
+            }
             root.Save();
         }
         Session.Settings.MonacoUrl = MonacoUrl.Text.Trim().Length > 0 ? MonacoUrl.Text.Trim() : new AppSettings().MonacoUrl;

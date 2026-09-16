@@ -257,6 +257,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public string? BackupFailed { get; set; }
     /// <summary>"newer: why" or "differs: why" when the backup holds a copy this machine does not, else null. Pull takes it.</summary>
     public string? BackupRemote { get; set; }
+    /// <summary>Left out of the backup on purpose, so the chip says so rather than counting what has not gone.</summary>
+    public bool BackupExcluded { get; set; }
     /// <summary>The backup is ahead of this branch, so a pull is the thing to do.</summary>
     public bool BackupNewer => BackupRemote != null && BackupRemote.StartsWith("newer", StringComparison.Ordinal);
     /// <summary>Whatever the remote holds over this machine, without the word in front.</summary>
@@ -269,7 +271,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// alone had the badge green through a push that failed for the uncommitted changes, and through the
     /// half hour that push took.
     /// </summary>
-    public string BackupText => Session.BackingUp ? "backing up..."
+    public string BackupText => BackupExcluded ? "excluded from the backup"
+        : Session.BackingUp ? "backing up..."
         : BackupFailed != null ? "backup failed"
         : BackupRemote != null ? (BackupNewer ? "newer on the backup" : "differs from the backup")
         : NotBackedUp < 0 ? "not backed up"
@@ -277,11 +280,13 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         : NotBackedUp == 1 ? "1 commit not backed up"
         : NotBackedUp + " commits not backed up";
     /// <summary>Green when the backup holds the tip, amber when commits wait, red when a backup failed or nothing of this branch ever went.</summary>
-    public ChipSeverity BackupSeverity => Session.BackingUp ? ChipSeverity.Neutral
+    public ChipSeverity BackupSeverity => BackupExcluded || Session.BackingUp ? ChipSeverity.Neutral
         : BackupFailed != null ? ChipSeverity.Critical
         : BackupRemote != null ? (BackupNewer ? ChipSeverity.Caution : ChipSeverity.Critical)
         : NotBackedUp == 0 ? ChipSeverity.Success : NotBackedUp > 0 ? ChipSeverity.Caution : ChipSeverity.Critical;
-    public string BackupTip => Session.BackingUp
+    public string BackupTip => BackupExcluded
+        ? "This worktree is excluded from the backup: its branch, its uncommitted changes and its shelves stay on this machine. Include, in the card's Backup row, puts it back in."
+        : Session.BackingUp
         ? "A backup is running. This badge says how it went when it ends."
         : BackupFailed != null
         ? "The last backup did not send this branch's work: " + BackupFailed + ". Open Backup on the checkout to try again."
@@ -297,6 +302,13 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         : NotBackedUp < 0
             ? "This branch has never been sent to the backup repository. The timer sends it, or open Backup on the checkout."
             : "Commits on this branch that the backup does not hold yet. The timer sends them, or open Backup on the checkout.";
+
+    /// <summary>The Backup row on the card: what goes, or that nothing does, beside the one button that flips it.</summary>
+    public string ExcludeDescription => BackupExcluded
+        ? "Left out on purpose: nothing of this worktree goes to the backup repository, and what it already holds of it stays until Prune. Include puts it back in with the next backup."
+        : "The branch, its uncommitted changes and its shelves go with every backup. Exclude keeps all of it on this machine: for work too big for the remote, or work that must not leave here.";
+    public string ExcludeText => BackupExcluded ? "Include" : "Exclude";
+    public string ExcludeGlyph => BackupExcluded ? "\uE74E" : "\uE711";
 
     /// <summary>" just now", " 5 min ago", " 3 h ago", " 4 days ago", with the leading space; empty for null.</summary>
     internal static string Ago(DateTimeOffset? when)
@@ -328,6 +340,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         nameof(DirtyFiles), nameof(DirtyTip), nameof(DirtyVisibility), nameof(MissingVisibility), nameof(RebaseVisibility),
         nameof(Ahead), nameof(AheadTip), nameof(AheadSeverity), nameof(AheadVisibility),
         nameof(BackupText), nameof(BackupVisibility), nameof(BackupSeverity), nameof(BackupTip),
+        nameof(ExcludeDescription), nameof(ExcludeText), nameof(ExcludeGlyph),
         nameof(PrimaryGlyph), nameof(PrimaryText), nameof(PrimaryStyle), nameof(PrimaryTip),
         nameof(SplitVisibility), nameof(PlainVisibility), nameof(PushEnabled), nameof(PushStyle),
     };
@@ -375,6 +388,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         BackupOn = n.BackupOn;
         BackupFailed = n.BackupFailed;
         BackupRemote = n.BackupRemote;
+        BackupExcluded = n.BackupExcluded;
         Repaint();
     }
 
@@ -397,7 +411,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         && Dirty == o.Dirty && DirtyFiles == o.DirtyFiles && Behind == o.Behind && Pending == o.Pending && Missing == o.Missing
         && Stopped == o.Stopped && Conflicts == o.Conflicts && Ahead == o.Ahead
         && BaseRevision == o.BaseRevision && Shelves == o.Shelves
-        && NotBackedUp == o.NotBackedUp && BackedUp == o.BackedUp && BackupOn == o.BackupOn;
+        && NotBackedUp == o.NotBackedUp && BackedUp == o.BackedUp && BackupOn == o.BackupOn
+        && BackupFailed == o.BackupFailed && BackupRemote == o.BackupRemote && BackupExcluded == o.BackupExcluded;
 
     /// <summary>
     /// Whether Push is the thing to do next here, worked out from state the row already holds. Exactly

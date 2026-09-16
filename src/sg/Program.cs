@@ -111,6 +111,10 @@ static class Cli
                                                       where backups go. A prefix keeps two machines apart in one repository.
                                                       A file over --max-file (100) stays here; one push carries --max-push (1024)
                                                       at most, and more goes in several. 0 is no limit
+            sg backup exclude [<branch>...]           leave a worktree out of the backup: its branch, its uncommitted changes and
+                                                      its shelves stay here. What the remote holds of it stays too, until prune.
+                                                      With no name: which worktrees are left out
+            sg backup include <branch>...             put one back in; it goes with the next backup
             sg backup list                            what the remote holds, and how far each checkout here has drifted
             sg backup restore <branch> [--name <b>] [--into <c>] [--wip] [--force]
                                                       make the branch here again. --wip brings its uncommitted changes back too;
@@ -757,7 +761,7 @@ static class Cli
     }
 
     static string BackupNote(WorktreeStatus w) =>
-        w.NotBackedUp < 0 ? "" : w.NotBackedUp == 0 ? " backed-up" : $" not-backed-up({w.NotBackedUp})";
+        w.BackupExcluded ? " backup-excluded" : w.NotBackedUp < 0 ? "" : w.NotBackedUp == 0 ? " backed-up" : $" not-backed-up({w.NotBackedUp})";
 
     /// <summary>The backup: where it goes, what goes, what is there, and one branch back again.</summary>
     static int BackupCmd(Args a, ILog log)
@@ -783,6 +787,28 @@ static class Cli
                 Backup.Clear(root);
                 Console.WriteLine("no backup URL any more. What is on the remote stays there.");
                 return 0;
+            case "exclude":
+            case "include":
+            {
+                var exclude = sub == "exclude";
+                var names = a.Pos.Skip(1).ToList();
+                if (names.Count == 0 && exclude)
+                {
+                    var left = root.Config.Backup?.Excluded ?? new List<string>();
+                    if (json) { Json(left); return 0; }
+                    Console.WriteLine(left.Count == 0 ? "no worktree is left out of the backup" : "left out of the backup: " + string.Join(", ", left));
+                    return 0;
+                }
+                if (names.Count == 0) throw new SgException("name the branch to put back, for example: sg backup include big-assets");
+                var b = new BackupConfig();
+                foreach (var n in names) b = Backup.Exclude(root, n, exclude);
+                if (json) { Json(b); return 0; }
+                Console.WriteLine(exclude
+                    ? string.Join(", ", names) + ": left out of the backup. The branch, its uncommitted changes and its shelves stay here."
+                      + "\n  What the remote holds of it already stays there; it is listed by: sg backup prune"
+                    : string.Join(", ", names) + ": in the backup again. It goes with the next: sg backup");
+                return 0;
+            }
             case "list":
             {
                 var list = Backup.List(root);
@@ -881,7 +907,7 @@ static class Cli
                 return r.Rejected > 0 ? 10 : r.Ok ? 0 : 1;
             }
             default:
-                throw new SgException("sg backup takes: set <url>, list, restore <branch>, pull <branch>, prune, clear, or nothing at all (which sends everything)");
+                throw new SgException("sg backup takes: set <url>, exclude <branch>, include <branch>, list, restore <branch>, pull <branch>, prune, clear, or nothing at all (which sends everything)");
         }
     }
 

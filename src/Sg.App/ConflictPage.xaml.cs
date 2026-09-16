@@ -61,12 +61,19 @@ public sealed partial class ConflictPage : SgPage
         _state = state;
         Checkout ??= state.Checkout;
         Branch ??= state.Branch;
-        Subtitle = state.Kind == Replay.Import
+        Subtitle = state.BackupName != null ? $"{state.BackupName} from backup → {state.Branch}   {_worktree}" : state.Kind == Replay.Import
             ? $"{state.Branch}  -  imported commits   {_worktree}"
             : $"{state.Branch}  onto  svn/{state.Checkout}   {_worktree}";
         NameButtons(state);
-        EmptySkip.Visibility = state.InProgress ? Visibility.Visible : Visibility.Collapsed;
-        EmptySkip.IsEnabled = state.InProgress;
+        InspectButton.Visibility = state.InProgress ? Visibility.Visible : Visibility.Collapsed;
+        InspectButton.Text = "View current patch";
+        PatchPreview.Visibility = Visibility.Collapsed;
+        ContinueButton.Visibility = state.InProgress && !state.Stuck ? Visibility.Visible : Visibility.Collapsed;
+        SkipButton.Visibility = AbortButton.Visibility = state.InProgress ? Visibility.Visible : Visibility.Collapsed;
+        SkipButton.Style = state.Stuck ? (Style)Application.Current.Resources["AccentButtonStyle"] : null;
+        AutoAllButton.Visibility = state.Conflicted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LeaveButton.Content = state.InProgress ? "Finish later" : "Close";
+        Title = state.BackupName != null ? "Get changes from backup" : state.Kind == Replay.Import ? "Import branch" : "Rebase branch";
         // Three shapes, and only the first is a conflict. A stuck step has no sides to pick between,
         // so what it lists is whatever a forced apply left in the worktree for a hand to finish.
         var rows = state.Conflicted.Count > 0
@@ -75,7 +82,6 @@ public sealed partial class ConflictPage : SgPage
         _filter.SetItems(rows, state.Conflicted.Count > 0 ? "Files in conflict" : "Files to finish by hand");
         ShowEmpty(rows.Count == 0);
         ForceButton.Visibility = state.Stuck && state.Kind == Replay.Import ? Visibility.Visible : Visibility.Collapsed;
-        EmptyForce.Visibility = ForceButton.Visibility;
         // The resolver settles files at three stages and nothing else. Going on from here it can also
         // continue and skip, so it is offered whenever something is stopped, except an import stuck
         // on a patch that will not go in: forcing what fits of one is a choice for a hand.
@@ -89,7 +95,6 @@ public sealed partial class ConflictPage : SgPage
             NoConflicts.Title = "Nothing is stopped here";
             NoConflicts.Text = "The branch is in a normal state. There is nothing to resolve.";
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = false;
-            EmptyContinue.Visibility = EmptySkip.Visibility = EmptyAbort.Visibility = Visibility.Collapsed;
         }
         else if (state.Stuck)
         {
@@ -102,21 +107,18 @@ public sealed partial class ConflictPage : SgPage
                 : "Skip it, and the ones after it still replay.";
             StateBar.Severity = InfoBarSeverity.Warning;
             StateBar.Message = Headline(state) + " " + Conflicts.StuckNote(state.Kind) + " " + out_;
-            NoConflicts.Title = state.Kind == Replay.Import ? "This patch would not go in at all" : "This commit changes nothing here";
-            NoConflicts.Text = Conflicts.StuckNote(state.Kind) + " " + out_;
+            NoConflicts.Title = state.Kind == Replay.Import ? "Patch needs attention" : "Review empty commit";
+            NoConflicts.Text = Headline(state) + " " + Conflicts.StuckNote(state.Kind) + " " + out_;
             ContinueButton.IsEnabled = false;
             SkipButton.IsEnabled = AbortButton.IsEnabled = true;
-            EmptyContinue.Visibility = Visibility.Collapsed;
-            EmptyAbort.Visibility = Visibility.Visible;
         }
         else if (rows.Count == 0)
         {
             StateBar.Severity = InfoBarSeverity.Informational;
             StateBar.Message = $"Every file is resolved. Continue the {state.Verb}.";
             NoConflicts.Title = "Every file is resolved";
-            NoConflicts.Text = $"Continue the {state.Verb}. The next commit may stop again, and this page comes back if it does.";
+            NoConflicts.Text = Headline(state) + $" Continue the {state.Verb}. The next commit may stop again.";
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = true;
-            EmptyContinue.Visibility = EmptyAbort.Visibility = Visibility.Visible;
         }
         else if (state.Conflicted.Count > 0)
         {
@@ -153,7 +155,7 @@ public sealed partial class ConflictPage : SgPage
     /// <summary>The first sentence: what stopped, where it got to, and on which commit.</summary>
     static string Headline(ConflictState s)
     {
-        var where = s.Kind == Replay.Import
+        var where = s.BackupName != null ? $"The backup replay onto {s.Branch}" : s.Kind == Replay.Import
             ? $"The import of {s.Branch}"
             : $"The rebase of {s.Branch} onto svn/{s.Checkout}";
         var at = s.Of > 0 ? $" at {s.At} of {s.Of}" : "";
@@ -169,9 +171,9 @@ public sealed partial class ConflictPage : SgPage
     void NameButtons(ConflictState s)
     {
         var verb = s.InProgress ? " " + s.Verb : "";
-        ContinueButton.Text = EmptyContinue.Text = "Continue" + verb;
-        AbortButton.Text = EmptyAbort.Text = "Abort" + verb;
-        SkipButton.Text = EmptySkip.Text = s.Kind == Replay.Import ? "Skip this patch" : "Skip this commit";
+        ContinueButton.Text = "Continue" + verb;
+        AbortButton.Text = "Cancel operation";
+        SkipButton.Text = s.Kind == Replay.Import ? "Skip this patch" : s.Stuck ? "Skip empty commit" : "Skip this commit";
         TakeOurs.Text = "Keep " + Article(s.OursLabel);
         TakeTheirs.Text = "Keep " + Article(s.TheirsLabel);
         TakeOurs.SetValue(ToolTipService.ToolTipProperty,
@@ -181,7 +183,6 @@ public sealed partial class ConflictPage : SgPage
         SkipButton.SetValue(ToolTipService.ToolTipProperty, s.Kind == Replay.Import
             ? "Drop the patch this stopped on and go on with the ones after it. Asks first."
             : "Drop the commit this stopped on and go on with the ones after it. Asks first.");
-        EmptySkip.SetValue(ToolTipService.ToolTipProperty, SkipButton.GetValue(ToolTipService.ToolTipProperty));
         AbortButton.SetValue(ToolTipService.ToolTipProperty, AbortCost(s));
         // The pairs to compare are named from the same labels, and keep their place across reloads.
         // Refilling the box fires its change event with nothing new to show, so that is told apart
@@ -225,10 +226,12 @@ public sealed partial class ConflictPage : SgPage
     /// it was. An import is one series to git, so undoing it takes off every commit that went in, not
     /// only the one that stopped - and the file it came from is what still holds them.
     /// </summary>
-    static string AbortCost(ConflictState s) => s.Kind == Replay.Import
+    static string AbortCost(ConflictState s) => s.BackupName != null
+        ? "Undo all commits applied by this backup operation. The backup remains available, including its uncommitted edits."
+        : s.Kind == Replay.Import
         ? "Take the whole import back off the branch, the commits that already went in included. "
           + "git undoes a patch series as one thing. The export file still holds every commit, so this can be run again."
-        : "Stop the rebase and put the branch back exactly as it was before. Nothing is lost.";
+        : "Restore the branch to where this rebase began. Resolutions made during this operation are discarded.";
 
     /// <summary>
     /// The files an action works on: whatever is ticked, or the one line you are reading when
@@ -400,14 +403,33 @@ public sealed partial class ConflictPage : SgPage
         await AfterStep(r, verb);
     }, restoreEnabled: false);
 
+    async void Inspect_Click(object sender, RoutedEventArgs e)
+    {
+        if (PatchPreview.Visibility == Visibility.Visible)
+        {
+            PatchPreview.Visibility = Visibility.Collapsed;
+            InspectButton.Text = "View current patch";
+            ShowEmpty(_filter.Count == 0);
+            return;
+        }
+        var patch = await Runner.Quiet(Pane, () => _state.Kind == Replay.Import
+            ? Session.Require().Git.Ok(_worktree, "am", "--show-current-patch=diff").StdOut
+            : Session.Require().Git.Ok(_worktree, "show", "--format=fuller", "--no-ext-diff", "REBASE_HEAD").StdOut);
+        if (patch == null) return;
+        NoConflicts.Visibility = Filled.Visibility = Visibility.Collapsed;
+        PatchPreview.Visibility = Visibility.Visible;
+        PatchPreview.ShowText(patch, "current patch");
+        InspectButton.Text = "Back to resolution";
+    }
+
     async void Skip_Click(object sender, RoutedEventArgs e)
     {
         var s = _state;
         var what = s.Kind == Replay.Import ? "patch" : "commit";
         var named = s.Stopped.Length > 0 ? $"\"{s.Stopped}\"" : "the one it stopped on";
         if (!await Dialogs.Confirm(this, $"Skip this {what}",
-                $"Drop {named} and go on with the {what}es after it?\n\n"
-                + $"What that one changed is not on the branch afterwards. The others still land.",
+                $"Drop {named} and go on with the remaining commits?\n\n"
+                + $"This drops the current step and any resolution made for it. The remaining commits will still be replayed.",
                 "Skip it"))
             return;
         await Busy.During(sender, async () =>
@@ -463,7 +485,19 @@ public sealed partial class ConflictPage : SgPage
             _filter.Clear("Files in conflict");
             NoConflicts.Title = $"The {verb} is through";
             NoConflicts.Text = $"{r.Branch} is on svn/{r.Checkout}, {r.Ahead} commit(s) ahead.";
-            EmptyContinue.Visibility = EmptySkip.Visibility = EmptyAbort.Visibility = Visibility.Collapsed;
+            ContinueButton.Visibility = SkipButton.Visibility = AbortButton.Visibility = ForceButton.Visibility = AutoAllButton.Visibility = Visibility.Collapsed;
+            LeaveButton.Content = "Close";
+            InspectButton.Visibility = PatchPreview.Visibility = Visibility.Collapsed;
+            if (r.Backup != null)
+            {
+                NoConflicts.Title = "Backup commits applied";
+                NoConflicts.Text = $"The queued commits for {r.Branch} are finished. " + BackupPage.PullSentence(r.Backup);
+                if (r.Backup.WipShelf != null && !r.Backup.WipWritten)
+                {
+                    NoConflicts.Title = "Backup commits applied; local edits need attention";
+                    ReviewEditsButton.Visibility = Visibility.Visible;
+                }
+            }
             ShowEmpty(true);
             Diff.ShowText("", verb + " done");
             return;
@@ -473,10 +507,13 @@ public sealed partial class ConflictPage : SgPage
         await LoadAsync();
     }
 
+    void ReviewEdits_Click(object sender, RoutedEventArgs e) =>
+        Go(() => new ShelfPage(worktree: _worktree, branch: Branch) { Checkout = Checkout, Branch = Branch }, "shelves:" + _worktree);
+
     async void Abort_Click(object sender, RoutedEventArgs e)
     {
         var s = _state;
-        if (!await Dialogs.Confirm(this, "Abort the " + s.Verb, AbortCost(s) + "\n\nContinue?", "Abort " + s.Verb)) return;
+        if (!await Dialogs.Confirm(this, "Cancel operation", AbortCost(s), "Cancel operation")) return;
         await Busy.During(sender, async () =>
         {
             var root = Session.Require();

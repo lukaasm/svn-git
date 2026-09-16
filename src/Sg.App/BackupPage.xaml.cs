@@ -237,7 +237,7 @@ public sealed partial class BackupPage : SgPage
         lines.Add(res.Ok
             ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}." + (res.Replaced ? " It wrote over the branch that was here." : "") + (res.Relinked ? " The store still had them, so nothing was replayed." : "")
               + (res.Drift.Count == 0 ? "" : $" They were merged across {res.Drift.Count} revision(s) that had moved on.")
-            : $"{res.Applied} of {res.Commits} commit(s) went in. \"{res.Stopped}\" would not merge, so it and everything after it are not on the branch."
+            : $"{res.Applied} of {res.Commits} commit(s) applied. Paused on \"{res.Stopped}\"; the remaining commits are queued."
               + (res.Why == null ? "" : "\n" + res.Why.Split('\n')[0]));
         if (res.WipShelf != null)
             lines.Add(res.WipWritten
@@ -247,6 +247,7 @@ public sealed partial class BackupPage : SgPage
         ResultBar.Severity = res.Ok && res.WipConflicted.Count == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
         ResultBar.Message = string.Join("\n", lines);
         ResultBar.IsOpen = true;
+        SetResumeAction(res);
 
         var conflicts = res.Conflicted.Concat(res.WipConflicted).ToList();
         ConflictsHeader.Visibility = ConflictsCard.Visibility = conflicts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -254,7 +255,7 @@ public sealed partial class BackupPage : SgPage
 
         entry.ExistsHere = true;
         RestoreButton.IsEnabled = false;
-        Summary.Text = res.Ok ? "Done. Close this and the worktree is on the checkout's card." : "The branch is there with what did go in.";
+        Summary.Text = res.Ok ? "Done. Close this and the worktree is on the checkout's card." : "Resume the operation to finish, skip a commit, or cancel.";
     }
 
     async void BackupNow_Click(object sender, RoutedEventArgs e)
@@ -280,13 +281,35 @@ public sealed partial class BackupPage : SgPage
     /// right is the reader's call, and the row is where the reason is.
     /// </summary>
     RowActions? ActFor(BackupItem item) =>
-        item.Behind ? new RowActions("Pull", () => PullAsync(item))
-        : item.Rejected && item.Kind is "branch" or "wip" ? new RowActions("Pull theirs on top", () => PullAsync(item), "Keep this machine's", () => KeepAsync(item))
+        item.Behind ? new RowActions("Get changes", () => PullAsync(item))
+        : item.Rejected && item.Kind is "branch" or "wip" ? new RowActions("Restore separately", () => RestoreSeparatelyAsync(item), "Keep this machine's", () => KeepAsync(item))
         : item.Rejected ? new RowActions("Keep this machine's", () => KeepAsync(item))
         : null;
 
     /// <summary>What a report row can do: one thing, or a first and a second.</summary>
     public sealed record RowActions(string Text, Func<Task> Run, string OtherText = "", Func<Task>? Other = null);
+
+    async Task RestoreSeparatelyAsync(BackupItem item)
+    {
+        await LoadAsync();
+        var entry = _entries.FirstOrDefault(e => e.Kind == "branch" && e.Name == item.Name);
+        if (entry == null) return;
+        Show(entry);
+        ForceBox.IsChecked = false;
+        var name = item.Name + "-backup";
+        for (var n = 2; Session.Require().Git.RefSha("refs/heads/" + name) != null; n++) name = item.Name + "-backup-" + n;
+        NameBox.Text = name;
+        NameBox.Focus(FocusState.Programmatic);
+    }
+
+    void SetResumeAction(RestoreResult result)
+    {
+        ResultBar.ActionButton = null;
+        if (!result.Waiting) return;
+        var button = new Button { Content = "Resume operation" };
+        button.Click += (_, _) => Go(() => new ConflictPage(result.Path) { Checkout = result.Checkout, Branch = result.Branch }, "resolve:" + result.Path);
+        ResultBar.ActionButton = button;
+    }
 
     /// <summary>What another machine sent, onto the branch here and into its folder, without making the worktree again.</summary>
     async Task PullAsync(BackupItem item)
@@ -297,6 +320,7 @@ public sealed partial class BackupPage : SgPage
         ResultBar.ActionButton = null;
         ResultBar.Severity = r.Ok && r.WipWhy == null && r.WipConflicted.Count == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
         ResultBar.Message = PullSentence(r);
+        SetResumeAction(r);
         ResultBar.IsOpen = true;
         // The report still reads "behind" until the next backup says otherwise, and the timer sends one soon.
         if (Host?.Window is MainWindow main) main.BackupSoon();
@@ -312,8 +336,11 @@ public sealed partial class BackupPage : SgPage
         else if (r.WipShelf != null)
             parts.Add(r.WipWritten
                 ? "The uncommitted changes are written into " + r.Path + (r.WipConflicted.Count > 0 ? $", {r.WipConflicted.Count} with conflict markers." : ".")
-                : $"The uncommitted changes wait on the shelf as {r.WipShelf}, beside the ones here: {r.WipWhy}.");
-        if (!r.Ok) parts.Add($"\"{r.Stopped}\" would not merge, so it and what comes after it are not here.");
+                : $"Uncommitted changes are saved on shelf {r.WipShelf}. Open Shelved changes to review and restore them."
+                  + (r.WipWhy == null ? "" : " " + r.WipWhy));
+        if (!r.Ok) parts.Add(r.Waiting
+            ? $"Paused on \"{r.Stopped}\". The remaining commits are queued; resume to resolve, skip, or cancel."
+            : $"\"{r.Stopped}\" could not be applied. {r.Why}");
         return string.Join(" ", parts);
     }
 

@@ -370,11 +370,20 @@ normal week of a branch that lives on two machines, and goes: every commit the r
 lost. So do commits the remote holds that went to SVN from the other machine already, or were made again here: they
 are read by content, and a copy whose every extra commit is in this branch by content is behind it. A newer one is
 `behind`: `sg backup pull` puts its commits on top of the branch here and its uncommitted changes into the folder, or
-on a shelf when both sides changed the same files. In the app the card says "newer on the backup" or "differs from
-the backup" and has Pull from backup behind its chevron; the toast has a Pull button too. A clean branch never deletes another
-machine's uncommitted changes. Only work that really differs is refused - commits only the remote has beside commits
-only this branch has - with what differs named and when the copy was written; `sg backup pull <name>` puts the
-remote's commits on top of this branch, and `--force --only branch/<name>` keeps this machine's copy instead.
+on a shelf when both sides changed the same files. A newer backup offers Get changes. When both histories have
+unique commits, Backup offers Restore separately: it proposes a free branch name so both versions can be reviewed.
+Pull refuses divergent histories. `--force --only branch/<name>` explicitly keeps this machine's copy instead.
+
+If backup pull or restore encounters a conflicting commit, it keeps the incoming series queued, just like an
+`.sgexport` import. Resume operation opens the shared recovery page; Continue, Skip, and Cancel work after restarting
+the app too. Cancel returns the branch to where this operation began. Backup edits are restored after the queued
+commits finish, or retained on a shelf if they conflict. For a pull that needs conflict resolution, commit or shelve
+existing local edits first. Clean pulls still preserve non-overlapping local edits.
+
+The recovery page has one action bar for file conflicts and empty steps. View current patch shows what the step
+was trying to apply. An empty step asks for review before skipping; it does not claim that all its changes already
+exist. Finish later leaves the operation available on the branch card. Manual patch recovery and automatic AI
+resolution of the remaining series are under More.
 
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
 default). The app also backs up a few seconds after a commit, a shelve or a rebase made in it. Every worktree card

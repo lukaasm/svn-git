@@ -385,6 +385,9 @@ static class Cli
                 {
                     Console.WriteLine($"the {r.Verb} is through. {r.Branch} is {r.Ahead} commit(s) ahead of svn/{r.Checkout}.");
                     if (r.Refreshed.Count > 0) Console.WriteLine("shared folders refreshed from the checkout: " + string.Join(", ", r.Refreshed));
+                    if (r.Backup is { WipShelf: not null } backup)
+                        Console.WriteLine(backup.WipWritten ? "Backup edits restored to the worktree."
+                            : $"Backup edits are saved on shelf {backup.WipShelf}. Review them with sg shelf list.");
                     return 0;
                 }
                 Console.WriteLine("it moved on and stopped again"
@@ -398,7 +401,9 @@ static class Cli
             {
                 var s = Conflicts.State(root, here);
                 Conflicts.Abort(root, here);
-                Console.WriteLine(s.Kind == Replay.Import
+                Console.WriteLine(s.BackupName != null
+                    ? $"The backup operation is undone. {s.Branch} is back where it started; the backup still holds the incoming work."
+                    : s.Kind == Replay.Import
                     ? $"the import is off {s.Branch}, all of it: git undoes a series as one thing. The export file still holds every commit."
                     : $"the rebase is undone. {s.Branch} is back exactly as it was.");
                 return 0;
@@ -856,7 +861,8 @@ static class Cli
                 Console.Error.WriteLine($"stopped at: {r.Stopped}");
                 foreach (var c in r.Conflicted.Take(20)) Console.Error.WriteLine("  conflict: " + c);
                 if (r.Why != null) Console.Error.WriteLine(r.Why.Split('\n')[0]);
-                Console.Error.WriteLine($"the branch keeps the {r.Applied} commit(s) that did go in.");
+                Console.Error.WriteLine(r.Waiting ? $"The remaining commits are queued in {r.Path}. Use sg resolve continue, sg resolve skip, or sg resolve abort there."
+                    : $"the branch keeps the {r.Applied} commit(s) that did go in.");
                 return 1;
             }
             case "prune":
@@ -885,7 +891,8 @@ static class Cli
                 Console.Error.WriteLine($"stopped at: {r.Stopped}");
                 foreach (var c in r.Conflicted.Take(20)) Console.Error.WriteLine("  conflict: " + c);
                 if (r.Why != null) Console.Error.WriteLine(r.Why.Split('\n')[0]);
-                Console.Error.WriteLine($"the branch keeps the {r.Applied} commit(s) that did go in.");
+                Console.Error.WriteLine(r.Waiting ? $"The remaining commits are queued in {r.Path}. Use sg resolve continue, sg resolve skip, or sg resolve abort there."
+                    : $"the branch keeps the {r.Applied} commit(s) that did go in.");
                 return 1;
             }
             case "":

@@ -9,6 +9,7 @@ public sealed class ConflictState
     public string Worktree = "";
     public string Branch = "";
     public string Checkout = "";
+    public string? BackupName;
 
     /// <summary>What stopped. None means the worktree is in a normal state and there is nothing to finish.</summary>
     public Replay Kind;
@@ -41,13 +42,13 @@ public sealed class ConflictState
     public bool InProgress => Kind != Replay.None;
 
     /// <summary>The word for what stopped, for a sentence that has to name it.</summary>
-    public string Verb => Conflicts.Verb(Kind);
+    public string Verb => BackupName != null ? "backup replay" : Conflicts.Verb(Kind);
 
     /// <summary>What the left side of a conflict is: the version already here, whatever put it there.</summary>
-    public string OursLabel => Kind == Replay.Import ? "branch version" : "SVN version";
+    public string OursLabel => Kind == Replay.Import ? "current branch" : "updated SVN base";
 
     /// <summary>What the right side is: the version the stopped commit or patch wants.</summary>
-    public string TheirsLabel => Kind == Replay.Import ? "imported version" : "branch version";
+    public string TheirsLabel => BackupName != null ? "incoming backup" : Kind == Replay.Import ? "imported commit" : "branch commit";
 }
 
 /// <summary>What forcing a stuck patch into the worktree did, file by file.</summary>
@@ -65,6 +66,7 @@ public sealed class ForcedApply
 /// <summary>One step of a stopped replay: it finished, or it moved on and stopped again.</summary>
 public sealed class ResolveResult
 {
+    public RestoreResult? Backup;
     public Replay Kind;
     public string Branch = "";
     public string Checkout = "";
@@ -137,6 +139,7 @@ public static class Conflicts
             Branch = branch,
             Checkout = co.Name,
             Kind = git.ReplayInProgress(worktree),
+            BackupName = Backup.ReplayName(git, worktree),
             Conflicted = git.ConflictedFiles(worktree),
             At = at.At,
             Of = at.Of,
@@ -167,14 +170,14 @@ public static class Conflicts
             throw new SgException(StuckNote(kind) + " Nothing is staged, so there is nothing for this step to commit.\n"
                                   + (kind == Replay.Import
                                       ? "Skip it, or force what fits of it into the worktree, finish it by hand and mark it resolved."
-                                      : "Skip it: everything it changed is in the branch already."));
+                                      : "Review the original commit, then skip it if this resolution is intended."));
         return Step(root, worktree, kind, kind == Replay.Import ? git.ContinueMailbox(worktree) : git.RebaseContinue(worktree));
     }
 
     /// <summary>The one sentence that says a step is stuck rather than resolved. The pages share it.</summary>
     public static string StuckNote(Replay kind) => kind == Replay.Import
-        ? "This patch would not go in at all, so nothing here is in conflict and there is no version to pick."
-        : "This commit changes nothing here any more, so nothing is in conflict and there is nothing to pick.";
+        ? "This patch has no staged changes. It may not have applied, or its resolution may produce no changes."
+        : "This commit produces no changes after resolution. Review it before skipping.";
 
     /// <summary>
     /// Puts as much of the stopped patch into the worktree as still fits, and writes every hunk that
@@ -234,6 +237,7 @@ public static class Conflicts
         worktree = git.Toplevel(worktree);
         if (Started(git, worktree) == Replay.Import) git.AbortMailbox(worktree);
         else git.RebaseAbort(worktree);
+        if (git.ReplayInProgress(worktree) == Replay.None) Backup.ClearReplay(git, worktree);
     }
 
     /// <summary>
@@ -355,6 +359,7 @@ public static class Conflicts
         }
 
         r.EnsureOk();
+        res.Backup = Backup.FinishReplay(root, worktree);
         res.Ok = true;
         res.Ahead = git.CountCommits(root.SnapshotRef(co), "refs/heads/" + branch);
         // Only a rebase moves the branch onto a newer snapshot, so only a rebase leaves the shared

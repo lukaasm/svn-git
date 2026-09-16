@@ -282,6 +282,8 @@ public sealed class RestoreResult
     public int Applied;
     /// <summary>The store still had the real commits, so the branch was pointed at them and nothing was replayed.</summary>
     public bool Relinked;
+    /// <summary>Git retained the series for Continue, Skip, or Abort.</summary>
+    public bool Waiting;
     public List<ExportDrift> Drift = new();
     public string? Stopped;
     public List<string> Conflicted = new();
@@ -1016,7 +1018,12 @@ public static partial class Backup
                 res.Applied++;
             }
         }
-        if (tip != snapshot) git.ResetHard(made.Path, tip);
+        if (!res.Ok)
+        {
+            BeginReplay(root, res, changes, wip && hasWip ? git.RefSha(FetchedRef("wip", name)) : null, pull: false);
+            tip = git.HeadSha(made.Path);
+        }
+        else if (tip != snapshot) git.ResetHard(made.Path, tip);
         if (target == name && res.Ok)
         {
             git.UpdateRef(PushedRef("branch", name), thinTip);

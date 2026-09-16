@@ -620,6 +620,7 @@ public sealed partial class CheckoutPage : SgPage
                 BackupPage.PullSentence(x)));
             if (r == null) { await _owner.RefreshAsync(); return; }
             Pane.Append(BackupPage.PullSentence(r));
+            if (r.Waiting) { OpenResolver(row); return; }
             _owner.BackupSoon();
             await _owner.RefreshAsync();
         });

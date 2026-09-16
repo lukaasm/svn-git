@@ -301,9 +301,9 @@ public sealed partial class MainWindow : Window
             // than a page to find it on. The rest are on their cards and on the Backup page.
             else if (quiet && freshReject.Count > 0)
                 Notifications.Show("Backup differs for " + string.Join(", ", freshReject),
-                    "Another machine has different work under this name. Pull puts its commits on top of this branch; Backup on the checkout can keep this machine's instead.",
+                    "Another machine has different work under this name. Open Backup to restore it as a separate branch for comparison, or keep this machine's version.",
                     Notifications.Action("overview", ("checkout", _current?.Name ?? "")),
-                    PullButtons(freshReject).Append(new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? "")))).ToArray());
+                    new Notifications.ToastButton("Open backup", Notifications.Action("backup", ("checkout", _current?.Name ?? ""))));
             else if (quiet && freshBehind.Count > 0)
                 Notifications.Show("A newer backup for " + string.Join(", ", freshBehind),
                     "The backup holds newer work than this machine has for it, sent from another machine. Pull puts it on top of what is here.",
@@ -333,6 +333,7 @@ public sealed partial class MainWindow : Window
         if (r != null)
         {
             Pane.Append(BackupPage.PullSentence(r));
+            if (r.Waiting) Host.Go(() => new ConflictPage(r.Path) { Checkout = r.Checkout, Branch = r.Branch }, "resolve:" + r.Path);
             BackupSoon();
         }
         await RefreshAsync();
@@ -746,7 +747,11 @@ public sealed partial class MainWindow : Window
             case "rebase":
             {
                 var wt = Session.WorktreeAt(path);
-                if (wt != null) await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, wt.Path));
+                if (wt != null)
+                {
+                    if (!root.Git.RebaseInProgress(wt.Path)) await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, wt.Path));
+                    if (root.Git.RebaseInProgress(wt.Path)) Host.Go(() => new ConflictPage(wt.Path), "resolve:" + wt.Path);
+                }
                 else Pane.Append(path + " is not inside a worktree");
                 await RefreshAsync();
                 break;

@@ -741,7 +741,7 @@ public sealed class Git
     public string LogBodies(string from, string to) => Ok(null, "log", "--reverse", "--format=%B", from + ".." + to).StdOut;
 
     public ProcResult Rebase(string worktree, string onto) => Run(worktree, ["rebase", .. RebaseMergeOptions, onto]);
-    public void RebaseAbort(string worktree) => Run(worktree, "rebase", "--abort");
+    public void RebaseAbort(string worktree) => Run(worktree, "rebase", "--abort").EnsureOk();
     public ProcResult RebaseContinue(string worktree) => Run(worktree, "rebase", "--continue");
 
     /// <summary>Drops the commit the rebase stopped on and goes on with the ones after it.</summary>
@@ -1163,7 +1163,7 @@ public sealed class Git
     public ProcResult SkipMailbox(string worktree) => Run(worktree, ["am", "--skip"], asUser: true);
 
     /// <summary>Puts back what a stopped series left behind, all of it, so the branch is usable again.</summary>
-    public void AbortMailbox(string worktree) => Run(worktree, "am", "--abort");
+    public void AbortMailbox(string worktree) => Run(worktree, "am", "--abort").EnsureOk();
 
     /// <summary>
     /// The blob each of these paths held at a commit, in one cat-file rather than one process each:

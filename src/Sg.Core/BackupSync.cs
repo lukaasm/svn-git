@@ -301,7 +301,11 @@ public static partial class Backup
                     newTip = git.CommitTreeAs(m.Tree, newTip, Thin.Original(c.Body), c.Author);
                     res.Applied++;
                 }
-                if (newTip != tip)
+                if (!res.Ok)
+                {
+                    BeginReplay(root, res, changes, cfg.Uncommitted && remote.ContainsKey(wipRef) ? git.RefSha(FetchedRef("wip", name)) : null, pull: true);
+                }
+                else if (newTip != tip)
                 {
                     // A fast-forward: the files the new commits change are written, and a local change to one of
                     // them stops it before anything is touched.

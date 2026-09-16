@@ -199,7 +199,7 @@ public sealed partial class ImportPage : SgPage
             ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}."
               + (res.Drift.Count == 0 ? "" : " They were merged across " + res.Drift.Count + " revision(s) that had moved on.")
             : $"{res.Applied} of {res.Commits} commit(s) went in, and it stopped on \"{res.Stopped}\". "
-              + $"The import is waiting in {res.Path} with the rest of the series behind it: pick a version for each file, then continue."
+              + $"The remaining commits are queued in {res.Path}. Resume to review the current step, resolve files, or skip it."
               + (res.Why == null ? "" : "\n" + res.Why.Split('\n')[0]);
         ResultBar.IsOpen = true;
 

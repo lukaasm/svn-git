@@ -263,7 +263,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public bool BackupNewer => BackupRemote != null && BackupRemote.StartsWith("newer", StringComparison.Ordinal);
     /// <summary>Whatever the remote holds over this machine, without the word in front.</summary>
     string BackupRemoteWhy => BackupRemote == null ? "" : BackupRemote[(BackupRemote.IndexOf(':') + 1)..].Trim();
-    public Visibility PullVisibility => BackupRemote != null && !Missing ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility PullVisibility => BackupNewer && !Missing && !RebaseInProgress ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility BackupVisibility => BackupOn && !Missing ? Visibility.Visible : Visibility.Collapsed;
     /// <summary>
@@ -295,7 +295,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
             ? "The backup holds newer work for this branch than this machine has, sent from another machine: " + BackupRemoteWhy
               + " Pull from backup, in the card's menu, puts it on top of what is here."
             : "The backup holds different work under this name, from another machine: " + BackupRemoteWhy
-              + " Pull from backup, in the card's menu, puts its commits on top of this branch; Backup on the checkout can keep this machine's instead.")
+              + " Open Backup to restore its version separately for comparison, or keep this machine's version.")
         : NotBackedUp == 0
         ? "The backup repository holds every commit of this branch"
           + (BackedUp is { } t ? $", last confirmed {t.LocalDateTime:yyyy-MM-dd HH:mm}" : "") + ". Uncommitted changes go with the next backup."
@@ -435,15 +435,17 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// </summary>
     public string NextAction =>
         Missing ? "The folder is gone. Remove the branch, or put the folder back."
-        : RebaseInProgress ? (Conflicts == 1
+        : RebaseInProgress ? (Conflicts == 0
+            ? $"The {StoppedVerb} is paused with no files in conflict. Resume to review the next step."
+            : Conflicts == 1
             ? $"The {StoppedVerb} stopped on 1 file. Resolve it to continue."
             : $"The {StoppedVerb} stopped on {Conflicts} files. Resolve them to continue.")
         : Pending ? "A push stopped half way. Fix the cause and push again."
-        : Dirty && Behind > 0 ? $"Commit or discard the {DirtyFilesText}, then rebase onto the newer snapshot."
+        : Dirty && Behind > 0 ? $"Commit or shelve the {DirtyFilesText}, then rebase onto the newer snapshot."
         : Dirty ? $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} not committed. Commit them, or discard them."
         : Behind > 0 ? (Behind == 1
-            ? "1 snapshot behind. Rebase to build on the latest SVN."
-            : $"{Behind} snapshots behind. Rebase to build on the latest SVN.")
+            ? "1 snapshot behind. Rebase onto the current SVN snapshot."
+            : $"{Behind} snapshots behind. Rebase onto the current SVN snapshot.")
         : Ahead > 0 ? (Ahead == 1
             ? "1 commit ready. Push to SVN when you are."
             : $"{Ahead} commits ready. Push to SVN when you are.")
@@ -483,7 +485,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public string PrimaryText => Primary switch
     {
         WorktreeAction.Remove => "Remove",
-        WorktreeAction.Resolve => "Resolve conflicts",
+        WorktreeAction.Resolve => Conflicts > 0 ? $"Resolve {Conflicts} file(s)" : "Resume operation",
         WorktreeAction.Push => "Push to SVN",
         WorktreeAction.Commit => "Commit",
         WorktreeAction.Rebase => "Rebase",
@@ -525,8 +527,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         ? "Files that are not tracked yet. Commit adds them to the branch; Discard deletes them."
         : $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} changed and not committed. Commit or discard them before a rebase or a push, or shelve them for later.";
     public string BehindTip => (Behind == 1 ? "1 snapshot" : $"{Behind} snapshots")
-        + " taken since this branch was made or last rebased. Rebase to build on the latest SVN state.";
-    public string ConflictTip => $"The {StoppedVerb} stopped on {(Conflicts == 1 ? "1 file" : $"{Conflicts} files")} in conflict. "
+        + " taken since this branch was made or last rebased. Rebase onto the current SVN snapshot; sync the checkout first to fetch newer SVN changes.";
+    public string ConflictTip => Conflicts == 0 ? $"The {StoppedVerb} is paused. Resume to review, continue, or skip the current step." : $"The {StoppedVerb} stopped on {(Conflicts == 1 ? "1 file" : $"{Conflicts} files")} in conflict. "
         + "Use Resolve to pick a version for each, then continue.";
     public string ShelvedTip => (Shelves == 1 ? "1 set" : $"{Shelves} sets")
         + " of changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back.";

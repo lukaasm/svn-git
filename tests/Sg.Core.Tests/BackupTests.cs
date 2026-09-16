@@ -40,10 +40,16 @@ public sealed class BackupTests : IDisposable
     }
 
     /// <summary>Two commits on a branch: one that edits and adds, one that renames and deletes.</summary>
-    string MakeBranch(string name)
+    string MakeBranch(string name, bool leadingCommit = false)
     {
         var git = f.Root.Git;
         var wt = Ops.Branch(f.Root, name, f.Co).Path;
+        if (leadingCommit)
+        {
+            Fixture.Put(wt, "before.txt", "applies before the conflict\n");
+            git.Ok(wt, "add", "before.txt");
+            git.Ok(wt, "commit", "-q", "-m", "first clean step");
+        }
 
         Fixture.Put(wt, "schmetterling/engine.cpp", "int engine = 2;\n");
         Fixture.Put(wt, "fort/dev/new/file.txt", "brand new\n");
@@ -62,6 +68,106 @@ public sealed class BackupTests : IDisposable
 
     BackupItem Item(BackupResult r, string kind, string name) =>
         r.Items.Single(i => i.Kind == kind && i.Name == name);
+
+    [Theory]
+    [InlineData(false, "continue")]
+    [InlineData(false, "skip")]
+    [InlineData(false, "abort")]
+    [InlineData(true, "continue")]
+    [InlineData(true, "skip")]
+    [InlineData(true, "abort")]
+    public void ConflictingBackup_KeepsAResumableSeries(bool pull, string action)
+    {
+        f.Setup();
+        var source = MakeBranch("feature-resume", leadingCommit: true);
+        Fixture.Put(source, "notes.txt", "unfinished backup edits\n");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        var other = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        Fixture.Put(other, "engine.cpp", "int engine = 9;\n");
+        f.Svn.Ok(other, "commit", "--non-interactive", "-m", "server edit");
+        var far = Far();
+        Ops.Sync(far.Root, far.Co);
+        if (pull) Ops.Branch(far.Root, "feature-resume", far.Co);
+
+        var result = pull ? Backup.Pull(far.Root, "feature-resume") : Backup.Restore(far.Root, "feature-resume", wip: true);
+        Assert.False(result.Ok);
+        Assert.True(result.Waiting);
+        Assert.Equal(Replay.Import, far.Root.Git.ReplayInProgress(result.Path));
+        Assert.Equal(3, far.Root.Git.Progress(result.Path).Of);
+        Assert.Equal(1, result.Applied);
+        Assert.Equal("feature-resume", Conflicts.State(far.Root, result.Path).BackupName);
+        Assert.False(File.Exists(Path.Combine(result.Path, "notes.txt")));
+        var reopened = SgRoot.Open(far.Root.RootPath, f.Log);
+        Assert.Equal("feature-resume", Conflicts.State(reopened, result.Path).BackupName);
+        if (action == "abort") Conflicts.Abort(reopened, result.Path);
+        else
+        {
+            if (action == "continue") far.Root.Git.TakeSide(result.Path, result.Conflicted, ours: false);
+            var finished = action == "continue" ? Conflicts.Continue(reopened, result.Path) : Conflicts.Skip(reopened, result.Path);
+            Assert.True(finished.Ok, finished.Output);
+            Assert.Equal("unfinished backup edits\n", Read(result.Path, "notes.txt"));
+            Assert.True(File.Exists(Path.Combine(result.Path, "fort/dev/game_renamed.cpp")));
+            Assert.False(File.Exists(Path.Combine(result.Path, "fort/tools/tool.py")));
+        }
+        Assert.Equal(Replay.None, far.Root.Git.ReplayInProgress(result.Path));
+        Assert.Null(Backup.ReplayName(far.Root.Git, result.Path));
+        Assert.Equal("", far.Root.Git.Out(null, "for-each-ref", "--format=%(refname)", "refs/sg/replay/"));
+        Assert.Equal(action == "continue" ? "int engine = 2;\n" : "int engine = 9;\n", Read(result.Path, "schmetterling/engine.cpp"));
+        if (action == "abort")
+        {
+            Assert.True(File.Exists(Path.Combine(result.Path, "fort/dev/game.cpp")));
+            Assert.False(File.Exists(Path.Combine(result.Path, "notes.txt")));
+            Assert.False(File.Exists(Path.Combine(result.Path, "before.txt")));
+        }
+    }
+
+    [Fact]
+    public void ConflictingBackup_PreservesLocalEditsBeforeStartingReplay()
+    {
+        f.Setup();
+        MakeBranch("feature-dirty", leadingCommit: true);
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        var other = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        Fixture.Put(other, "engine.cpp", "int engine = 9;\n");
+        f.Svn.Ok(other, "commit", "--non-interactive", "-m", "server edit");
+        var far = Far();
+        Ops.Sync(far.Root, far.Co);
+        var wt = Ops.Branch(far.Root, "feature-dirty", far.Co).Path;
+        var head = far.Root.Git.HeadSha(wt);
+        Fixture.Put(wt, "local-notes.txt", "keep these edits\n");
+        Assert.Contains("Commit or shelve", Assert.Throws<SgException>(() => Backup.Pull(far.Root, "feature-dirty")).Message);
+        Assert.Equal(head, far.Root.Git.HeadSha(wt));
+        Assert.Equal("keep these edits\n", Read(wt, "local-notes.txt"));
+        Assert.False(File.Exists(Path.Combine(wt, "before.txt")));
+        Assert.Equal(Replay.None, far.Root.Git.ReplayInProgress(wt));
+    }
+
+    [Fact]
+    public void ConflictingBackup_KeepsConflictingDeferredEditsOnAShelf()
+    {
+        f.Setup();
+        var source = MakeBranch("feature-edits");
+        Fixture.Put(source, "schmetterling/engine.cpp", "int engine = 5;\n");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        var other = f.OtherWc(f.EngineUrl + "/branches/fort/dev");
+        Fixture.Put(other, "engine.cpp", "int engine = 9;\n");
+        f.Svn.Ok(other, "commit", "--non-interactive", "-m", "server edit");
+        var far = Far();
+        Ops.Sync(far.Root, far.Co);
+        var result = Backup.Restore(far.Root, "feature-edits", wip: true);
+        Assert.True(result.Waiting);
+        var finished = Conflicts.Skip(far.Root, result.Path);
+        Assert.True(finished.Ok);
+        Assert.NotNull(finished.Backup);
+        Assert.NotNull(finished.Backup.WipShelf);
+        Assert.False(finished.Backup.WipWritten);
+        Assert.NotEmpty(finished.Backup.WipConflicted);
+        Assert.Contains(Shelf.List(far.Root), s => s.Id == finished.Backup.WipShelf);
+        Assert.Equal("int engine = 9;\n", Read(result.Path, "schmetterling/engine.cpp"));
+    }
 
     [Fact]
     public void Backup_SendsOnlyWhatTheBranchWrote_AndSendsNothingTwice()

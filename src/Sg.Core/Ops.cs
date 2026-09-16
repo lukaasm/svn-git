@@ -980,7 +980,7 @@ public static class Ops
             throw new SgException(Conflicts.Note(git, worktree) + ". " + Conflicts.Where);
         if (!git.IsClean(worktree))
             throw new SgException("worktree has uncommitted changes: " + worktree
-                + "\nA rebase moves the branch out from under them. Commit them first, or discard them.");
+                + "\nCommit or shelve them first, then rebase. Shelved changes can be restored afterward.");
 
         var r = git.Rebase(worktree, snapRef);
         var res = new RebaseResult { Branch = branch, Checkout = co.Name, Output = (r.StdOut + r.StdErr).Trim() };

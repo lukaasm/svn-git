@@ -97,7 +97,7 @@
             <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             <!-- Only after an import stopped. It is the way on from there, so it stands next to the
                  sentence that says it stopped rather than somewhere the reader has to go and find. -->
-            <local:IconButton Grid.Column="2" x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resolve conflicts" Visibility="Collapsed"
+            <local:IconButton Grid.Column="2" x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resume import" Visibility="Collapsed"
                               Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
                               ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
             <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />

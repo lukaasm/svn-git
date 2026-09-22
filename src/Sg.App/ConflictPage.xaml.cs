@@ -521,8 +521,11 @@ public sealed partial class ConflictPage : SgPage
             InspectButton.Visibility = PatchPreview.Visibility = Visibility.Collapsed;
             if (r.Backup != null)
             {
+                var outcome = TaskResults.Describe(r.Backup);
+                StateBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+                StateBar.Message = outcome.Detail;
                 NoConflicts.Title = "Backup commits applied";
-                NoConflicts.Text = $"The queued commits for {r.Branch} are finished. " + BackupPage.PullSentence(r.Backup);
+                NoConflicts.Text = $"The queued commits for {r.Branch} are finished. " + TaskResults.Describe(r.Backup).Detail;
                 if (r.Backup.WipShelf != null && !r.Backup.WipWritten)
                 {
                     NoConflicts.Title = "Backup commits applied; local edits need attention";

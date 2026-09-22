@@ -378,7 +378,7 @@ public sealed partial class MainWindow : Window
         var r = await Runner.Run(Pane, "pull " + name, () => Backup.Pull(root, name));
         if (r != null)
         {
-            Pane.Append(BackupPage.PullSentence(r));
+            Pane.Append(TaskResults.Describe(r).Detail);
             if (r.Waiting) Host.Go(() => new ConflictPage(r.Path) { Checkout = r.Checkout, Branch = r.Branch }, "resolve:" + r.Path);
             BackupSoon();
         }

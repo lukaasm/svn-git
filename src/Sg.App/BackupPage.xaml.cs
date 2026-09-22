@@ -254,19 +254,9 @@ public sealed partial class BackupPage : SgPage
         _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 
-        var lines = new List<string>();
-        lines.Add(res.Ok
-            ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}." + (res.Replaced ? $" Original work is preserved as {res.RecoveryBranch}" + (res.RecoveryPath == null ? "." : $" in {res.RecoveryPath}.") : "") + (res.Relinked ? " The store still had them, so nothing was replayed." : "")
-              + (res.Drift.Count == 0 ? "" : $" They were merged across {res.Drift.Count} revision(s) that had moved on.")
-            : $"{res.Applied} of {res.Commits} commit(s) applied. Paused on \"{res.Stopped}\"; the remaining commits are queued."
-              + (res.Why == null ? "" : "\n" + res.Why.Split('\n')[0]));
-        if (res.WipShelf != null)
-            lines.Add(res.WipWritten
-                ? "The uncommitted changes are written into the worktree" + (res.WipConflicted.Count > 0 ? $", {res.WipConflicted.Count} of them with conflict markers." : ".")
-                : $"The uncommitted changes wait on the shelf as {res.WipShelf}: {res.WipConflicted.Count} file(s) would not merge.");
-        if (res.Shelves.Count > 0) lines.Add("Shelves made again: " + string.Join(", ", res.Shelves) + ".");
-        ResultBar.Severity = res.Ok && res.WipConflicted.Count == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-        ResultBar.Message = string.Join("\n", lines);
+        var outcome = TaskResults.Describe(res);
+        ResultBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+        ResultBar.Message = outcome.Detail;
         ResultBar.IsOpen = true;
         SetResumeAction(res);
 
@@ -276,7 +266,8 @@ public sealed partial class BackupPage : SgPage
 
         entry.ExistsHere = true;
         RestoreButton.IsEnabled = false;
-        ExplainTarget(res.Ok ? "Done. Close this and the worktree is on the checkout's card." : "Resume the operation to finish, skip a commit, or cancel.");
+        ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. Close this and the worktree is on the checkout's card."
+            : res.Waiting ? "Resume the operation to finish, skip a commit, or cancel." : "Review the result above for saved work or edits that need attention.");
     }
 
     async void BackupNow_Click(object sender, RoutedEventArgs e)
@@ -339,30 +330,14 @@ public sealed partial class BackupPage : SgPage
         var r = await Runner.Run(Pane, "pull " + item.Name, () => Backup.Pull(root, item.Name));
         if (r == null) return;
         ResultBar.ActionButton = null;
-        ResultBar.Severity = r.Ok && r.WipWhy == null && r.WipConflicted.Count == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-        ResultBar.Message = PullSentence(r);
+        var outcome = TaskResults.Describe(r);
+        ResultBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+        ResultBar.Message = outcome.Detail;
         SetResumeAction(r);
         ResultBar.IsOpen = true;
         // The report still reads "behind" until the next backup says otherwise, and the timer sends one soon.
         if (Host?.Window is MainWindow main) main.BackupSoon();
         await LoadAsync();
-    }
-
-    public static string PullSentence(RestoreResult r)
-    {
-        var parts = new List<string>();
-        if (r.Branch.Length > 0)
-            parts.Add(r.Commits == 0 ? $"{r.Branch} had every commit the backup holds." : $"{r.Applied} of {r.Commits} commit(s) pulled onto {r.Branch}.");
-        if (r.WipAlreadyHere) parts.Add("The uncommitted changes in the backup were here already.");
-        else if (r.WipShelf != null)
-            parts.Add(r.WipWritten
-                ? "The uncommitted changes are written into " + r.Path + (r.WipConflicted.Count > 0 ? $", {r.WipConflicted.Count} with conflict markers." : ".")
-                : $"Uncommitted changes are saved on shelf {r.WipShelf}. Open Shelved changes to review and restore them."
-                  + (r.WipWhy == null ? "" : " " + r.WipWhy));
-        if (!r.Ok) parts.Add(r.Waiting
-            ? $"Paused on \"{r.Stopped}\". The remaining commits are queued; resume to resolve, skip, or cancel."
-            : $"\"{r.Stopped}\" could not be applied. {r.Why}");
-        return string.Join(" ", parts);
     }
 
     /// <summary>This machine's copy over the one the remote holds, for this item alone, after saying what it writes over.</summary>

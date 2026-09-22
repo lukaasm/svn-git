@@ -7,9 +7,7 @@ public static class TaskResults
     {
         ImportResult r => (r.Ok && !r.Waiting ? TaskState.Succeeded : TaskState.NeedsAttention,
             $"{r.Branch}: {r.Applied}/{r.Commits} commits imported. {r.Path}" + (r.Waiting ? "\nReplay paused. Open Resolve conflicts to continue." : "") + Note(r.Why)),
-        RestoreResult r => (r.Ok && !r.Waiting && r.WipWhy == null && r.WipConflicted.Count == 0 ? TaskState.Succeeded : TaskState.NeedsAttention,
-            $"{r.Branch}: {r.Applied}/{r.Commits} commits restored. {r.Path}" + Note(r.Why) + Note(r.WipWhy)
-            + (r.Waiting ? "\nReplay paused. Open Resolve conflicts to continue." : "") + (r.WipConflicted.Count > 0 ? "\nRestored edits need conflict resolution." : "")),
+        RestoreResult r => Restore(r),
         RebaseResult r => (r.Ok && !r.Conflict ? TaskState.Succeeded : TaskState.NeedsAttention, r.Branch + (r.Ok ? ": replay completed." : ": replay paused. Open Resolve conflicts.") + Note(r.Output)),
         ResolveResult r => r.Backup != null ? Describe(r.Backup) : r.Operation != null ? Describe(r.Operation)
             : (r.Ok && !r.Conflict ? TaskState.Succeeded : TaskState.NeedsAttention, r.Branch + (r.Ok ? ": replay completed." : ": replay paused. Open Resolve conflicts.") + Note(r.Output)),
@@ -59,6 +57,28 @@ public static class TaskResults
         RebaseResult r when !r.Ok => new(TaskTargetKind.Activity),
         _ => null
     };
+
+    static (TaskState State, string Detail) Restore(RestoreResult r)
+    {
+        var savedEdits = r.WipShelf != null && !r.WipWritten;
+        var complete = r.Ok && !r.Waiting && r.WipWhy == null && r.WipConflicted.Count == 0 && !savedEdits;
+        var lines = new List<string> { $"{r.Branch}: {r.Applied}/{r.Commits} commits recovered. {r.Path}" };
+        if (r.Waiting) lines.Add($"Replay paused on \"{r.Stopped}\". The remaining commits are queued; resume to resolve, skip, or cancel.");
+        else if (!r.Ok) lines.Add($"\"{r.Stopped}\" could not be applied.");
+        if (r.Why != null) lines.Add(r.Why);
+        if (r.Relinked) lines.Add("The store still had the commits, so nothing was replayed.");
+        if (r.Drift.Count > 0) lines.Add($"Commits were merged across {r.Drift.Count} changed revision(s).");
+        if (r.Replaced) lines.Add("Original work is preserved as " + r.RecoveryBranch
+            + (r.RecoveryPath == null ? "." : " in " + r.RecoveryPath + "."));
+        if (r.WipAlreadyHere) lines.Add("The uncommitted changes in the backup were here already.");
+        else if (savedEdits) lines.Add($"Uncommitted changes are saved on shelf {r.WipShelf}. Open Shelved changes to review and restore them."
+            + (r.WipConflicted.Count > 0 ? $" {r.WipConflicted.Count} file(s) need conflict resolution." : ""));
+        else if (r.WipWritten) lines.Add("Uncommitted changes are written into the worktree."
+            + (r.WipConflicted.Count > 0 ? $" {r.WipConflicted.Count} file(s) contain conflict markers." : ""));
+        if (r.WipWhy != null) lines.Add(r.WipWhy);
+        if (r.Shelves.Count > 0) lines.Add("Shelves recovered: " + string.Join(", ", r.Shelves) + ".");
+        return (complete ? TaskState.Succeeded : TaskState.NeedsAttention, string.Join("\n", lines));
+    }
 
     static string Note(string? text) => string.IsNullOrWhiteSpace(text) ? "" : "\n" + text.Trim();
 }

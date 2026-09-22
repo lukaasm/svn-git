@@ -220,6 +220,11 @@ try {
     Invoke-Ui 'PrimaryButton'
     Wait-Receipt 2
     Assert-Blocked 'RestoreButton' 'Done.*'
+    $null = Wait-For 'shared restore result on the page' {
+        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -like 'restored-backup: *commits recovered.*' -and $_.Current.Name.Contains((Join-Path $root 'restored-backup')) } |
+            Select-Object -First 1
+    }
     $restored = Join-Path $root 'restored-backup'
     if ([IO.File]::ReadAllText((Join-Path $restored 'feature.txt')) -ne "imported feature`n") { throw 'Backup restore lost branch content.' }
     if ([IO.File]::ReadAllText((Join-Path $restored 'base.txt')) -ne "same change on both sides`n") { throw 'Backup restore missed the fresh snapshot.' }

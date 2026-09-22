@@ -46,6 +46,47 @@ public class TaskQueueTests
     }
 
     [Fact]
+    public void Restore_receipt_preserves_recovery_and_shelved_edits_guidance_after_navigation()
+    {
+        var result = new RestoreResult
+        {
+            Branch = "feature", Path = "worktree", Applied = 2, Commits = 2,
+            Replaced = true, RecoveryBranch = "feature-before-restore", RecoveryPath = "original-worktree",
+            WipShelf = "saved-edits", WipWhy = "Local edits differ from the backup."
+        };
+        var outcome = TaskResults.Describe(result);
+        Assert.Equal(TaskState.NeedsAttention, outcome.State);
+        Assert.Contains("feature-before-restore", outcome.Detail);
+        Assert.Contains("original-worktree", outcome.Detail);
+        Assert.Contains("saved-edits", outcome.Detail);
+        Assert.Contains("Open Shelved changes", outcome.Detail);
+        Assert.Contains(result.WipWhy, outcome.Detail);
+        Assert.Equal(outcome, TaskResults.Describe(new ResolveResult { Backup = result }));
+        result.WipWhy = null;
+        Assert.Equal(TaskState.NeedsAttention, TaskResults.Describe(result).State);
+        result.WipWritten = true;
+        var completed = TaskResults.Describe(result);
+        Assert.Equal(TaskState.Succeeded, completed.State);
+        Assert.DoesNotContain("Open Shelved changes", completed.Detail);
+        result.WipConflicted.Add("file.txt");
+        var conflicted = TaskResults.Describe(result);
+        Assert.Equal(TaskState.NeedsAttention, conflicted.State);
+        Assert.Contains("conflict markers", conflicted.Detail);
+    }
+
+    [Fact]
+    public void Restore_only_offers_replay_guidance_when_commits_remain_queued()
+    {
+        var result = new RestoreResult { Branch = "feature", Stopped = "subject", Why = "Patch rejected." };
+        var failed = TaskResults.Describe(result);
+        Assert.Equal(TaskState.NeedsAttention, failed.State);
+        Assert.Contains("could not be applied", failed.Detail);
+        Assert.DoesNotContain("queued", failed.Detail);
+        result.Waiting = true;
+        Assert.Contains("remaining commits are queued", TaskResults.Describe(result).Detail);
+    }
+
+    [Fact]
     public void Reservation_is_atomic_and_released_only_after_completion()
     {
         var queue = new TaskQueue();

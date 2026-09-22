@@ -644,11 +644,11 @@ public sealed partial class CheckoutPage : SgPage
         {
             var root = Session.Require();
             var r = await Reports.Run(OpReport, Pane, "pull " + row.Branch, () => Backup.Pull(root, row.Branch), (card, x) => card.Show(
-                x.Ok && x.WipWhy == null && x.WipConflicted.Count == 0 ? ChipSeverity.Success : ChipSeverity.Caution, "",
+                TaskResults.Describe(x).State == TaskState.Succeeded ? ChipSeverity.Success : ChipSeverity.Caution, "",
                 x.Ok ? $"Pulled from the backup onto {row.Branch}" : $"The pull onto {row.Branch} stopped short",
-                BackupPage.PullSentence(x)));
+                TaskResults.Describe(x).Detail));
             if (r == null) { await _owner.RefreshAsync(); return; }
-            Pane.Append(BackupPage.PullSentence(r));
+            Pane.Append(TaskResults.Describe(r).Detail);
             if (r.Waiting) { OpenResolver(row); return; }
             _owner.BackupSoon();
             await _owner.RefreshAsync();

@@ -9,6 +9,9 @@ The Windows app keeps a **Tasks** pane aligned with the page content, including 
 
 Actions that change the same root are blocked while a task holds it; browsing remains available. Blocked actions expose the task name and how to unblock them through hover help and screen-reader help. The checkout toolbar’s **Unavailable actions** entry explains task collisions, no checkout edits, and missing shelves. Scheduled backups defer while that root is busy. New worktrees, imports, backup restores, and recovery branches appear as placeholders immediately and refresh into real cards when finished. Exit and restart wait for active tasks to finish or be cancelled.
 
+Import and restore keep a snapshot of the submitted source, destination, and options. Their inputs are locked while work runs; navigation and Tasks remain available. Failed or cancelled attempts keep the form values and offer Retry once destination validation passes again. Worktree creation keeps its submitted options for **Review and retry** in the current window, including after navigating away; retry always rechecks the destination and never overwrites partial work automatically.
+
+
 Unfinished updates and paused replays are rediscovered when a root opens. A recovery notice links to the saved step or replay review; Activity puts unfinished operations first and retains their checkpoints. Commands are never automatically repeated on startup.
 
 For direct Windows UI Automation testing, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected. Add `-CheckRecovery` to verify startup discovery, recovery navigation, and notice removal after reconciliation.

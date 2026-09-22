@@ -93,7 +93,7 @@
         </Grid>
 
         <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-            <local:IconButton Glyph="&#xED25;" Text="Another file" Click="Pick_Click" ToolTipService.ToolTip="Read a different export file." />
+            <local:IconButton x:Name="PickButton" Glyph="&#xED25;" Text="Another file" Click="Pick_Click" ToolTipService.ToolTip="Read a different export file." />
             <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             <!-- Only after an import stopped. It is the way on from there, so it stands next to the
                  sentence that says it stopped rather than somewhere the reader has to go and find. -->

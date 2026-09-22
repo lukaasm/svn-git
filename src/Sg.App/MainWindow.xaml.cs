@@ -1128,17 +1128,33 @@ public sealed partial class MainWindow : Window
         await RefreshAsync();
     }
 
+    readonly OperationForm<NewBranchInput> _branchForm = new();
+    SgRoot? _branchRequestRoot;
+
     internal async Task NewBranchAsync(CheckoutConfig? preselect)
     {
-        if (Session.Root == null) return;
+        if (Session.Root == null || _branchForm.Running) return;
         var root = Session.Root;
-        var input = await Dialogs.NewBranch(this, root, preselect);
+        var draft = _branchForm.RetryAvailable && ReferenceEquals(root, _branchRequestRoot) ? _branchForm.Submitted : null;
+        var input = await Dialogs.NewBranch(this, root, preselect, draft);
         if (input == null) return;
-        var r = await Reports.Run(Overview.Report, Pane, "new branch " + input.Name,
-            () => Ops.Branch(root, input.Name, input.Checkout, input.Without, input.Minimal, input.Shared),
+        _branchRequestRoot = root;
+        var r = await _branchForm.Run(input, submitted => Reports.Run(Overview.Report, Pane, "new branch " + submitted.Name,
+            () => Ops.Branch(root, submitted.Name, root.Checkout(submitted.Checkout), submitted.Without, submitted.Minimal, submitted.Shared),
             (card, x) => card.Show(ChipSeverity.Success, "", $"Worktree {x.Branch} is ready",
                 x.Path + (x.Shared.Count > 0 ? "\n" + SharedFolders.Describe(x.SharedMode) + ": " + string.Join(", ", x.Shared) : "")),
-            worktree: new(input.Checkout.Name, input.Name, root.WorktreePathFor(input.Name)));
+            worktree: new(submitted.Checkout, submitted.Name, root.WorktreePathFor(submitted.Name))));
+        if (r == null && ReferenceEquals(root, Session.Root))
+            Overview.Report.Show(ChipSeverity.Caution, "", "Worktree creation did not finish",
+                "Your options are kept. Review Tasks for completed steps before trying again.", rows:
+                [new ReportRow(ChipSeverity.Neutral, "", input.Name, "", "", "")
+                {
+                    ActionText = "Review and retry", Action = async () =>
+                    {
+                        if (ReferenceEquals(root, Session.Root)) await NewBranchAsync(root.Checkout(input.Checkout));
+                        else await Dialogs.Info(this, "Open the original root", root.RootPath);
+                    }
+                }]);
         if (r != null)
         {
             Pane.Append($"worktree: {r.Path}");

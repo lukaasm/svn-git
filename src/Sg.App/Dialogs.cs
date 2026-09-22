@@ -6,7 +6,7 @@ using Sg.Core;
 
 namespace Sg.App;
 
-public sealed record NewBranchInput(string Name, CheckoutConfig Checkout, bool Minimal, List<string> Without, SharedMode Shared);
+public sealed record NewBranchInput(string Name, string Checkout, bool Minimal, System.Collections.Immutable.ImmutableArray<string> Without, SharedMode Shared);
 public sealed record ServerCheckoutInput(string Target, CheckoutConfig Near, string? Name);
 
 /// <summary>Small modal dialogs built in code, so every window can use them.</summary>
@@ -106,14 +106,14 @@ public static class Dialogs
         await d.ShowAsync();
     }
 
-    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect)
+    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null)
     {
-        var name = new TextBox { Header = "Branch name", PlaceholderText = "feature-x" };
+        var name = new TextBox { Header = "Branch name", PlaceholderText = "feature-x", Text = draft?.Name ?? "" };
         var from = new ComboBox { Header = "From checkout", ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch };
-        var first = preselect ?? root.Config.Checkouts.FirstOrDefault();
+        var first = root.Config.Checkouts.FirstOrDefault(c => c.Name == draft?.Checkout) ?? preselect ?? root.Config.Checkouts.FirstOrDefault();
         from.SelectedItem = first?.Name;
-        var minimal = new CheckBox();
-        var without = new TextBox { Header = "Also leave out (folders, one per line)", AcceptsReturn = true, Height = 70 };
+        var minimal = new CheckBox { IsChecked = draft?.Minimal ?? false };
+        var without = new TextBox { Header = "Also leave out (folders, one per line)", AcceptsReturn = true, Height = 70, Text = draft == null ? "" : string.Join("\n", draft.Without) };
         var shared = new SharedModeBox();
         var worktreeRoot = root.Config.WorktreeRoot ?? root.RootPath;
         // The optional and the shared folders belong to the checkout in the box, so they follow it.
@@ -127,6 +127,7 @@ public static class Dialogs
             if (co != null) shared.Detect(co.Path, worktreeRoot);
         }
         Follow(first);
+        if (draft != null) shared.Mode = draft.Shared;
         from.SelectionChanged += (_, _) => Follow(from.SelectedItem is string n ? root.Checkout(n) : null);
         var panel = new StackPanel { Spacing = 10, MinWidth = 420 };
         panel.Children.Add(name);
@@ -137,7 +138,7 @@ public static class Dialogs
         var d = new ContentDialog
         {
             XamlRoot = RootOf(owner),
-            Title = "New worktree",
+            Title = draft == null ? "New worktree" : "Retry worktree creation",
             Content = panel,
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
@@ -175,7 +176,7 @@ public static class Dialogs
         if (result != ContentDialogResult.Primary) return null;
         if (name.Text.Trim().Length == 0 || from.SelectedItem is not string coName) return null;
         var list = without.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
-        return new NewBranchInput(name.Text.Trim(), root.Checkout(coName), minimal.IsChecked == true, list, shared.Mode);
+        return new NewBranchInput(name.Text.Trim(), coName, minimal.IsChecked == true, [.. list], shared.Mode);
     }
 
     public static async Task<ServerCheckoutInput?> ServerCheckout(object owner, SgRoot root, CheckoutConfig? preselect)

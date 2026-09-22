@@ -39,6 +39,7 @@ public sealed class BackupRow
 /// </summary>
 public sealed partial class BackupPage : SgPage
 {
+    readonly OperationForm<RestoreRequest> _form;
     List<BackupEntry> _entries = new();
     BackupEntry? _picked;
     bool _binding;
@@ -47,6 +48,7 @@ public sealed partial class BackupPage : SgPage
     public BackupPage()
     {
         InitializeComponent();
+        _form = new(NameBox, IntoBox, ForceBox, WipBox, Branches);
         Title = "Backup";
         Session.Log.Sink = Pane;
         _ = LoadAsync();
@@ -178,6 +180,7 @@ public sealed partial class BackupPage : SgPage
 
     async void SyncButton()
     {
+        if (_form == null || _form.Running) return;
         var entry = _picked;
         var name = NameBox.Text.Trim();
         var root = Session.Root;
@@ -189,7 +192,7 @@ public sealed partial class BackupPage : SgPage
         var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
         RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
-        RestoreLabel.Text = entry == null ? "Restore" : force && taken ? $"Overwrite with {entry.Commits} commit(s)" : $"Restore {entry.Commits} commit(s)";
+        RestoreLabel.Text = _form.RetryAvailable ? "Retry restore" : entry == null ? "Restore" : force && taken ? $"Overwrite with {entry.Commits} commit(s)" : $"Restore {entry.Commits} commit(s)";
         ExplainTarget(entry == null ? "Pick a branch."
             : entry.Unreadable != null ? entry.Unreadable
             : Into == null && entry.Checkout.Length == 0 ? $"No checkout here points at {entry.Url}. Pick one only if you know it is the same repository."
@@ -227,6 +230,7 @@ public sealed partial class BackupPage : SgPage
 
     async void Restore_Click(object sender, RoutedEventArgs e)
     {
+        if (_form.Running) return;
         var entry = _picked;
         var co = Into;
         if (entry == null || co == null) return;
@@ -234,6 +238,7 @@ public sealed partial class BackupPage : SgPage
         var wip = WipBox.IsChecked == true && entry.HasWip;
         var root = Session.Require();
         var force = ForceBox.IsChecked == true;
+        var request = new RestoreRequest(entry.Name, name, co.Name, wip, force);
         var overwrite = force && root.Git.RefSha("refs/heads/" + name) != null;
 
         var confirmed = overwrite
@@ -249,8 +254,10 @@ public sealed partial class BackupPage : SgPage
         if (!confirmed) return;
 
         _targetValidation.Invalidate();
-        var res = await Busy.During(sender, () => Runner.Run(Pane, "restore " + name,
-            () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip, force), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
+        ResultBar.IsOpen = false;
+        var res = await _form.Run(request, submitted => Runner.Run(Pane, "restore " + submitted.Name,
+            () => Backup.Restore(root, submitted.Source, submitted.Name, submitted.Checkout, submitted.WithEdits, submitted.Replace),
+            worktree: new(submitted.Checkout, submitted.Name, root.WorktreePathFor(submitted.Name))), sender);
         _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 

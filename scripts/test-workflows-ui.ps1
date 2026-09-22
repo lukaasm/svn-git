@@ -68,6 +68,31 @@ function Assert-Blocked([string]$buttonId, [string]$explanation) {
             $button.Current.HelpText -like $explanation
     }
 }
+function Cancel-QueuedForm([string]$buttonId, [string]$labelId, [string]$retryLabel, [string[]]$fields, [int]$finishedCount) {
+    $savedName = (Find-Ui 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+    $enabled = @{}
+    foreach ($field in $fields) { $enabled[$field] = (Find-Ui $field).Current.IsEnabled }
+    $formLock = [IO.File]::Open((Join-Path $root '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    try {
+        Invoke-Ui $buttonId
+        Invoke-Ui 'PrimaryButton'
+        foreach ($field in $fields) {
+            $null = Wait-For "locked form field $field" { $element = Find-Ui $field; $element -and !$element.Current.IsEnabled }
+        }
+        Invoke-Ui 'TaskQueueToggle'
+        Invoke-Ui 'Cancel task' -Name
+        Wait-Receipt $finishedCount
+        $null = Wait-For 'retry action after cancellation' {
+            $button = Find-Ui $buttonId
+            $button -and $button.Current.IsEnabled -and (Find-Ui $labelId).Current.Name -eq $retryLabel
+        }
+        foreach ($field in $fields) {
+            if ((Find-Ui $field).Current.IsEnabled -ne $enabled[$field]) { throw "Input availability changed after cancellation: $field" }
+        }
+        if ((Find-Ui 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne $savedName) { throw 'Cancelled form lost its submitted name.' }
+        Invoke-Ui 'TaskQueueToggle'
+    } finally { $formLock.Dispose() }
+}
 function Stop-App {
     if ($script:process -and !$script:process.HasExited) { Stop-Process -Id $script:process.Id; $script:process.WaitForExit() }
     $script:process = $null
@@ -130,9 +155,18 @@ try {
     Assert-Blocked 'ImportButton' '*destination folder already exists*'
     Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'imported'
+    # The preview stays valid, but execution must report a missing source and retain a retryable form.
+    [IO.File]::Move($export, $export + '.held')
+    try {
+        Invoke-Ui 'ImportButton'
+        Invoke-Ui 'PrimaryButton'
+        Wait-Receipt
+        $null = Wait-For 'retry action after import failure' { (Find-Ui 'ImportLabel').Current.Name -eq 'Retry import' }
+    } finally { [IO.File]::Move($export + '.held', $export) }
+    Cancel-QueuedForm 'ImportButton' 'ImportLabel' 'Retry import' @('NameBox', 'IntoBox', 'PickButton') 2
     Invoke-Ui 'ImportButton'
     Invoke-Ui 'PrimaryButton'
-    Wait-Receipt
+    Wait-Receipt 3
     Assert-Blocked 'ImportButton' 'Done.*'
     $null = Wait-For 'shared import result on the page' {
         $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
@@ -221,9 +255,10 @@ try {
     Assert-Blocked 'RestoreButton' '*destination folder already exists*'
     Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'restored-backup'
+    Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry restore' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox', 'Branches') 2
     Invoke-Ui 'RestoreButton'
     Invoke-Ui 'PrimaryButton'
-    Wait-Receipt 2
+    Wait-Receipt 3
     Assert-Blocked 'RestoreButton' 'Done.*'
     $null = Wait-For 'shared restore result on the page' {
         $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |

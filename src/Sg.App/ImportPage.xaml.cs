@@ -38,6 +38,7 @@ public sealed class ImportBaseRow
 /// </summary>
 public sealed partial class ImportPage : SgPage
 {
+    readonly OperationForm<ImportRequest> _form;
     string _file;
     ExportMeta? _meta;
     bool _binding;
@@ -52,6 +53,7 @@ public sealed partial class ImportPage : SgPage
     public ImportPage(string file)
     {
         InitializeComponent();
+        _form = new(NameBox, IntoBox, PickButton);
         _file = file;
         Title = "Import a branch";
         Session.Log.Sink = Pane;
@@ -148,6 +150,7 @@ public sealed partial class ImportPage : SgPage
 
     async void SyncButton()
     {
+        if (_form == null || _form.Running) return;
         var name = NameBox.Text.Trim();
         var root = Session.Root;
         ImportButton.IsEnabled = false;
@@ -157,7 +160,7 @@ public sealed partial class ImportPage : SgPage
         if (check == null) return;
         var taken = check.Taken;
         ImportButton.IsEnabled = _meta != null && name.Length > 0 && Into != null && !taken && check.Error == null;
-        ImportLabel.Text = _meta == null ? "Import" : $"Import {_meta.Commits} commit(s)";
+        ImportLabel.Text = _form.RetryAvailable ? "Retry import" : _meta == null ? "Import" : $"Import {_meta.Commits} commit(s)";
         ExplainTarget(_meta == null ? "Choose a readable export file to import."
             : Into == null && !_matched ? $"No checkout here points at {_meta.Root?.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."
@@ -197,11 +200,14 @@ public sealed partial class ImportPage : SgPage
 
     async void Import_Click(object sender, RoutedEventArgs e)
     {
+        if (_form.Running) return;
         var meta = _meta;
         var co = Into;
         if (meta == null || co == null) return;
         var name = NameBox.Text.Trim();
         var root = Session.Require();
+
+        var request = new ImportRequest(_file, name, co.Name);
 
         // The worktree is the long part: it is a checkout of the whole tree, the same as sg branch.
         if (!await Dialogs.Confirm(this, "Import " + name,
@@ -210,9 +216,11 @@ public sealed partial class ImportPage : SgPage
                 "Import"))
             return;
 
-        var file = _file;
         _targetValidation.Invalidate();
-        var res = await Busy.During(sender, () => Runner.Run(Pane, "import " + name, () => Export.Import(root, file, name, co.Name), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
+        ResultBar.IsOpen = false;
+        var res = await _form.Run(request, submitted => Runner.Run(Pane, "import " + submitted.Name,
+            () => Export.Import(root, submitted.File, submitted.Name, submitted.Checkout),
+            worktree: new(submitted.Checkout, submitted.Name, root.WorktreePathFor(submitted.Name))), sender);
         _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 

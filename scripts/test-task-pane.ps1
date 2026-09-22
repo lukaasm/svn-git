@@ -44,9 +44,11 @@ function Invoke-Element($element) {
 function Select-Element($element) {
     $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
 }
-function Start-Worktree([string]$name, [switch]$CheckValidation) {
-    Invoke-Element (Wait-For 'enabled new worktree action' { $b = By-Name 'New worktree'; if ($b -and $b.Current.IsEnabled -and !$b.Current.IsOffscreen) { $b } })
+function Start-Worktree([string]$name, [switch]$CheckValidation, [switch]$Retry) {
+    if ($Retry) { Invoke-Element (Wait-For 'review and retry action' { By-Name 'Review and retry' }) }
+    else { Invoke-Element (Wait-For 'enabled new worktree action' { $b = By-Name 'New worktree'; if ($b -and $b.Current.IsEnabled -and !$b.Current.IsOffscreen) { $b } }) }
     $branchInput = Wait-For 'branch name' { By-Name 'Branch name' }
+    if ($Retry -and $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne $name) { throw 'Worktree retry lost the submitted name.' }
     if ($CheckValidation) {
         foreach ($case in @(
             @{ Name = ''; Help = '*Give the branch a name*' },
@@ -61,6 +63,17 @@ function Start-Worktree([string]$name, [switch]$CheckValidation) {
             }
         }
         $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('invalid name')
+    }
+    if ($CheckValidation -or $Retry) {
+        $minimal = By-Name ('Minimal: leave out the optional folders (' + ($config.checkouts[0].optional -join ', ') + ')')
+        $without = By-Name 'Also leave out (folders, one per line)'
+        if ($CheckValidation) {
+            $minimal.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+            $without.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('not-in-fixture')
+        } else {
+            if ($minimal.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On -or
+                $without.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'not-in-fixture') { throw 'Worktree retry lost submitted options.' }
+        }
     }
     $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
     $create = Wait-For 'enabled create button' { $b = By-Id 'PrimaryButton'; if ($b -and $b.Current.IsEnabled) { $b } }
@@ -196,7 +209,7 @@ try {
     $null = Wait-For 'back on overview' { By-Id 'SyncButton' }
     # WinUI's navigation entrance animation temporarily rejects InvokePattern.
     Start-Sleep -Milliseconds 400
-    Start-Worktree $name
+    Start-Worktree $name -Retry
     $null = Wait-For 'successful result retained' { Task-Buttons | Where-Object { $_.Current.Name -like '*Completed*' -and $_.Current.Name -like "*$name*" } }
     if (!(Test-Path -LiteralPath (Join-Path $rootPath $name))) { throw 'Successful task did not create its worktree.' }
     $null = Wait-For 'placeholder replaced' { !(By-Name ($name + ' · Preparing worktree')) }

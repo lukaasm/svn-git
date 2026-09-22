@@ -6,6 +6,7 @@ param(
     [ValidateRange(1, 7200)][int]$TimeoutSeconds = 900
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/ui-test-report.ps1"
 if (!$IsWindows) { throw 'UI Automation requires Windows and PowerShell 7.' }
 if ($Suite -eq 'Tasks' -and !$FixtureRoot) { throw 'Tasks requires -FixtureRoot pointing to a disposable checkout fixture.' }
 if ($FixtureRoot) { $FixtureRoot = (Resolve-Path -LiteralPath $FixtureRoot).Path }
@@ -47,7 +48,7 @@ catch {
         try { $reported = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json } catch { }
     }
     if ($reported.status -ne 'failed') {
-        @{ status = 'failed'; error = $failure.Exception.Message; suite = $Suite } | ConvertTo-Json | Set-Content -LiteralPath $resultPath
+        Write-UiResult $runDirectory @{ status = 'failed'; error = $failure.Exception.Message; suite = $Suite; scenarios = @(Read-UiScenarios $runDirectory -Interrupted) }
     }
     throw $failure
 }

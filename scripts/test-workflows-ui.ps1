@@ -1,5 +1,6 @@
 # Real local SVN/Git fixtures; GUI actions use Windows UI Automation patterns only.
 param(
+    [string]$ReportDirectory,
     [string]$FixtureParent = $env:TEMP,
     [string]$AppExe = "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe",
     [string]$CliDll = "$PSScriptRoot/../src/sg/bin/Debug/net10.0/sg.dll"
@@ -8,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 . "$PSScriptRoot/ui-automation.ps1"
+. "$PSScriptRoot/ui-test-report.ps1"
 $appPath = (Resolve-Path -LiteralPath $AppExe).Path
 $cliPath = (Resolve-Path -LiteralPath $CliDll).Path
 if ($appPath -notmatch '\\Debug\\') { throw 'Use an isolated Debug app.' }
@@ -147,7 +149,9 @@ function Commit-File([string]$branch, [string]$file, [string]$content) {
     $null = Run 'git' @('-C', $path, 'add', '--', $file)
     $null = Run 'git' @('-C', $path, '-c', 'user.name=UI Test', '-c', 'user.email=ui-test@example.invalid', 'commit', '-m', ('Test ' + $file))
 }
+Initialize-UiReport $ReportDirectory 'Workflows'
 try {
+    Start-UiScenario 'Fixture setup'
     # Keep scheduled backups from racing the operation this test deliberately holds at a lock.
     $testSettings = if ($previous) { $previous | ConvertTo-Json -Depth 20 | ConvertFrom-Json } else { [pscustomobject]@{} }
     $testSettings | Add-Member -NotePropertyName BackupMinutes -NotePropertyValue 0 -Force
@@ -175,6 +179,7 @@ try {
     $null = Run 'git' @('-C', $sourceMoved, 'branch', 'unattached', 'HEAD')
 
     # Import through the actual preview and confirmation UI, then verify its materialized files.
+    Start-UiScenario 'Export import and retry'
     Start-App 'import' $export
     $null = Wait-For 'checkout precedes import branch name' { (Find-Ui 'IntoBox').Current.BoundingRectangle.Left -lt (Find-Ui 'NameBox').Current.BoundingRectangle.Left }
     Set-Ui 'NameBox' 'source'
@@ -219,6 +224,7 @@ try {
     Stop-App
 
     # Sync real changes from a second SVN working copy, then update a branch through the GUI.
+    Start-UiScenario 'Update from SVN'
     $other = Join-Path $fixture 'other'
     $null = Run 'svn' @('checkout', '--non-interactive', ($url + '/trunk'), $other)
     [IO.File]::WriteAllText((Join-Path $other 'base.txt'), "fresh SVN content`n")
@@ -233,6 +239,7 @@ try {
     Stop-App
 
     # Make the first replayed commit empty using real Git, followed by a commit that must survive Skip.
+    Start-UiScenario 'Skip an empty commit'
     $null = Sg @('branch', 'empty-step', '--from', 'checkout')
     Commit-File 'empty-step' 'base.txt' "same change on both sides`n"
     Commit-File 'empty-step' 'later.txt' "remaining commit survives`n"
@@ -254,6 +261,7 @@ try {
     Stop-App
 
     # Back up via GUI to a local bare repository, checking content rather than just a success label.
+    Start-UiScenario 'Create backup'
     Start-App 'backup' $root
     Invoke-Ui 'BackupNowButton'
     Wait-Receipt
@@ -262,6 +270,7 @@ try {
     if ($remoteFeature.Trim() -ne 'imported feature') { throw 'Backup lost branch content.' }
     Write-Host 'PASS: backup task publishes branch content to the local backup repository.'
 
+    Start-UiScenario 'Restore backup and retry'
     $branches = Wait-For 'backed-up branches' { Find-Ui 'Branches' }
     $item = Wait-For 'imported backup entry' {
         $text = $branches.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
@@ -321,6 +330,7 @@ try {
     $null = Run 'git' @('-C', $restored, 'merge-base', '--is-ancestor', 'svn/checkout', 'HEAD')
     Write-Host 'PASS: backup restore merges the saved branch onto the fresh SVN snapshot.'
     # The retained backup receipt must return to its page after navigating elsewhere.
+    Start-UiScenario 'Navigate from a task receipt'
     (Find-Ui 'SettingsItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     Invoke-Ui 'TaskQueueToggle'
     $backupTask = Wait-For 'backup receipt' {
@@ -334,6 +344,7 @@ try {
     Write-Host 'PASS: retained task action reopens Backup after navigation.'
     Stop-App
     # A real add/add conflict keeps the import resumable, even after editing the destination form.
+    Start-UiScenario 'Resume a paused import'
     [IO.File]::WriteAllText((Join-Path $other 'feature.txt'), "different upstream feature`n")
     $null = Run 'svn' @('add', (Join-Path $other 'feature.txt'))
     $null = Run 'svn' @('commit', '--non-interactive', $other, '-m', 'Conflicting upstream feature')
@@ -373,14 +384,12 @@ try {
     if ((Run 'git' @('-C', $paused, 'diff', '--name-only', '--diff-filter=U')).Trim()) { throw 'Import still has unmerged files after Skip.' }
     if (Test-Path -LiteralPath (Join-Path $root 'different-form-name')) { throw 'Resume used the edited destination.' }
     Write-Host 'PASS: paused import keeps shared replay guidance and resumes its original destination.'
+    Complete-UiScenario
     Write-Output "All workflow UI Automation checks passed. Fixture retained at $fixture"
 }
 catch {
+    Fail-UiScenario $_ $script:window
     Write-Host $_.ScriptStackTrace
-    if ($script:window) {
-        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
-            ForEach-Object { if ($_.Current.AutomationId -or $_.Current.Name) { Write-Host ($_.Current.AutomationId + ' | ' + $_.Current.Name + ' | enabled=' + $_.Current.IsEnabled + ' | offscreen=' + $_.Current.IsOffscreen) } }
-    }
     Write-Host "Fixture retained for diagnosis: $fixture"
     throw
 }

@@ -3,6 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$FixtureRoot,
     [string]$ScreenshotDirectory,
+    [string]$ReportDirectory,
     [switch]$CheckRecovery,
     [switch]$SkipClipboard,
     [string]$AppExe = "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe"
@@ -11,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 . "$PSScriptRoot/ui-automation.ps1"
+. "$PSScriptRoot/ui-test-report.ps1"
 $appPath = (Resolve-Path -LiteralPath $AppExe).Path
 $rootPath = (Resolve-Path -LiteralPath $FixtureRoot).Path
 if ($appPath -notmatch '\\Debug\\') { throw 'Use an isolated Debug build, not the installed app.' }
@@ -94,32 +96,12 @@ function Task-Buttons {
 # Optional target-window captures for visual review, located through UI Automation.
 function Save-Window([string]$name) {
     if (!$ScreenshotDirectory) { return }
-    if (!("TaskPaneWindowCapture" -as [type])) {
-        Add-Type -AssemblyName System.Drawing
-        Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public static class TaskPaneWindowCapture {
-    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
-}
-"@
-    }
-    $null = New-Item -ItemType Directory -Path $ScreenshotDirectory -Force
-    $rect = Wait-For 'window ready for capture' {
-        $bounds = $script:window.Current.BoundingRectangle
-        if (![double]::IsInfinity($bounds.Width) -and $bounds.Width -gt 0 -and $bounds.Height -gt 0) { $bounds }
-    }
-    $bitmap = [Drawing.Bitmap]::new([int]$rect.Width, [int]$rect.Height)
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    $hdc = $graphics.GetHdc()
-    try {
-        if (![TaskPaneWindowCapture]::PrintWindow([IntPtr]$script:window.Current.NativeWindowHandle, $hdc, 2)) { throw 'Window capture failed.' }
-    } finally { $graphics.ReleaseHdc($hdc); $graphics.Dispose() }
-    try { $bitmap.Save((Join-Path $ScreenshotDirectory ($name + '.png')), [Drawing.Imaging.ImageFormat]::Png) }
-    finally { $bitmap.Dispose() }
+    Save-UiWindow $script:window (Join-Path $ScreenshotDirectory ($name + '.png'))
 }
 
+Initialize-UiReport $ReportDirectory 'Tasks'
 try {
+    Start-UiScenario 'Startup and fixture setup'
     # Keep scheduled backups from racing the operation this test deliberately holds at a lock.
     $testSettings = if ($previousSettings) { $previousSettings | ConvertTo-Json -Depth 20 | ConvertFrom-Json } else { [pscustomobject]@{} }
     $testSettings | Add-Member -NotePropertyName BackupMinutes -NotePropertyValue 0 -Force
@@ -141,6 +123,7 @@ try {
     $script:window = Wait-For 'debug window' { Get-TestAppWindow $process }
     $sync = Wait-For 'checkout overview' { By-Id 'SyncButton' }
     if ($CheckRecovery) {
+        Start-UiScenario 'Startup recovery'
         $button = Wait-For 'startup recovery action' { $b = By-Id 'RecoveryButton'; if ($b -and !$b.Current.IsOffscreen) { $b } }
         if ($button.Current.Name -ne 'Review saved edits') { throw 'Recovery action does not match the saved phase.' }
         Save-Window 'recovery'
@@ -155,6 +138,7 @@ try {
         $null = Wait-For 'recovery notice clears after reconciliation' { $b = By-Id 'RecoveryButton'; !$b -or $b.Current.IsOffscreen }
     }
     Start-Sleep -Milliseconds 400
+    Start-UiScenario 'Worktree placeholder and collision gating'
     Save-Window 'overview'
     $heldLock = [IO.File]::Open((Join-Path $rootPath '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     $name = 'task-ui-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -177,6 +161,7 @@ try {
     Select-TaskFilter 1
     $null = Wait-For 'active filter retains running work' { (By-Id 'TaskFilterSummary').Current.Name -eq '1 of 1 tasks' }
     if ((By-Id 'ClearFinishedTasks').Current.IsEnabled) { throw 'Clear finished is enabled with no finished results.' }
+    Start-UiScenario 'Navigation and task cancellation'
     Select-Element (Wait-For 'settings navigation item' { By-Id 'SettingsItem' })
     $null = Wait-For 'progress survives navigation' { (By-Id 'TaskQueueSummary').Current.Name -like '*1 active*' }
     $null = Wait-For 'repository settings disabled' { $b = By-Id 'MinLength'; $b -and !$b.Current.IsEnabled }
@@ -206,6 +191,7 @@ try {
     $heldLock.Dispose(); $heldLock = $null
 
     # A normal completion must replace its ghost, keep its receipt, and leave navigation alone.
+    Start-UiScenario 'Retry and successful worktree creation'
     Invoke-Element (By-Id 'NavigationViewBackButton')
     $null = Wait-For 'back on overview' { By-Id 'SyncButton' }
     # WinUI's navigation entrance animation temporarily rejects InvokePattern.
@@ -231,6 +217,7 @@ try {
     $null = Wait-For 'finished filter retains both receipts' { (By-Id 'TaskFilterSummary').Current.Name -eq '2 of 2 tasks' }
     Select-TaskFilter 0
     $null = Wait-For 'expanded result survives filtering' { $b = By-Id $resultId; $b -and !$b.Current.IsOffscreen }
+    Start-UiScenario 'Existing destination recovery'
     Invoke-Element (Wait-For 'new worktree action' { By-Id 'NewWorktreeButton' })
     $branchInput = Wait-For 'branch name for duplicate check' { By-Name 'Branch name' }
     $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
@@ -259,19 +246,16 @@ try {
     Invoke-Element (By-Id 'NavigationViewBackButton')
     $null = Wait-For 'back on overview after destination recovery' { By-Id 'SyncButton' }
     Save-Window 'completed'
+    Start-UiScenario 'Clear task history'
     Invoke-Element (By-Id 'ClearFinishedTasks')
     $null = Wait-For 'clear finished updates list and summary' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 0 tasks' }
     if ((By-Id 'ClearFinishedTasks').Current.IsEnabled) { throw 'Clear finished remained enabled for an empty queue.' }
+    Complete-UiScenario
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }
 catch {
+    Fail-UiScenario $_ $script:window
     Write-Host $_.ScriptStackTrace
-    if ($script:window) {
-        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
-            ForEach-Object { if ($_.Current.AutomationId -or $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) {
-                Write-Host ($_.Current.AutomationId + " | " + $_.Current.Name + " | enabled=" + $_.Current.IsEnabled + " | offscreen=" + $_.Current.IsOffscreen)
-            } }
-    }
     throw
 }
 finally {

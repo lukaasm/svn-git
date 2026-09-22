@@ -123,6 +123,11 @@
                               ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
                 </AppBarButton>
+                <CommandBar.SecondaryCommands>
+                    <AppBarButton x:Name="UnavailableActionsButton" Label="Unavailable actions" Click="UnavailableActions_Click">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE946;" /></AppBarButton.Icon>
+                    </AppBarButton>
+                </CommandBar.SecondaryCommands>
             </CommandBar>
 
             <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />

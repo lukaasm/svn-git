@@ -86,6 +86,11 @@ public static class TaskPaneWindowCapture {
 }
 
 try {
+    # Keep scheduled backups from racing the operation this test deliberately holds at a lock.
+    $testSettings = if ($previousSettings) { $previousSettings | ConvertTo-Json -Depth 20 | ConvertFrom-Json } else { [pscustomobject]@{} }
+    $testSettings | Add-Member -NotePropertyName BackupMinutes -NotePropertyValue 0 -Force
+    $null = New-Item -ItemType Directory -Path (Split-Path $settingsPath) -Force
+    $testSettings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
     if ($CheckRecovery) {
         $recoveryId = [Guid]::NewGuid().ToString('N')
         $recoveryFolder = Join-Path $rootPath '.sg/operations'
@@ -125,6 +130,12 @@ try {
     Start-Worktree $name
     $null = Wait-For 'immediate worktree placeholder' { By-Name ($name + ' · Preparing worktree') }
     $null = Wait-For 'conflicting sync disabled' { !(By-Id 'SyncButton').Current.IsEnabled }
+    $null = Wait-For 'disabled sync explains the blocking task' { (By-Id 'SyncButton').Current.HelpText -like "*$name*cancel*Tasks*" }
+    if ((By-Id 'NewWorktreeButton').Current.HelpText -notlike "*$name*Tasks*") { throw 'New worktree has no blocking explanation.' }
+    Invoke-Element (By-Id 'MoreButton')
+    Invoke-Element (Wait-For 'availability explanation' { By-Id 'UnavailableActionsButton' })
+    $null = Wait-For 'action explanation dialog' { By-Name 'Unavailable actions' }
+    Invoke-Element (Wait-For 'close explanation' { By-Id 'CloseButton' })
     $footer = By-Id 'TaskQueueToggle'
     $contentLeft = (By-Id 'Crumbs').Current.BoundingRectangle.Left
     if ([Math]::Abs($footer.Current.BoundingRectangle.Left - $contentLeft) -gt 2) { throw 'Task footer is not aligned with the page content.' }
@@ -152,6 +163,7 @@ try {
     if (!(Test-Path -LiteralPath (Join-Path $rootPath $name))) { throw 'Successful task did not create its worktree.' }
     $null = Wait-For 'placeholder replaced' { !(By-Name ($name + ' · Preparing worktree')) }
     $null = Wait-For 'sync enabled after completion' { (By-Id 'SyncButton').Current.IsEnabled }
+    if ((By-Id 'SyncButton').Current.HelpText -like '*Unavailable while*') { throw 'Completed task left a stale disabled reason.' }
     Save-Window 'completed'
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }
@@ -170,12 +182,15 @@ finally {
     if ($recoveryFile -and (Test-Path -LiteralPath $recoveryFile)) { Remove-Item -LiteralPath $recoveryFile }
     if ($process -and !$process.HasExited) { Stop-Process -Id $process.Id }
     # Restore only navigation preferences changed by this test; preserve unrelated settings.
-    if ($previousSettings -and (Test-Path -LiteralPath $settingsPath)) {
+    if (Test-Path -LiteralPath $settingsPath) {
         $current = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
         if ($current.LastRoot -eq $rootPath) {
             $current.LastRoot = $previousSettings.LastRoot
-            $current.RecentRoots = $previousSettings.RecentRoots
-            $current | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
+            $current.RecentRoots = if ($previousSettings) { $previousSettings.RecentRoots } else { @() }
         }
+        if ($current.BackupMinutes -eq 0) {
+            $current.BackupMinutes = if ($previousSettings -and $null -ne $previousSettings.BackupMinutes) { $previousSettings.BackupMinutes } else { 15 }
+        }
+        $current | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
     }
 }

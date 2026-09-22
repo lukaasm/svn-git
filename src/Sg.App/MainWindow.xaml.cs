@@ -21,6 +21,7 @@ public sealed partial class MainWindow : Window
     bool _restoringSelection;
     bool _syncingPane;
     int _generation;
+    string? _navigationRoot;
     bool _checking;
     /// <summary>
     /// A check was asked for while one was already running. The one running belongs to a state that has
@@ -634,6 +635,7 @@ public sealed partial class MainWindow : Window
         if (Session.Root == null)
         {
             Nav.MenuItems.Clear();
+            _navigationRoot = null;
             _current = null;
             _status = null;
             ShowOverview((CheckoutRow?)null);
@@ -678,6 +680,8 @@ public sealed partial class MainWindow : Window
             if (runStartAction && _startAction != null) await RunStartAction();
             return;
         }
+        var rootChanged = _navigationRoot != root.RootPath;
+        _navigationRoot = root.RootPath;
         _restoringSelection = true;
         Nav.MenuItems.Clear();
         CheckoutRow? select = null;
@@ -720,10 +724,10 @@ public sealed partial class MainWindow : Window
         }
         _restoringSelection = false;
         _current = select;
-        // A fresh set of checkouts: a page about one of them belonged to the old set. The monitor and
-        // the settings are about neither, and the first read of a root lands after a launch that asked
-        // for one of them has already opened it: putting the overview back over it lost the request.
-        if (Host.Current is not MonitorPage and not SettingsPage) ShowOverview(select);
+        // Rebuilding the sidebar within the same root must not replace an action page, including
+        // when its own task completion triggered this refresh. Changing roots does invalidate pages
+        // about the old root; monitor and settings remain independent.
+        if (Host.Current is CheckoutPage || rootChanged && Host.Current is not MonitorPage and not SettingsPage) ShowOverview(select);
 
         _ = CheckRemotesAsync(root, generation);
         if (runStartAction && _startAction != null) await RunStartAction();

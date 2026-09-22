@@ -136,14 +136,31 @@ public sealed class TaskPane : UserControl
 /// <summary>The parent owns busy gating; a child's validation and selection state stay untouched.</summary>
 public sealed class TaskGate : ContentControl
 {
+    ContentControl? _gate;
+    FrameworkElement? _child;
+    string _help = "";
+    bool _blocked;
     public TaskGate()
     {
+        IsTabStop = false;
+        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         VerticalContentAlignment = VerticalAlignment.Stretch;
         Loaded += (_, _) =>
         {
-            if (Content is FrameworkElement child)
+            if (_gate == null && Content is FrameworkElement child)
+            {
+                _child = child;
+                _help = AutomationProperties.GetHelpText(child);
                 SetBinding(VisibilityProperty, new Binding { Source = child, Path = new PropertyPath("Visibility"), Mode = BindingMode.OneWay });
+                Content = null;
+                _gate = new ContentControl
+                {
+                    Content = child, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    VerticalContentAlignment = VerticalAlignment.Stretch, IsTabStop = false
+                };
+                Content = _gate;
+            }
             Session.Tasks.Changed += Changed;
             Changed();
         };
@@ -153,8 +170,17 @@ public sealed class TaskGate : ContentControl
     {
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(Changed); return; }
         var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
-        IsEnabled = busy == null;
-        ToolTipService.SetToolTip(this, busy == null ? null : $"Waiting for {busy.Title}. See Tasks below.");
+        if (_gate != null) _gate.IsEnabled = busy == null;
+        var reason = busy == null ? null : $"Unavailable while {busy.Title} is running. Wait for it to finish, or cancel it in Tasks. This action becomes available after the task stops.";
+        // Keep the wrapper enabled so the tooltip remains reachable over its disabled child.
+        ToolTipService.SetToolTip(this, reason);
+        AutomationProperties.SetHelpText(this, reason ?? "");
+        if (_child != null)
+        {
+            if (reason != null && !_blocked) _help = AutomationProperties.GetHelpText(_child);
+            if (reason != null || _blocked) AutomationProperties.SetHelpText(_child, reason ?? _help);
+        }
+        _blocked = reason != null;
     }
 }
 

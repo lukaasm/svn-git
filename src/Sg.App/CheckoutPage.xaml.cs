@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
 using Sg.Core;
 
 namespace Sg.App;
@@ -50,7 +51,27 @@ public sealed partial class CheckoutPage : SgPage
     void TaskStateChanged()
     {
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(TaskStateChanged); return; }
-        NewWorktreeButton.IsEnabled = _current != null && Session.Tasks.Blocking(Session.Root?.RootPath ?? "") == null;
+        var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
+        NewWorktreeButton.IsEnabled = _current != null && busy == null;
+        var reason = busy != null
+            ? $"Unavailable while {busy.Title} is running. Wait for it to finish, or cancel it in Tasks."
+            : _current == null ? "Select a checkout before creating a worktree." : "Create a worktree from this checkout's latest snapshot.";
+        Tip(NewWorktreeButton, reason);
+        AutomationProperties.SetHelpText(NewWorktreeButton, reason);
+    }
+
+    async void UnavailableActions_Click(object sender, RoutedEventArgs e)
+    {
+        var reasons = new List<string>();
+        var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
+        if (busy != null)
+            reasons.Add($"Sync and New worktree: {busy.Title} is using this repository. Wait for it to finish, or cancel it in Tasks. Actions unlock after it stops.");
+        if (!SvnCommitButton.IsEnabled)
+            reasons.Add("Commit: " + AutomationProperties.GetHelpText(SvnCommitButton));
+        if (!ShelfButton.IsEnabled)
+            reasons.Add("Shelved changes: no saved changes are waiting. Shelve checkout edits first to make them available here.");
+        await Dialogs.Info(this, "Unavailable actions", reasons.Count > 0
+            ? string.Join("\n\n", reasons) : "The checkout actions are available. Individual pages explain their selection and validation requirements.");
     }
 
     /// <summary>The strip the overview's operations report into. The main window uses it for its own reads.</summary>
@@ -249,7 +270,11 @@ public sealed partial class CheckoutPage : SgPage
     /// A toolbar button says what it is; its tooltip says what is true right now. The three that used to
     /// be rows with a description under them keep that sentence, one hover away instead of one chevron.
     /// </summary>
-    static void Tip(DependencyObject o, string text) => ToolTipService.SetToolTip(o, text);
+    static void Tip(DependencyObject o, string text)
+    {
+        ToolTipService.SetToolTip(o, text);
+        AutomationProperties.SetHelpText(o, text);
+    }
 
     /// <summary>
     /// One loud button on the toolbar, never two. A worktree card offers exactly one next action and the
@@ -342,7 +367,7 @@ public sealed partial class CheckoutPage : SgPage
             // A disabled button owes the reader the reason, so this is what the tooltip is for.
             Tip(SvnCommitButton, count == null
                 ? "Reading what is edited directly in the checkout..."
-                : "Nothing is edited directly in the checkout. Work that belongs to a branch lives in its worktree.");
+                : "No checkout edits to commit. Edit files in the checkout to enable this action. For branch changes, open Commit on that worktree.");
             return;
         }
         CoLocalBadge.Count = count.Value;

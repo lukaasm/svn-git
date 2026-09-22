@@ -134,6 +134,11 @@ try {
     Invoke-Ui 'PrimaryButton'
     Wait-Receipt
     Assert-Blocked 'ImportButton' 'Done.*'
+    $null = Wait-For 'shared import result on the page' {
+        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -like 'imported: *commits imported.*' -and $_.Current.Name.Contains((Join-Path $root 'imported')) } |
+            Select-Object -First 1
+    }
     $imported = Join-Path $root 'imported'
     if ([IO.File]::ReadAllText((Join-Path $imported 'feature.txt')) -ne "imported feature`n") { throw 'Import lost exported content.' }
     if ((Run 'git' @('-C', $imported, 'status', '--porcelain')).Trim()) { throw 'Imported worktree is dirty.' }
@@ -242,6 +247,34 @@ try {
     Invoke-Ui ('TaskResult_' + $backupTask.Current.AutomationId.Substring(5))
     $null = Wait-For 'backup page reopened from receipt' { Find-Ui 'BackupNowButton' }
     Write-Host 'PASS: retained task action reopens Backup after navigation.'
+    Stop-App
+    # A real add/add conflict keeps the import resumable, even after editing the destination form.
+    [IO.File]::WriteAllText((Join-Path $other 'feature.txt'), "different upstream feature`n")
+    $null = Run 'svn' @('add', (Join-Path $other 'feature.txt'))
+    $null = Run 'svn' @('commit', '--non-interactive', $other, '-m', 'Conflicting upstream feature')
+    $null = Sg @('sync', 'checkout')
+    Start-App 'import' $export
+    Set-Ui 'NameBox' 'paused-import'
+    Invoke-Ui 'ImportButton'
+    Invoke-Ui 'PrimaryButton'
+    Wait-Receipt
+    $null = Wait-For 'paused import guidance' {
+        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -like 'paused-import: *remaining commits are queued*' } | Select-Object -First 1
+    }
+    Set-Ui 'NameBox' 'different-form-name'
+    Invoke-Ui 'ResolveButton'
+    $null = Wait-For 'resolver retains original import destination' {
+        $subtitle = Find-Ui 'PART_SubtitleText'
+        $subtitle -and $subtitle.Current.Name.Contains((Join-Path $root 'paused-import'))
+    }
+    Invoke-Ui 'SkipButton'
+    Invoke-Ui 'PrimaryButton'
+    Wait-Receipt 2
+    $paused = Join-Path $root 'paused-import'
+    if ((Run 'git' @('-C', $paused, 'diff', '--name-only', '--diff-filter=U')).Trim()) { throw 'Import still has unmerged files after Skip.' }
+    if (Test-Path -LiteralPath (Join-Path $root 'different-form-name')) { throw 'Resume used the edited destination.' }
+    Write-Host 'PASS: paused import keeps shared replay guidance and resumes its original destination.'
     Write-Output "All workflow UI Automation checks passed. Fixture retained at $fixture"
 }
 catch {

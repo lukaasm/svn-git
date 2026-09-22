@@ -5,8 +5,7 @@ public static class TaskResults
 {
     public static (TaskState State, string Detail) Describe(object? result) => result switch
     {
-        ImportResult r => (r.Ok && !r.Waiting ? TaskState.Succeeded : TaskState.NeedsAttention,
-            $"{r.Branch}: {r.Applied}/{r.Commits} commits imported. {r.Path}" + (r.Waiting ? "\nReplay paused. Open Resolve conflicts to continue." : "") + Note(r.Why)),
+        ImportResult r => Import(r),
         RestoreResult r => Restore(r),
         RebaseResult r => (r.Ok && !r.Conflict ? TaskState.Succeeded : TaskState.NeedsAttention, r.Branch + (r.Ok ? ": replay completed." : ": replay paused. Open Resolve conflicts.") + Note(r.Output)),
         ResolveResult r => r.Backup != null ? Describe(r.Backup) : r.Operation != null ? Describe(r.Operation)
@@ -58,14 +57,27 @@ public static class TaskResults
         _ => null
     };
 
+    static (TaskState State, string Detail) Import(ImportResult r)
+    {
+        var lines = new List<string> { $"{r.Branch}: {r.Applied}/{r.Commits} commits imported. {r.Path}" };
+        lines.AddRange(ReplayGuidance(r.Waiting, r.Stopped, r.Why));
+        if (r.Drift.Count > 0) lines.Add($"Commits were merged across {r.Drift.Count} changed revision(s).");
+        return (r.Ok && !r.Waiting ? TaskState.Succeeded : TaskState.NeedsAttention, string.Join("\n", lines));
+    }
+
+    static IEnumerable<string> ReplayGuidance(bool waiting, string? stopped, string? why)
+    {
+        if (waiting) yield return $"Replay paused on \"{stopped}\". The remaining commits are queued; resume to resolve, skip, or cancel.";
+        else if (stopped != null) yield return $"\"{stopped}\" could not be applied.";
+        if (!string.IsNullOrWhiteSpace(why)) yield return why;
+    }
+
     static (TaskState State, string Detail) Restore(RestoreResult r)
     {
         var savedEdits = r.WipShelf != null && !r.WipWritten;
         var complete = r.Ok && !r.Waiting && r.WipWhy == null && r.WipConflicted.Count == 0 && !savedEdits;
         var lines = new List<string> { $"{r.Branch}: {r.Applied}/{r.Commits} commits recovered. {r.Path}" };
-        if (r.Waiting) lines.Add($"Replay paused on \"{r.Stopped}\". The remaining commits are queued; resume to resolve, skip, or cancel.");
-        else if (!r.Ok) lines.Add($"\"{r.Stopped}\" could not be applied.");
-        if (r.Why != null) lines.Add(r.Why);
+        lines.AddRange(ReplayGuidance(r.Waiting, r.Stopped, r.Why));
         if (r.Relinked) lines.Add("The store still had the commits, so nothing was replayed.");
         if (r.Drift.Count > 0) lines.Add($"Commits were merged across {r.Drift.Count} changed revision(s).");
         if (r.Replaced) lines.Add("Original work is preserved as " + r.RecoveryBranch

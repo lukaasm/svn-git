@@ -46,8 +46,8 @@ public sealed partial class ImportPage : SgPage
     /// <summary>A checkout here points at the URL the export names. When none does, saying so is the answer.</summary>
     bool _matched;
 
-    /// <summary>The worktree an import is sitting stopped in, once one is. Null while nothing has stopped.</summary>
-    string? _waiting;
+    /// <summary>The paused result owns its destination even if the form selection changes afterward.</summary>
+    ImportResult? _waiting;
 
     public ImportPage(string file)
     {
@@ -216,13 +216,9 @@ public sealed partial class ImportPage : SgPage
         _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 
-        ResultBar.Severity = res.Ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-        ResultBar.Message = res.Ok
-            ? $"{res.Branch} is here: {res.Applied} commit(s) in {res.Path}."
-              + (res.Drift.Count == 0 ? "" : " They were merged across " + res.Drift.Count + " revision(s) that had moved on.")
-            : $"{res.Applied} of {res.Commits} commit(s) went in, and it stopped on \"{res.Stopped}\". "
-              + $"The remaining commits are queued in {res.Path}. Resume to review the current step, resolve files, or skip it."
-              + (res.Why == null ? "" : "\n" + res.Why.Split('\n')[0]);
+        var outcome = TaskResults.Describe(res);
+        ResultBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+        ResultBar.Message = outcome.Detail;
         ResultBar.IsOpen = true;
 
         ConflictsHeader.Visibility = ConflictsCard.Visibility = res.Conflicted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -230,13 +226,14 @@ public sealed partial class ImportPage : SgPage
 
         // A patch that would not merge does not cost the rest of them any more: the import stays where
         // it stopped, and one button away is the page that finishes it.
-        _waiting = res.Waiting ? res.Path : null;
+        _waiting = res.Waiting ? res : null;
         ResolveButton.Visibility = res.Waiting ? Visibility.Visible : Visibility.Collapsed;
 
         // The branch exists now, so this page has nothing left to offer about this file.
         ImportButton.IsEnabled = false;
-        ExplainTarget(res.Ok ? "Done. Close this and the worktree is on the checkout's card."
-            : "Resolve it, and the commits behind it land too.");
+        ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. Close this and the worktree is on the checkout's card."
+            : res.Waiting ? "Resume the operation to finish, skip a commit, or cancel."
+            : "Review the result above for the reason the import stopped.");
     }
 
     /// <summary>The page that finishes a stopped import. It is the same one a stopped rebase opens.</summary>
@@ -244,7 +241,7 @@ public sealed partial class ImportPage : SgPage
     {
         var wt = _waiting;
         if (wt == null) return;
-        Go(() => new ConflictPage(wt) { Checkout = Into?.Name, Branch = NameBox.Text.Trim() }, "resolve:" + wt);
+        Go(() => new ConflictPage(wt.Path) { Checkout = wt.Checkout, Branch = wt.Branch }, "resolve:" + wt.Path);
     }
 
     void Close_Click(object sender, RoutedEventArgs e) => Close();

@@ -86,6 +86,24 @@ public class TaskQueueTests
         Assert.Contains("remaining commits are queued", TaskResults.Describe(result).Detail);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Import_and_restore_agree_on_replay_guidance_and_keep_the_original_destination(bool waiting)
+    {
+        var imported = new ImportResult { Branch = "original", Checkout = "trunk", Path = "original-path",
+            Applied = 1, Commits = 3, Stopped = "patch", Why = "Cannot apply patch.", Waiting = waiting };
+        var restored = new RestoreResult { Stopped = imported.Stopped, Why = imported.Why, Waiting = waiting };
+        var importOutcome = TaskResults.Describe(imported);
+        var restoreOutcome = TaskResults.Describe(restored);
+        Assert.Equal(TaskState.NeedsAttention, importOutcome.State);
+        Assert.Contains("1/3 commits imported", importOutcome.Detail);
+        Assert.Contains(imported.Path, importOutcome.Detail);
+        Assert.Equal(restoreOutcome.Detail.Split('\n').Skip(1), importOutcome.Detail.Split('\n').Skip(1));
+        Assert.Equal(waiting, importOutcome.Detail.Contains("remaining commits are queued"));
+        Assert.Equal(new TaskFollowUp(waiting ? TaskTargetKind.Replay : TaskTargetKind.Folder, imported.Path), TaskResults.FollowUp(imported));
+    }
+
     [Fact]
     public void Reservation_is_atomic_and_released_only_after_completion()
     {

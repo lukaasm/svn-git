@@ -41,7 +41,7 @@ public sealed partial class ImportPage : SgPage
     string _file;
     ExportMeta? _meta;
     bool _binding;
-    int _nameCheck;
+    readonly BranchTargetValidation _targetValidation = new();
 
     /// <summary>A checkout here points at the URL the export names. When none does, saying so is the answer.</summary>
     bool _matched;
@@ -62,6 +62,9 @@ public sealed partial class ImportPage : SgPage
 
     async Task LoadAsync()
     {
+        _targetValidation.Invalidate();
+        _meta = null;
+        ImportButton.IsEnabled = false;
         var root = Session.Require();
         Subtitle = _file;
         FilePath.Text = _file;
@@ -146,18 +149,12 @@ public sealed partial class ImportPage : SgPage
     async void SyncButton()
     {
         var name = NameBox.Text.Trim();
-        var generation = ++_nameCheck;
         var root = Session.Root;
         ImportButton.IsEnabled = false;
-        BranchTarget check = new(false, null);
         if (name.Length > 0 && root != null && _meta != null)
-        {
             ExplainTarget("Checking branch name and destination…");
-            await Task.Delay(200);
-            if (generation != _nameCheck || root != Session.Root) return;
-            check = await Task.Run(() => BranchTarget.Check(root, name));
-            if (generation != _nameCheck || root != Session.Root) return;
-        }
+        var check = await _targetValidation.CheckAsync(_meta == null ? null : root, name);
+        if (check == null) return;
         var taken = check.Taken;
         ImportButton.IsEnabled = _meta != null && name.Length > 0 && Into != null && !taken && check.Error == null;
         ImportLabel.Text = _meta == null ? "Import" : $"Import {_meta.Commits} commit(s)";
@@ -214,8 +211,9 @@ public sealed partial class ImportPage : SgPage
             return;
 
         var file = _file;
+        _targetValidation.Invalidate();
         var res = await Busy.During(sender, () => Runner.Run(Pane, "import " + name, () => Export.Import(root, file, name, co.Name), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
-        ++_nameCheck; // A late name check must not replace the operation result.
+        _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 
         ResultBar.Severity = res.Ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
@@ -237,8 +235,8 @@ public sealed partial class ImportPage : SgPage
 
         // The branch exists now, so this page has nothing left to offer about this file.
         ImportButton.IsEnabled = false;
-        Summary.Text = res.Ok ? "Done. Close this and the worktree is on the checkout's card."
-            : "Resolve it, and the commits behind it land too.";
+        ExplainTarget(res.Ok ? "Done. Close this and the worktree is on the checkout's card."
+            : "Resolve it, and the commits behind it land too.");
     }
 
     /// <summary>The page that finishes a stopped import. It is the same one a stopped rebase opens.</summary>

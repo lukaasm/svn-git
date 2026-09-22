@@ -28,3 +28,39 @@ internal sealed record BranchTarget(bool Taken, string? Error)
         }
     }
 }
+
+/// <summary>
+/// One form's destination checks. New input cancels the debounce; obsolete Git results never reach
+/// the form. Call on the UI thread, and invalidate before loading a source or presenting a result.
+/// </summary>
+internal sealed class BranchTargetValidation
+{
+    CancellationTokenSource? _pending;
+
+    public void Invalidate()
+    {
+        _pending?.Cancel();
+        _pending = null;
+    }
+
+    /// <returns>The latest check, or null when superseded or the active root changed.</returns>
+    public async Task<BranchTarget?> CheckAsync(SgRoot? root, string name)
+    {
+        Invalidate();
+        if (root == null || name.Length == 0) return new(false, null);
+        using var pending = new CancellationTokenSource();
+        _pending = pending;
+        try
+        {
+            await Task.Delay(200, pending.Token);
+            if (root != Session.Root) return null;
+            var result = await Task.Run(() => BranchTarget.Check(root, name), pending.Token);
+            return !pending.IsCancellationRequested && root == Session.Root ? result : null;
+        }
+        catch (OperationCanceledException) when (pending.IsCancellationRequested) { return null; }
+        finally
+        {
+            if (ReferenceEquals(_pending, pending)) _pending = null;
+        }
+    }
+}

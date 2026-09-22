@@ -120,6 +120,7 @@ try {
     Start-App 'import' $export
     Set-Ui 'NameBox' 'source'
     Assert-Blocked 'ImportButton' '*already a branch*'
+    Set-Ui 'NameBox' 'pending-import'
     Set-Ui 'NameBox' ''
     Assert-Blocked 'ImportButton' '*Give the branch a name*'
     Set-Ui 'NameBox' 'bad..name'
@@ -132,6 +133,7 @@ try {
     Invoke-Ui 'ImportButton'
     Invoke-Ui 'PrimaryButton'
     Wait-Receipt
+    Assert-Blocked 'ImportButton' 'Done.*'
     $imported = Join-Path $root 'imported'
     if ([IO.File]::ReadAllText((Join-Path $imported 'feature.txt')) -ne "imported feature`n") { throw 'Import lost exported content.' }
     if ((Run 'git' @('-C', $imported, 'status', '--porcelain')).Trim()) { throw 'Imported worktree is dirty.' }
@@ -195,14 +197,29 @@ try {
         }
     }
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Set-Ui 'NameBox' 'imported'
+    Assert-Blocked 'RestoreButton' '*already a branch*'
+    $force = Wait-For 'replace existing option' { Find-Ui 'ForceBox' }
+    $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    $null = Wait-For 'replacement explains recovery' {
+        $button = Find-Ui 'RestoreButton'
+        $button -and $button.Current.IsEnabled -and $button.Current.HelpText -like '*preserved under a recovery name*'
+    }
+    $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    Assert-Blocked 'RestoreButton' '*already a branch*'
+    Set-Ui 'NameBox' 'pending-restore'
+    Set-Ui 'NameBox' ''
+    Assert-Blocked 'RestoreButton' '*Give the branch a name*'
     Set-Ui 'NameBox' 'bad..name'
     Assert-Blocked 'RestoreButton' '*valid Git branch name*'
     Set-Ui 'NameBox' 'occupied'
     Assert-Blocked 'RestoreButton' '*destination folder already exists*'
+    Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'restored-backup'
     Invoke-Ui 'RestoreButton'
     Invoke-Ui 'PrimaryButton'
     Wait-Receipt 2
+    Assert-Blocked 'RestoreButton' 'Done.*'
     $restored = Join-Path $root 'restored-backup'
     if ([IO.File]::ReadAllText((Join-Path $restored 'feature.txt')) -ne "imported feature`n") { throw 'Backup restore lost branch content.' }
     if ([IO.File]::ReadAllText((Join-Path $restored 'base.txt')) -ne "same change on both sides`n") { throw 'Backup restore missed the fresh snapshot.' }

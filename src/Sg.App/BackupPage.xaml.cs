@@ -42,7 +42,7 @@ public sealed partial class BackupPage : SgPage
     List<BackupEntry> _entries = new();
     BackupEntry? _picked;
     bool _binding;
-    int _nameCheck;
+    readonly BranchTargetValidation _targetValidation = new();
 
     public BackupPage()
     {
@@ -56,6 +56,9 @@ public sealed partial class BackupPage : SgPage
 
     async Task LoadAsync()
     {
+        _targetValidation.Invalidate();
+        _picked = null;
+        RestoreButton.IsEnabled = false;
         var root = Session.Require();
         var cfg = root.Config.Backup;
         var configured = Backup.Configured(root);
@@ -177,18 +180,12 @@ public sealed partial class BackupPage : SgPage
     {
         var entry = _picked;
         var name = NameBox.Text.Trim();
-        var generation = ++_nameCheck;
         var root = Session.Root;
         RestoreButton.IsEnabled = false;
-        BranchTarget check = new(false, null);
         if (name.Length > 0 && root != null && _picked != null)
-        {
             ExplainTarget("Checking branch name and destination…");
-            await Task.Delay(200);
-            if (generation != _nameCheck || root != Session.Root) return;
-            check = await Task.Run(() => BranchTarget.Check(root, name));
-            if (generation != _nameCheck || root != Session.Root) return;
-        }
+        var check = await _targetValidation.CheckAsync(_picked == null ? null : root, name);
+        if (check == null) return;
         var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
         RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
@@ -200,7 +197,7 @@ public sealed partial class BackupPage : SgPage
             : name.Length == 0 ? "Give the branch a name."
             : check.Error != null ? check.Error
             : taken && !force ? $"{name} is already a branch here. Choose another name, or select 'Replace if it exists here' to overwrite it."
-            : taken ? $"{name} here is written over with the backup version. Its worktree is reset and any uncommitted changes in it are dropped."
+            : taken ? $"{name} here is written over with the backup version. The original branch and worktree, including uncommitted changes, are preserved under a recovery name first."
             : $"{name} will be made on {Into.Name}, and its worktree with it.");
     }
 
@@ -251,9 +248,10 @@ public sealed partial class BackupPage : SgPage
                 + (wip ? ", and the uncommitted changes come back after them" : "") + ". Nothing goes to SVN.", "Restore");
         if (!confirmed) return;
 
+        _targetValidation.Invalidate();
         var res = await Busy.During(sender, () => Runner.Run(Pane, "restore " + name,
             () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip, force), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
-        ++_nameCheck; // A late name check must not replace the operation result.
+        _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 
         var lines = new List<string>();
@@ -278,7 +276,7 @@ public sealed partial class BackupPage : SgPage
 
         entry.ExistsHere = true;
         RestoreButton.IsEnabled = false;
-        Summary.Text = res.Ok ? "Done. Close this and the worktree is on the checkout's card." : "Resume the operation to finish, skip a commit, or cancel.";
+        ExplainTarget(res.Ok ? "Done. Close this and the worktree is on the checkout's card." : "Resume the operation to finish, skip a commit, or cancel.");
     }
 
     async void BackupNow_Click(object sender, RoutedEventArgs e)

@@ -143,7 +143,7 @@
             <ComboBox x:Name="IntoBox" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
                       ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the backup names." />
             <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="24">
-                <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True"
+                <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
                           ToolTipService.ToolTip="The changes that were not committed when the backup was made come back too, through the shelf: written into the worktree when they merge, left on the shelf when one does not." />
                 <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
                           ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name. Off, restore refuses a name that is taken." />
@@ -163,7 +163,7 @@
             <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" Margin="8,0" />
             <local:TaskGate Grid.Column="4">
                 <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
-                        AutomationProperties.Name="Restore the branch"
+                        AutomationProperties.Name="{Binding Text, ElementName=RestoreLabel}"
                         ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE896;" FontSize="14" />

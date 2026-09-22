@@ -192,7 +192,11 @@ public sealed partial class BackupPage : SgPage
         var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
         RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
-        RestoreLabel.Text = _form.RetryAvailable ? "Retry restore" : entry == null ? "Restore" : force && taken ? $"Overwrite with {entry.Commits} commit(s)" : $"Restore {entry.Commits} commit(s)";
+        var retry = entry != null && Into is { } checkout && _form.IsRetry(
+            new RestoreRequest(entry.Name, name, checkout.Name, WipBox.IsChecked == true && entry.HasWip, force));
+        RestoreLabel.Text = entry == null ? "Restore"
+            : force && taken ? $"{(retry ? "Retry overwrite" : "Overwrite")} with {entry.Commits} commit(s)"
+            : retry ? "Retry restore" : $"Restore {entry.Commits} commit(s)";
         ExplainTarget(entry == null ? "Pick a branch."
             : entry.Unreadable != null ? entry.Unreadable
             : Into == null && entry.Checkout.Length == 0 ? $"No checkout here points at {entry.Url}. Pick one only if you know it is the same repository."

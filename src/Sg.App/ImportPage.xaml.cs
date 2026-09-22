@@ -160,7 +160,8 @@ public sealed partial class ImportPage : SgPage
         if (check == null) return;
         var taken = check.Taken;
         ImportButton.IsEnabled = _meta != null && name.Length > 0 && Into != null && !taken && check.Error == null;
-        ImportLabel.Text = _form.RetryAvailable ? "Retry import" : _meta == null ? "Import" : $"Import {_meta.Commits} commit(s)";
+        var retry = Into is { } checkout && _form.IsRetry(new ImportRequest(_file, name, checkout.Name));
+        ImportLabel.Text = retry ? "Retry import" : _meta == null ? "Import" : $"Import {_meta.Commits} commit(s)";
         ExplainTarget(_meta == null ? "Choose a readable export file to import."
             : Into == null && !_matched ? $"No checkout here points at {_meta.Root?.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."

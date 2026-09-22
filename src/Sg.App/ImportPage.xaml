@@ -103,7 +103,7 @@
             <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
             <local:TaskGate Grid.Column="4">
                 <Button x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
-                        AutomationProperties.Name="Import the branch"
+                        AutomationProperties.Name="{Binding Text, ElementName=ImportLabel}"
                         ToolTipService.ToolTip="Make the branch and its worktree here, then replay every commit onto this checkout's snapshot.">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE896;" FontSize="14" />

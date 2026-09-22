@@ -77,20 +77,27 @@ function Cancel-QueuedForm([string]$buttonId, [string]$labelId, [string]$retryLa
         Invoke-Ui $buttonId
         Invoke-Ui 'PrimaryButton'
         foreach ($field in $fields) {
-            $null = Wait-For "locked form field $field" { $element = Find-Ui $field; $element -and !$element.Current.IsEnabled }
+            $null = Wait-For "locked form field $field" { $element = Find-Ui $field; $element -and !$element.Current.IsEnabled -and $element.Current.HelpText -like 'Inputs are locked*Tasks*' }
         }
         Invoke-Ui 'TaskQueueToggle'
         Invoke-Ui 'Cancel task' -Name
         Wait-Receipt $finishedCount
         $null = Wait-For 'retry action after cancellation' {
             $button = Find-Ui $buttonId
-            $button -and $button.Current.IsEnabled -and (Find-Ui $labelId).Current.Name -eq $retryLabel
+            $button -and $button.Current.IsEnabled -and (Find-Ui $labelId).Current.Name -eq $retryLabel -and $button.Current.Name -eq $retryLabel
         }
         foreach ($field in $fields) {
             if ((Find-Ui $field).Current.IsEnabled -ne $enabled[$field]) { throw "Input availability changed after cancellation: $field" }
         }
         if ((Find-Ui 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne $savedName) { throw 'Cancelled form lost its submitted name.' }
         Invoke-Ui 'TaskQueueToggle'
+        Set-Ui 'NameBox' ($savedName + '-different')
+        $null = Wait-For 'edited destination is a new request' {
+            $button = Find-Ui $buttonId
+            $button -and $button.Current.IsEnabled -and $button.Current.Name -notlike 'Retry*' -and $button.Current.Name -eq (Find-Ui $labelId).Current.Name
+        }
+        Set-Ui 'NameBox' $savedName
+        $null = Wait-For 'original destination remains retryable' { (Find-Ui $buttonId).Current.Name -eq $retryLabel }
     } finally { $formLock.Dispose() }
 }
 function Stop-App {
@@ -256,9 +263,18 @@ try {
     Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'restored-backup'
     Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry restore' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox', 'Branches') 2
+    Set-Ui 'NameBox' 'imported'
+    $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    $null = Wait-For 'replacement keeps an explicit overwrite label after a cancelled restore' {
+        $button = Find-Ui 'RestoreButton'
+        $button -and $button.Current.IsEnabled -and $button.Current.Name -like 'Overwrite with*' -and $button.Current.Name -eq (Find-Ui 'RestoreLabel').Current.Name
+    }
+    Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry overwrite with 1 commit(s)' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox', 'Branches') 3
+    $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    Set-Ui 'NameBox' 'restored-backup'
     Invoke-Ui 'RestoreButton'
     Invoke-Ui 'PrimaryButton'
-    Wait-Receipt 3
+    Wait-Receipt 4
     Assert-Blocked 'RestoreButton' 'Done.*'
     $null = Wait-For 'shared restore result on the page' {
         $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |

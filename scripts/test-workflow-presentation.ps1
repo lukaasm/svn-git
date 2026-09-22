@@ -54,6 +54,16 @@ function Expand($element) {
 }
 Initialize-UiReport $ArtifactDirectory 'Presentation'
 try {
+    $reviewDirectory = Join-Path $FixtureRoot '.sg/reviews'
+    $reviewHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('source'))).ToLowerInvariant()
+    $reviewPath = Join-Path $reviewDirectory ($reviewHash + '.json')
+    $originalReview = if (Test-Path -LiteralPath $reviewPath) { [IO.File]::ReadAllText($reviewPath) } else { $null }
+    $null = New-Item -ItemType Directory -Path $reviewDirectory -Force
+    @{ branch = 'source'; head = 'recorded-version'; snapshot = 'recorded-snapshot'; version = 'old'; configuration = 'old';
+        checked = '2020-01-01T12:00:00Z'; files = @(); checks = @(
+            @{ name = 'Build'; command = 'example-build --verify'; exitCode = 2; seconds = 1.2; output = "Build failed`nMissing test dependency" },
+            @{ name = ''; command = 'example-lint'; exitCode = 0; seconds = 0.3; output = '' }
+        ) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $reviewPath -Encoding utf8
     $app = (Resolve-Path "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe").Path
     $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $FixtureRoot + '"')) -PassThru
     $window = Wait-For { Get-TestAppWindow $process }
@@ -90,6 +100,23 @@ try {
     Start-UiScenario 'Review readiness and collapsed configuration'
     Invoke 'Review readiness'
     $null = Wait-For { Find 'Run local checks' }
+    $null = Wait-For { Find 'Changed since review' }
+    $summary = Wait-For { Find 'ReviewCheckSummary' -Id }
+    if ($summary.Current.Name -notlike '1 passed · 1 failed*') { throw 'Incorrect recorded check totals.' }
+    Start-UiScenario 'Recorded check summaries and output navigation'
+    Invoke 'ReviewCheckOutput_0' -Id
+    $output = Wait-For { Find 'ReviewCheckOutputText' -Id }
+    if ($output.Current.Name -ne "Build failed`nMissing test dependency") { throw 'Recorded output was not preserved.' }
+    $null = Wait-For { Find 'Failed · exit code 2' }
+    Expand (Wait-For { Find 'Command' })
+    $null = Wait-For { Find 'example-build --verify' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'check-output.png')
+    Invoke 'NavigationViewBackButton' -Id
+    Invoke 'ReviewCheckOutput_1' -Id
+    $null = Wait-For { Find 'No output was captured.' }
+    $null = Wait-For { Find 'Check 2' }
+    Invoke 'NavigationViewBackButton' -Id
+    $null = Wait-For { Find 'ReviewCheckSummary' -Id }
     $config = Wait-For { Find 'Configure local checks' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'review.png')
     Expand $config
@@ -162,6 +189,10 @@ try {
     exit 1
 } finally {
     if ($process -and !$process.HasExited) { Stop-Process -Id $process.Id; $process.WaitForExit() }
+    if ($reviewPath) {
+        if ($null -ne $originalReview) { [IO.File]::WriteAllText($reviewPath, $originalReview) }
+        elseif (Test-Path -LiteralPath $reviewPath) { Remove-Item -LiteralPath $reviewPath }
+    }
     if ($originalConfig) {
         $current = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
         $current | Add-Member -NotePropertyName reviewChecks -NotePropertyValue @($originalConfig.reviewChecks) -Force

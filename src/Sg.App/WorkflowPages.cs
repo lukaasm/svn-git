@@ -250,12 +250,8 @@ public sealed class ReviewPage : WorkflowPage
             Text($"Last checked {record.Checked.LocalDateTime:g}");
             if (status[0] == "Changed since review") Text("These results describe an older version. Run checks again for the current files and configuration.");
             Details($"Reviewed version · {record.Files.Count} files", new[] { "HEAD: " + record.Head, "Snapshot: " + record.Snapshot }.Concat(record.Files));
-            foreach (var check in record.Checks)
-            {
-                Status($"{check.Name}: {(check.ExitCode == 0 ? "Passed" : "Failed")} · {check.Seconds:F1}s",
-                    check.ExitCode == 0 ? ChipSeverity.Success : ChipSeverity.Critical, check.ExitCode == 0 ? "\uE73E" : "\uE7BA");
-                Details("Check output · " + check.Name, ["Exit code: " + check.ExitCode, check.Command, check.Output]);
-            }
+            Body.Children.Add(new ReviewCheckResults(record, index => Go(
+                () => new ReviewCheckOutputPage(record, index), $"review-output:{_path}:{record.Checked.UtcTicks}:{index}")));
         }
         if (root.Config.ReviewChecks.Count == 0) Text("No local checks configured. Run local checks records this version for manual review.");
         Action("Run local checks", () => Execute("Review checks", () => Review.RunChecks(root, _path)), true, mutates: true, glyph: "\uE768");

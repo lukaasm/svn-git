@@ -59,9 +59,10 @@ try {
     $reviewPath = Join-Path $reviewDirectory ($reviewHash + '.json')
     $originalReview = if (Test-Path -LiteralPath $reviewPath) { [IO.File]::ReadAllText($reviewPath) } else { $null }
     $null = New-Item -ItemType Directory -Path $reviewDirectory -Force
+    $sampleOutput = "Build failed`nMissing test dependency`n" + ((1..60 | ForEach-Object { "Detail line $_" }) -join "`n") + "`nBUILD failed again"
     @{ branch = 'source'; head = 'recorded-version'; snapshot = 'recorded-snapshot'; version = 'old'; configuration = 'old';
         checked = '2020-01-01T12:00:00Z'; files = @(); checks = @(
-            @{ name = 'Build'; command = 'example-build --verify'; exitCode = 2; seconds = 1.2; output = "Build failed`nMissing test dependency" },
+            @{ name = 'Build'; command = 'example-build --verify'; exitCode = 2; seconds = 1.2; output = $sampleOutput },
             @{ name = ''; command = 'example-lint'; exitCode = 0; seconds = 0.3; output = '' }
         ) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $reviewPath -Encoding utf8
     $app = (Resolve-Path "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe").Path
@@ -106,8 +107,37 @@ try {
     Start-UiScenario 'Recorded check summaries and output navigation'
     Invoke 'ReviewCheckOutput_0' -Id
     $output = Wait-For { Find 'ReviewCheckOutputText' -Id }
-    if ($output.Current.Name -ne "Build failed`nMissing test dependency") { throw 'Recorded output was not preserved.' }
+    $value = $output.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    if (($value.Current.Value -replace "`r`n?", "`n") -ne $sampleOutput -or !$value.Current.IsReadOnly) {
+        throw "Recorded output was not preserved as read-only text: readonly=$($value.Current.IsReadOnly); actual=$($value.Current.Value | ConvertTo-Json -Compress); expected=$($sampleOutput | ConvertTo-Json -Compress)"
+    }
     $null = Wait-For { Find 'Failed · exit code 2' }
+    Set-Field 'OutputSearch' 'build'
+    $null = Wait-For { Find 'Match 1 of 2 · line 1' }
+    Invoke 'OutputNextMatch' -Id
+    $null = Wait-For { Find 'Match 2 of 2 · line 63' }
+    $selection = $output.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).GetSelection()[0]
+    if ($selection.GetText(-1) -ne 'BUILD') { throw 'Search did not select the matching text.' }
+    $null = Wait-For {
+        $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'VerticalScrollBar')
+        $bar = $output.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($bar) {
+            $range = $bar.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).Current
+            $range.Value -gt ($range.Maximum - $range.Minimum) / 2
+        }
+    }
+    Start-Sleep -Milliseconds 300
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'output-search.png')
+    Invoke 'OutputNextMatch' -Id
+    $null = Wait-For { Find 'Match 1 of 2 · line 1' }
+    Invoke 'OutputPreviousMatch' -Id
+    $null = Wait-For { Find 'Match 2 of 2 · line 63' }
+    Set-Field 'OutputSearch' '.*'
+    $null = Wait-For { Find 'No matches' }
+    if ((Find 'OutputNextMatch' -Id).Current.IsEnabled) { throw 'Navigation must be disabled without matches.' }
+    Set-Field 'OutputSearch' ''
+    if ((Find 'OutputPreviousMatch' -Id).Current.IsEnabled) { throw 'Clearing search must disable navigation.' }
+    Set-Field 'OutputSearch' 'build'
     Expand (Wait-For { Find 'Command' })
     $null = Wait-For { Find 'example-build --verify' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'check-output.png')

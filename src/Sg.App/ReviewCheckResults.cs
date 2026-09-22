@@ -58,11 +58,14 @@ internal sealed class ReviewCheckOutputPage : WorkflowPage
 {
     readonly ReviewRecord _record;
     readonly ReviewCheckResult _check;
+    readonly SearchableOutput _output;
     public ReviewCheckOutputPage(ReviewRecord record, int index) : base("Check output")
     {
         _record = record;
         _check = record.Checks[index];
+        _output = new SearchableOutput(_check.Output);
         Subtitle = ReviewCheckResults.DisplayName(_check, index);
+        Shortcuts.Add(this, Windows.System.VirtualKey.F, Windows.System.VirtualKeyModifiers.Control, _output.FocusSearch);
     }
     protected override Task Reload()
     {
@@ -73,13 +76,8 @@ internal sealed class ReviewCheckOutputPage : WorkflowPage
         Text($"Recorded {_record.Checked.LocalDateTime:g} · {_check.Seconds:F1}s · branch {_record.Branch}");
         Text("Saved result from this check run. Return to Review readiness to check whether it still matches the current version.");
         Details("Command", [_check.Command]);
-        var output = new TextBlock {
-            Text = string.IsNullOrWhiteSpace(_check.Output) ? "No output was captured." : _check.Output,
-            IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap,
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas")
-        };
-        AutomationProperties.SetAutomationId(output, "ReviewCheckOutputText");
-        Body.Children.Add(output);
+        if (string.IsNullOrWhiteSpace(_check.Output)) Text("No output was captured.");
+        Body.Children.Add(_output);
         return Task.CompletedTask;
     }
 }

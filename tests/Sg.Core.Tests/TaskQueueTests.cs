@@ -2,8 +2,27 @@ using Sg.Core;
 
 namespace Sg.Core.Tests;
 
-public class TaskQueueTests
+public class TaskQueueTests(Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Fact]
+    public void Repeated_collision_checks_do_not_allocate_history_snapshots()
+    {
+        var queue = new TaskQueue();
+        for (var i = 0; i < 99; i++) queue.TryStart("finished", "other")!.Finish(TaskState.Succeeded, "Done");
+        var active = queue.TryStart("active", "ROOT/")!;
+        Assert.Same(active.Snapshot(), queue.Blocking("root\\"));
+        for (var i = 0; i < 100; i++) queue.Blocking("root\\");
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 1000; i++) queue.Blocking("root\\");
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        output.WriteLine($"1,000 collision checks with 100 retained tasks allocated {allocated} bytes.");
+        Assert.InRange(allocated, 0, 1024);
+        active.Cancel();
+        Assert.NotNull(queue.Blocking("root"));
+        active.Finish(TaskState.Cancelled, "Stopped");
+        Assert.Null(queue.Blocking("root"));
+    }
+
     [Theory]
     [InlineData(false, false, "Cancelling queued task")]
     [InlineData(true, false, "Cancelling")]

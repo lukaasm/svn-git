@@ -100,7 +100,12 @@ public static class Session
     public static AppSettings Settings { get; } = AppSettings.Load();
     static SgRoot? _root;
     static readonly AsyncLocal<SgRoot?> WorkerRoot = new();
-    public static SgRoot? Root { get => WorkerRoot.Value ?? _root; private set => _root = value; }
+    public static event Action? RootChanged;
+    public static SgRoot? Root
+    {
+        get => WorkerRoot.Value ?? _root;
+        private set { _root = value; RootChanged?.Invoke(); }
+    }
 
     internal static T InRoot<T>(SgRoot? root, Func<T> work)
     {

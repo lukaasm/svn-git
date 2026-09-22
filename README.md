@@ -9,6 +9,8 @@ The Windows app keeps a **Tasks** pane aligned with the page content, including 
 
 Actions that change the same root are blocked while a task holds it; browsing remains available. Blocked actions expose the task name and how to unblock them through hover help and screen-reader help. The checkout toolbar’s **Unavailable actions** entry explains task collisions, no checkout edits, and missing shelves. Scheduled backups defer while that root is busy. New worktrees, imports, backup restores, and recovery branches appear as placeholders immediately and refresh into real cards when finished. Exit and restart wait for active tasks to finish or be cancelled.
 
+Task updates arrive on state changes instead of a polling delay. Collapsed or idle task history has no refresh timer; only visible running-task elapsed labels tick once a second. Background notification bursts share a queued refresh, and buttons stop showing busy as soon as their work completes.
+
 Import and restore keep a snapshot of the submitted source, destination, and options. Their inputs are locked while work runs; navigation and Tasks remain available. Failed or cancelled attempts keep the form values and offer Retry once destination validation passes again. Worktree creation keeps its submitted options for **Review and retry** in the current window, including after navigating away; retry always rechecks the destination and never overwrites partial work automatically. Existing destinations offer **Open folder**, **Review replay**, or a saved-operation action when available; links use the registered worktree path, including moved worktrees. Import and backup restore place the checkout selector before the branch name.
 
 

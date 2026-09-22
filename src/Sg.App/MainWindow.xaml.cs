@@ -46,6 +46,7 @@ public sealed partial class MainWindow : Window
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _backup;
     /// <summary>One backup a few seconds after the last of a run of changes, rather than one per change.</summary>
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _backupSoon;
+    readonly UiRefresh _taskRefresh;
     bool _backingUp;
     /// <summary>Names a backup conflict or a newer-remote was already toasted for: a lasting state is said once, not every timer tick.</summary>
     HashSet<string> _backupAlerted = new(StringComparer.Ordinal);
@@ -60,6 +61,7 @@ public sealed partial class MainWindow : Window
     public MainWindow(string? startAction = null, string? startPath = null)
     {
         InitializeComponent();
+        _taskRefresh = new(DispatcherQueue, RefreshTasks);
         _startAction = startAction;
         _startPath = startPath;
         WindowHelper.Chrome(this, AppTitleBar, 1280, 820);
@@ -125,9 +127,9 @@ public sealed partial class MainWindow : Window
 
     string _finishedTasks = "";
     string _pendingTrees = "";
-    void TasksChanged()
+    void TasksChanged() => _taskRefresh.Request();
+    void RefreshTasks()
     {
-        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(TasksChanged); return; }
         ShowRecovery();
         var pending = string.Join("|", Session.Tasks.Snapshot().Where(t => t.Active && t.Worktree != null && t.Root == Session.Root?.RootPath).Select(t => t.Id));
         if (pending != _pendingTrees)

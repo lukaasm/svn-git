@@ -13,6 +13,7 @@ public sealed class TaskPane : UserControl
     readonly StackPanel _rows = new();
     readonly Dictionary<Guid, Row> _views = [];
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _timer;
+    readonly UiRefresh _refresh;
     readonly TextBlock _empty = new() { Text = "No tasks this session.", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
     readonly StackPanel _body = new() { Visibility = Visibility.Collapsed };
     readonly Button _toggle;
@@ -20,10 +21,15 @@ public sealed class TaskPane : UserControl
     readonly TextBlock _viewSummary = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _clear;
     public NavHost? Navigation { get; set; }
-    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp);
+    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp)
+    {
+        public TaskSnapshot? LastTask;
+        public string? Root;
+    }
 
     public TaskPane()
     {
+        _refresh = new(DispatcherQueue, () => { if (IsLoaded) Refresh(); });
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         var header = new Grid { ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -42,6 +48,7 @@ public sealed class TaskPane : UserControl
         {
             _body.Visibility = _body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
             chevron.Glyph = _body.Visibility == Visibility.Visible ? "\uE70E" : "\uE70D";
+            Refresh();
         };
         var toolbar = new Grid { Padding = new Thickness(12, 0, 12, 8), ColumnSpacing = 12 };
         toolbar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -77,10 +84,14 @@ public sealed class TaskPane : UserControl
         void Theme() => border.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"];
         Theme(); ActualThemeChanged += (_, _) => Theme();
         _timer = DispatcherQueue.CreateTimer();
-        _timer.Interval = TimeSpan.FromMilliseconds(250);
-        _timer.Tick += (_, _) => Refresh();
-        Loaded += (_, _) => { Refresh(); _timer.Start(); };
-        Unloaded += (_, _) => _timer.Stop();
+        _timer.Interval = TimeSpan.FromSeconds(1);
+        _timer.Tick += (_, _) =>
+        {
+            foreach (var row in _views.Values)
+                if (row.LastTask is { Active: true } task && row.Card.Visibility == Visibility.Visible) UpdateTitle(row, task);
+        };
+        Loaded += (_, _) => { Session.Tasks.Changed += _refresh.Request; Session.RootChanged += _refresh.Request; Refresh(); };
+        Unloaded += (_, _) => { Session.Tasks.Changed -= _refresh.Request; Session.RootChanged -= _refresh.Request; _timer.Stop(); };
     }
     void Refresh()
     {
@@ -88,13 +99,15 @@ public sealed class TaskPane : UserControl
         var active = tasks.Where(t => t.Active).ToArray();
         var attention = tasks.Count(t => t.State is TaskState.NeedsAttention or TaskState.Failed);
         var current = active.FirstOrDefault();
-        _summary.Text = $"Tasks · {active.Length} active · {tasks.Count(t => !t.Active)} finished"
+        var summary = $"Tasks · {active.Length} active · {tasks.Count(t => !t.Active)} finished"
             + (attention > 0 ? $" · {attention} need attention" : "")
             + (current == null ? "" : $" — {current.Title}: {Message(current).Split('\n')[0]}");
-        AutomationProperties.SetName(_toggle, _summary.Text);
+        if (_summary.Text != summary) { _summary.Text = summary; AutomationProperties.SetName(_toggle, summary); }
         _progress.Visibility = current == null ? Visibility.Collapsed : Visibility.Visible;
         _progress.IsIndeterminate = current != null && current.Percent == null;
         _progress.Value = current?.Percent ?? 0;
+        // Collapsed history needs no row creation, log layout, or elapsed-time ticks.
+        if (_body.Visibility != Visibility.Visible) { _timer.Stop(); return; }
         bool Visible(TaskSnapshot task) => _filter.SelectedIndex switch
         {
             1 => task.Active,
@@ -103,6 +116,8 @@ public sealed class TaskPane : UserControl
             _ => true
         };
         var shown = tasks.Count(Visible);
+        if (tasks.Any(t => t.Active && Visible(t))) { if (!_timer.IsRunning) _timer.Start(); }
+        else _timer.Stop();
         _viewSummary.Text = $"{shown} of {tasks.Count} tasks";
         _clear.IsEnabled = tasks.Any(t => !t.Active);
         _empty.Text = tasks.Count == 0 ? "No tasks this session." : _filter.SelectedIndex switch
@@ -126,9 +141,10 @@ public sealed class TaskPane : UserControl
                 _rows.Children.Insert(0, row.Card);
             }
             row.Card.Visibility = Visible(task) ? Visibility.Visible : Visibility.Collapsed;
-            var elapsed = (task.Finished ?? DateTimeOffset.Now) - task.Started;
-            row.Title.Text = $"{State(task)} · {task.Title} · {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
-            AutomationProperties.SetName(row.Toggle, row.Title.Text);
+            UpdateTitle(row, task);
+            if (ReferenceEquals(row.LastTask, task) && row.Root == Session.Root?.RootPath) continue;
+            row.LastTask = task;
+            row.Root = Session.Root?.RootPath;
             var detail = Message(task) + "\n" + task.Root;
             if (row.Detail.Text != detail) row.Detail.Text = detail;
             if (row.Output.Text != task.Log) row.Output.Text = task.Log;
@@ -151,6 +167,14 @@ public sealed class TaskPane : UserControl
                 AutomationProperties.SetHelpText(row.FollowUp, explanation);
             }
         }
+    }
+    static void UpdateTitle(Row row, TaskSnapshot task)
+    {
+        var elapsed = (task.Finished ?? DateTimeOffset.Now) - task.Started;
+        var title = $"{State(task)} · {task.Title} · {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
+        if (row.Title.Text == title) return;
+        row.Title.Text = title;
+        AutomationProperties.SetName(row.Toggle, title);
     }
     static bool SameRoot(string a, string? b) => string.Equals(a.TrimEnd('/', '\\'), b?.TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase);
     void OpenResult(Guid id)
@@ -228,18 +252,20 @@ public sealed class TaskPane : UserControl
 /// <summary>A pending worktree has a place before any folder is created. It has no destructive actions.</summary>
 public sealed class PendingWorktrees : UserControl
 {
+    readonly UiRefresh _refresh;
     readonly StackPanel _rows = new() { Spacing = 8 };
     public string? Checkout { get; set; }
     public PendingWorktrees()
     {
+        _refresh = new(DispatcherQueue, () => { if (IsLoaded) RefreshRows(); });
         Content = _rows;
         Loaded += (_, _) => { Session.Tasks.Changed += Changed; Changed(); };
         Unloaded += (_, _) => Session.Tasks.Changed -= Changed;
     }
     public void Refresh() => Changed();
-    void Changed()
+    void Changed() => _refresh.Request();
+    void RefreshRows()
     {
-        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(Changed); return; }
         var tasks = Session.Tasks.Snapshot().Where(t => t.Active && t.Root == Session.Root?.RootPath
             && t.Worktree != null && t.Worktree.Checkout == Checkout).ToArray();
         var signature = string.Join("|", tasks.Select(t => t.Id));

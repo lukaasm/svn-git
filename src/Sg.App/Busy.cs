@@ -25,11 +25,9 @@ public static class Busy
     }
 
     /// <summary>
-    /// How long work has to run before the ring is worth drawing, and how long it stays once it is
-    /// drawn. Under the first, a sync that answers from cache used to blink the icon out and back;
-    /// over it, the second stops the ring appearing and vanishing inside one frame.
+    /// Avoid flashing a ring for quick work. Once work finishes, restore the action immediately.
     /// </summary>
-    const int ShowAfterMs = 180, KeepForMs = 350;
+    const int ShowAfterMs = 180;
 
     static async Task Run(Control? control, Func<Task> work, bool restoreEnabled)
     {
@@ -41,8 +39,6 @@ public static class Busy
         var panel = (control as ContentControl)?.Content as Panel;
         var icon = panel?.Children.OfType<FontIcon>().FirstOrDefault();
         ProgressRing? ring = null;
-        var shownAt = 0L;
-        var clock = System.Diagnostics.Stopwatch.StartNew();
 
         void ShowRing()
         {
@@ -55,7 +51,6 @@ public static class Busy
             };
             panel.Children.Insert(panel.Children.IndexOf(icon), ring);
             icon.Visibility = Visibility.Collapsed;
-            shownAt = clock.ElapsedMilliseconds;
         }
 
         try
@@ -70,8 +65,6 @@ public static class Busy
         {
             if (ring != null)
             {
-                var seen = clock.ElapsedMilliseconds - shownAt;
-                if (seen < KeepForMs) await Task.Delay((int)(KeepForMs - seen));
                 panel?.Children.Remove(ring);
             }
             if (icon != null) icon.Visibility = Visibility.Visible;

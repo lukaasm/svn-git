@@ -8,6 +8,7 @@ namespace Sg.App;
 /// <summary>The parent owns busy gating; a child's validation and selection state stay untouched.</summary>
 public sealed class TaskGate : ContentControl
 {
+    readonly UiRefresh _refresh;
     ContentControl? _gate;
     FrameworkElement? _child;
     string _help = "";
@@ -30,6 +31,7 @@ public sealed class TaskGate : ContentControl
     }
     public TaskGate()
     {
+        _refresh = new(DispatcherQueue, () => { if (IsLoaded) Refresh(); });
         IsTabStop = false;
         Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -50,13 +52,14 @@ public sealed class TaskGate : ContentControl
                 Content = _gate;
             }
             Session.Tasks.Changed += Changed;
+            Session.RootChanged += Changed;
             Changed();
         };
-        Unloaded += (_, _) => Session.Tasks.Changed -= Changed;
+        Unloaded += (_, _) => { Session.Tasks.Changed -= Changed; Session.RootChanged -= Changed; };
     }
-    void Changed()
+    void Changed() => _refresh.Request();
+    void Refresh()
     {
-        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(Changed); return; }
         var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
         if (_gate != null) _gate.IsEnabled = busy == null;
         var reason = busy?.BlockingExplanation;

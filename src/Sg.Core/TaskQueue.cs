@@ -49,14 +49,23 @@ public sealed class TaskQueue
     {
         lock (_gate) return _tasks.Select(t => t.Snapshot()).ToArray();
     }
-    public TaskSnapshot? Blocking(string root) => Snapshot().FirstOrDefault(t => t.Active && SameRoot(t.Root, root));
-    static bool SameRoot(string a, string b) => string.Equals(a.TrimEnd('/', '\\'), b.TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase);
+    public TaskSnapshot? Blocking(string root)
+    {
+        lock (_gate)
+            foreach (var task in _tasks)
+            {
+                var state = task.Snapshot();
+                if (state.Active && SameRoot(state.Root, root)) return state;
+            }
+        return null;
+    }
+    static bool SameRoot(string a, string b) => a.AsSpan().TrimEnd("/\\").Equals(b.AsSpan().TrimEnd("/\\"), StringComparison.OrdinalIgnoreCase);
     public OperationTask? TryStart(string title, string root, bool boundary = false, PendingWorktree? worktree = null)
     {
         OperationTask task;
         lock (_gate)
         {
-            if (_tasks.Any(t => t.Snapshot().Active && SameRoot(t.Snapshot().Root, root))) return null;
+            if (Blocking(root) != null) return null;
             task = new OperationTask(title, root, boundary, worktree, () => Changed?.Invoke());
             _tasks.Add(task);
             // Retain recent receipts without retaining page objects or unbounded output.

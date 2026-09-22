@@ -17,8 +17,7 @@ public static class Crash
     static bool _showing;
 
     /// <summary>Where the traces go. One file, appended to, so a run that crashed twice keeps both.</summary>
-    public static string LogPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sg", "crash.log");
+    public static string LogPath => DebugTestRun.UserFile("crash.log");
 
     /// <summary>
     /// Every way an exception can arrive uncaught: off the UI thread's dispatcher, off a background

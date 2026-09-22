@@ -23,6 +23,11 @@ public static class Notifications
 
     public static void Register(Action<IDictionary<string, string>> onInvoked)
     {
+        if (DebugTestRun.DirectoryPath != null)
+        {
+            LastError = "Windows notification registration is disabled for isolated UI tests.";
+            return;
+        }
         try
         {
             AppNotificationManager.Default.NotificationInvoked += (_, a) => onInvoked(a.Arguments);

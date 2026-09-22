@@ -12,6 +12,7 @@ public static class Updates
     /// <summary>%LOCALAPPDATA%\sg, the folder that holds sg.exe and the ui subfolder.</summary>
     public static string InstallDir()
     {
+        if (DebugTestRun.DirectoryPath is { } testDirectory) return testDirectory;
         var uiDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
         var parent = Path.GetDirectoryName(uiDir);
         if (parent != null && File.Exists(Path.Combine(parent, "sg.exe"))) return parent;

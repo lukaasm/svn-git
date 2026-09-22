@@ -27,7 +27,7 @@ public static class Program
         {
 #if DEBUG
             // A local development build must not redirect into the installed release being used for real work.
-            var main = AppInstance.FindOrRegisterForKey("sg-ui-debug-main");
+            var main = AppInstance.FindOrRegisterForKey(DebugTestRun.InstanceKey);
 #else
             var main = AppInstance.FindOrRegisterForKey("sg-ui-main");
 #endif

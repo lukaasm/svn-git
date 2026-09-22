@@ -33,7 +33,7 @@ public sealed class MonitorStore
 {
     public List<MonitorItem> Items { get; set; } = new();
 
-    static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sg", "monitor.json");
+    static string FilePath => DebugTestRun.UserFile("monitor.json");
     static readonly JsonSerializerOptions Opts = new() { WriteIndented = true };
 
     public static MonitorStore Load()

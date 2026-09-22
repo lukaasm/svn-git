@@ -7,16 +7,17 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+. "$PSScriptRoot/ui-automation.ps1"
 $appPath = (Resolve-Path -LiteralPath $AppExe).Path
 $cliPath = (Resolve-Path -LiteralPath $CliDll).Path
 if ($appPath -notmatch '\\Debug\\') { throw 'Use an isolated Debug app.' }
-if (Get-Process sg-ui -ErrorAction SilentlyContinue | Where-Object Path -eq $appPath) { throw 'Close the existing Debug app first.' }
+if (!$env:SG_UI_TEST_DIRECTORY -and (Get-Process sg-ui -ErrorAction SilentlyContinue | Where-Object Path -eq $appPath)) { throw 'Close the existing Debug app first.' }
 $fixture = Join-Path (Resolve-Path -LiteralPath $FixtureParent).Path ('sg-workflow-ui-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 $root = Join-Path $fixture 'root'
 $checkout = Join-Path $root 'checkout'
 $repo = Join-Path $fixture 'svnrepo'
 $backup = Join-Path $fixture 'backup.git'
-$settingsPath = Join-Path $env:LOCALAPPDATA 'sg/app.json'
+$settingsPath = if ($env:SG_UI_TEST_DIRECTORY) { Join-Path $env:SG_UI_TEST_DIRECTORY 'app.json' } else { Join-Path $env:LOCALAPPDATA 'sg/app.json' }
 $previous = if (Test-Path -LiteralPath $settingsPath) { Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json } else { $null }
 $script:process = $null
 $script:window = $null
@@ -132,11 +133,7 @@ function Stop-App {
 function Start-App([string]$action, [string]$path) {
     Stop-App
     $script:process = Start-Process -FilePath $appPath -ArgumentList @($action, ('"' + $path + '"')) -WorkingDirectory $root -PassThru
-    $script:window = Wait-For 'app window' {
-        $script:process.Refresh()
-        if ($script:process.HasExited) { throw 'App exited during startup.' }
-        if ($script:process.MainWindowHandle -ne 0) { [System.Windows.Automation.AutomationElement]::FromHandle($script:process.MainWindowHandle) }
-    }
+    $script:window = Wait-For 'app window' { Get-TestAppWindow $script:process }
 }
 function Wait-Receipt([int]$count = 1) {
     $null = Wait-For 'finished task receipt' {

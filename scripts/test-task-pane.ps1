@@ -4,18 +4,20 @@ param(
     [Parameter(Mandatory)][string]$FixtureRoot,
     [string]$ScreenshotDirectory,
     [switch]$CheckRecovery,
+    [switch]$SkipClipboard,
     [string]$AppExe = "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe"
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+. "$PSScriptRoot/ui-automation.ps1"
 $appPath = (Resolve-Path -LiteralPath $AppExe).Path
 $rootPath = (Resolve-Path -LiteralPath $FixtureRoot).Path
 if ($appPath -notmatch '\\Debug\\') { throw 'Use an isolated Debug build, not the installed app.' }
-if (Get-Process sg-ui -ErrorAction SilentlyContinue | Where-Object Path -eq $appPath) { throw 'Close the existing debug instance before running this test.' }
+if (!$env:SG_UI_TEST_DIRECTORY -and (Get-Process sg-ui -ErrorAction SilentlyContinue | Where-Object Path -eq $appPath)) { throw 'Close the existing debug instance before running this test.' }
 $config = Get-Content -Raw -LiteralPath (Join-Path $rootPath '.sg/sg.json') | ConvertFrom-Json
 if (!$config.checkouts.Count) { throw 'The disposable root needs a checkout.' }
-$settingsPath = Join-Path $env:LOCALAPPDATA 'sg/app.json'
+$settingsPath = if ($env:SG_UI_TEST_DIRECTORY) { Join-Path $env:SG_UI_TEST_DIRECTORY 'app.json' } else { Join-Path $env:LOCALAPPDATA 'sg/app.json' }
 $previousSettings = if (Test-Path -LiteralPath $settingsPath) { Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json } else { $null }
 $script:window = $null
 $process = $null
@@ -111,7 +113,7 @@ public static class TaskPaneWindowCapture {
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
     $hdc = $graphics.GetHdc()
     try {
-        if (![TaskPaneWindowCapture]::PrintWindow($process.MainWindowHandle, $hdc, 2)) { throw 'Window capture failed.' }
+        if (![TaskPaneWindowCapture]::PrintWindow([IntPtr]$script:window.Current.NativeWindowHandle, $hdc, 2)) { throw 'Window capture failed.' }
     } finally { $graphics.ReleaseHdc($hdc); $graphics.Dispose() }
     try { $bitmap.Save((Join-Path $ScreenshotDirectory ($name + '.png')), [Drawing.Imaging.ImageFormat]::Png) }
     finally { $bitmap.Dispose() }
@@ -136,11 +138,7 @@ try {
             ConvertTo-Json | Set-Content -LiteralPath $recoveryFile -Encoding utf8
     }
     $process = Start-Process -FilePath $appPath -ArgumentList @('overview', ('"' + $rootPath + '"')) -PassThru
-    $script:window = Wait-For 'debug window' {
-        $process.Refresh()
-        if ($process.HasExited) { throw 'Debug app exited before exposing a window.' }
-        if ($process.MainWindowHandle -ne 0) { [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle) }
-    }
+    $script:window = Wait-For 'debug window' { Get-TestAppWindow $process }
     $sync = Wait-For 'checkout overview' { By-Id 'SyncButton' }
     if ($CheckRecovery) {
         $button = Wait-For 'startup recovery action' { $b = By-Id 'RecoveryButton'; if ($b -and !$b.Current.IsOffscreen) { $b } }
@@ -192,14 +190,16 @@ try {
         $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
             Where-Object { $_.Current.Name -like 'No work started. Cancelled while waiting for repository access.*' } | Select-Object -First 1
     }
-    $copyId = 'CopyTask_' + $cancelled.Current.AutomationId.Substring(5)
-    Invoke-Element (By-Id $copyId)
-    $null = Wait-For 'copy feedback' { By-Name 'Task details copied.' }
-    $report = Get-Clipboard -Raw
-    if (!$report.Contains('Status: Cancelled') -or !$report.Contains($rootPath) -or
-        !$report.Contains($name) -or !$report.Contains('No work started.') -or !$report.Contains('Started: ')) {
-        throw 'Copied task report is missing its status, context, or result.'
-    }
+    if (!$SkipClipboard) {
+        $copyId = 'CopyTask_' + $cancelled.Current.AutomationId.Substring(5)
+        Invoke-Element (By-Id $copyId)
+        $null = Wait-For 'copy feedback' { By-Name 'Task details copied.' }
+        $report = Get-Clipboard -Raw
+        if (!$report.Contains('Status: Cancelled') -or !$report.Contains($rootPath) -or
+            !$report.Contains($name) -or !$report.Contains('No work started.') -or !$report.Contains('Started: ')) {
+            throw 'Copied task report is missing its status, context, or result.'
+        }
+    } else { Write-Host 'SKIP: system clipboard check (shared with the working desktop).' }
     Invoke-Element $cancelled
     $null = Wait-For 'repository settings enabled again' { (By-Id 'MinLength').Current.IsEnabled }
     if (Test-Path -LiteralPath (Join-Path $rootPath $name)) { throw 'Cancelled waiting task created a folder.' }

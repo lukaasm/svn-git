@@ -73,7 +73,7 @@ public sealed class AppSettings
     /// <summary>Program that opens a worktree folder, for example "code" or "cursor". Empty means the Windows default.</summary>
     public string EditorCommand { get; set; } = "";
 
-    static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sg", "app.json");
+    static string FilePath => DebugTestRun.UserFile("app.json");
 
     public static AppSettings Load()
     {

@@ -51,6 +51,10 @@ function Start-Worktree([string]$name) {
     $create = Wait-For 'enabled create button' { $b = By-Id 'PrimaryButton'; if ($b -and $b.Current.IsEnabled) { $b } }
     Invoke-Element $create
 }
+function Select-TaskFilter([int]$index) {
+    (By-Id 'TaskFilter').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    Select-Element (Wait-For 'task filter item' { By-Id ('TaskFilter' + $index) })
+}
 function Task-Buttons {
     $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)) |
@@ -143,11 +147,15 @@ try {
     if ($strip -and !$strip.Current.IsOffscreen) { throw 'Duplicate page progress strip is still visible.' }
     Save-Window 'blocked'
     Invoke-Element $footer
+    Select-TaskFilter 1
+    $null = Wait-For 'active filter retains running work' { (By-Id 'TaskFilterSummary').Current.Name -eq '1 of 1 tasks' }
+    if ((By-Id 'ClearFinishedTasks').Current.IsEnabled) { throw 'Clear finished is enabled with no finished results.' }
     Select-Element (By-Id 'SettingsItem')
     $null = Wait-For 'progress survives navigation' { (By-Id 'TaskQueueSummary').Current.Name -like '*1 active*' }
     $null = Wait-For 'repository settings disabled' { $b = By-Id 'MinLength'; $b -and !$b.Current.IsEnabled }
     if (!(By-Id 'Verbose').Current.IsEnabled) { throw 'Unrelated settings were disabled.' }
     Invoke-Element (Wait-For 'global task cancellation' { By-Name 'Cancel task' })
+    Select-TaskFilter 0
     $null = Wait-For 'cancellation result retained' { Task-Buttons | Where-Object { $_.Current.Name -like 'Cancelled*' } }
     $null = Wait-For 'repository settings enabled again' { (By-Id 'MinLength').Current.IsEnabled }
     if (Test-Path -LiteralPath (Join-Path $rootPath $name)) { throw 'Cancelled waiting task created a folder.' }
@@ -170,7 +178,19 @@ try {
     $resultAction = Wait-For 'completed worktree action' { By-Id $resultId }
     if ($resultAction.Current.Name -ne 'Open folder' -or !$resultAction.Current.IsEnabled) { throw 'Completed worktree has no enabled folder action.' }
     if ($resultAction.Current.HelpText -ne (Join-Path $rootPath $name)) { throw 'Folder action points to the wrong worktree.' }
+    Select-TaskFilter 1
+    $null = Wait-For 'active filter becomes empty after completion' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 2 tasks' }
+    if (Task-Buttons | Where-Object { !$_.Current.IsOffscreen }) { throw 'Active filter shows finished results.' }
+    Select-TaskFilter 2
+    $null = Wait-For 'attention filter empty state' { By-Name 'No tasks need attention.' }
+    Select-TaskFilter 3
+    $null = Wait-For 'finished filter retains both receipts' { (By-Id 'TaskFilterSummary').Current.Name -eq '2 of 2 tasks' }
+    Select-TaskFilter 0
+    $null = Wait-For 'expanded result survives filtering' { $b = By-Id $resultId; $b -and !$b.Current.IsOffscreen }
     Save-Window 'completed'
+    Invoke-Element (By-Id 'ClearFinishedTasks')
+    $null = Wait-For 'clear finished updates list and summary' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 0 tasks' }
+    if ((By-Id 'ClearFinishedTasks').Current.IsEnabled) { throw 'Clear finished remained enabled for an empty queue.' }
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }
 catch {

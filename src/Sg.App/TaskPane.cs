@@ -17,6 +17,9 @@ public sealed class TaskPane : UserControl
     readonly TextBlock _empty = new() { Text = "No tasks this session.", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
     readonly StackPanel _body = new() { Visibility = Visibility.Collapsed };
     readonly Button _toggle;
+    readonly ComboBox _filter = new() { MinWidth = 170, SelectedIndex = 0 };
+    readonly TextBlock _viewSummary = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+    readonly Button _clear;
     public NavHost? Navigation { get; set; }
     sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp);
 
@@ -44,10 +47,28 @@ public sealed class TaskPane : UserControl
         var toolbar = new Grid { Padding = new Thickness(12, 0, 12, 8), ColumnSpacing = 12 };
         toolbar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        toolbar.Children.Add(new TextBlock { Text = "This session · select a task for its result and output", VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, FontSize = 12 });
-        var clear = new Button { Content = "Clear finished", Padding = new Thickness(8, 4, 8, 4), Style = (Style)Application.Current.Resources["QuietButton"] };
-        clear.Click += (_, _) => Session.Tasks.ClearFinished();
-        Grid.SetColumn(clear, 1); toolbar.Children.Add(clear);
+        AutomationProperties.SetAutomationId(_filter, "TaskFilter");
+        AutomationProperties.SetName(_filter, "Show tasks");
+        var filters = new[] { "All tasks", "Active", "Needs attention", "Finished" };
+        for (var i = 0; i < filters.Length; i++)
+        {
+            var item = new ComboBoxItem { Content = filters[i] };
+            AutomationProperties.SetAutomationId(item, "TaskFilter" + i);
+            _filter.Items.Add(item);
+        }
+        _filter.SelectedIndex = 0;
+        _filter.SelectionChanged += (_, _) => Refresh();
+        AutomationProperties.SetAutomationId(_viewSummary, "TaskFilterSummary");
+        var view = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        view.Children.Add(_filter); view.Children.Add(_viewSummary);
+        toolbar.Children.Add(view);
+        _clear = new Button { Content = "Clear finished", Padding = new Thickness(8, 4, 8, 4), Style = (Style)Application.Current.Resources["QuietButton"] };
+        AutomationProperties.SetAutomationId(_clear, "ClearFinishedTasks");
+        const string clearHelp = "Clear all finished results from this session, including failures, across every filter. Running tasks and saved recovery records are kept.";
+        ToolTipService.SetToolTip(_clear, clearHelp);
+        AutomationProperties.SetHelpText(_clear, clearHelp);
+        _clear.Click += (_, _) => { Session.Tasks.ClearFinished(); Refresh(); };
+        Grid.SetColumn(_clear, 1); toolbar.Children.Add(_clear);
         _body.Children.Add(toolbar);
         var list = new StackPanel(); list.Children.Add(_empty); list.Children.Add(_rows);
         _body.Children.Add(new ScrollViewer { Content = list, MaxHeight = 240, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
@@ -75,7 +96,24 @@ public sealed class TaskPane : UserControl
         _progress.Visibility = current == null ? Visibility.Collapsed : Visibility.Visible;
         _progress.IsIndeterminate = current != null && current.Percent == null;
         _progress.Value = current?.Percent ?? 0;
-        _empty.Visibility = tasks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        bool Visible(TaskSnapshot task) => _filter.SelectedIndex switch
+        {
+            1 => task.Active,
+            2 => task.State is TaskState.NeedsAttention or TaskState.Failed,
+            3 => !task.Active,
+            _ => true
+        };
+        var shown = tasks.Count(Visible);
+        _viewSummary.Text = $"{shown} of {tasks.Count} tasks";
+        _clear.IsEnabled = tasks.Any(t => !t.Active);
+        _empty.Text = tasks.Count == 0 ? "No tasks this session." : _filter.SelectedIndex switch
+        {
+            1 => "No active tasks. Finished results remain in All tasks.",
+            2 => "No tasks need attention.",
+            3 => "No finished tasks yet. Running work remains in Active.",
+            _ => "No tasks this session."
+        };
+        _empty.Visibility = shown == 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var id in _views.Keys.Except(tasks.Select(t => t.Id)).ToArray())
         {
             _rows.Children.Remove(_views[id].Card); _views.Remove(id);
@@ -88,6 +126,7 @@ public sealed class TaskPane : UserControl
                 _views.Add(task.Id, row);
                 _rows.Children.Insert(0, row.Card);
             }
+            row.Card.Visibility = Visible(task) ? Visibility.Visible : Visibility.Collapsed;
             var elapsed = (task.Finished ?? DateTimeOffset.Now) - task.Started;
             row.Title.Text = $"{State(task)} · {task.Title} · {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
             AutomationProperties.SetName(row.Toggle, row.Title.Text);

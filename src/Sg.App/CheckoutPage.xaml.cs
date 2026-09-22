@@ -54,7 +54,7 @@ public sealed partial class CheckoutPage : SgPage
         var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
         NewWorktreeButton.IsEnabled = _current != null && busy == null;
         var reason = busy != null
-            ? $"Unavailable while {busy.Title} is running. Wait for it to finish, or cancel it in Tasks."
+            ? busy.BlockingExplanation
             : _current == null ? "Select a checkout before creating a worktree." : "Create a worktree from this checkout's latest snapshot.";
         Tip(NewWorktreeButton, reason);
         AutomationProperties.SetHelpText(NewWorktreeButton, reason);
@@ -65,7 +65,7 @@ public sealed partial class CheckoutPage : SgPage
         var reasons = new List<string>();
         var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
         if (busy != null)
-            reasons.Add($"Sync and New worktree: {busy.Title} is using this repository. Wait for it to finish, or cancel it in Tasks. Actions unlock after it stops.");
+            reasons.Add("Sync and New worktree: " + busy.BlockingExplanation);
         if (!SvnCommitButton.IsEnabled)
             reasons.Add("Commit: " + AutomationProperties.GetHelpText(SvnCommitButton));
         if (!ShelfButton.IsEnabled)
@@ -272,6 +272,7 @@ public sealed partial class CheckoutPage : SgPage
     /// </summary>
     static void Tip(DependencyObject o, string text)
     {
+        text = TaskGate.Explain(o, text);
         ToolTipService.SetToolTip(o, text);
         AutomationProperties.SetHelpText(o, text);
     }

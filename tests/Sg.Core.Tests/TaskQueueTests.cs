@@ -4,6 +4,30 @@ namespace Sg.Core.Tests;
 
 public class TaskQueueTests
 {
+    [Theory]
+    [InlineData(false, false, "Cancelling queued task")]
+    [InlineData(true, false, "Cancelling")]
+    [InlineData(true, true, "Stopping after current step")]
+    public void Stop_request_stays_active_until_the_worker_reports_its_actual_result(bool running, bool boundary, string label)
+    {
+        var queue = new TaskQueue();
+        var task = queue.TryStart("Import", "root", boundary)!;
+        if (running) task.Running();
+        task.Cancel();
+        var stopping = task.Snapshot();
+        Assert.True(stopping.Stopping);
+        Assert.True(stopping.Active);
+        Assert.Equal(label, stopping.StatusLabel);
+        Assert.Contains("unlock after it stops", stopping.BlockingExplanation);
+        Assert.DoesNotContain("cancel it in Tasks", stopping.BlockingExplanation);
+        Assert.Null(queue.TryStart("colliding action", "root"));
+        // A completed final step can legitimately win the race with cancellation.
+        task.Finish(TaskState.Succeeded, "Finished before cancellation took effect.");
+        Assert.False(task.Snapshot().Stopping);
+        Assert.Equal("Completed", task.Snapshot().StatusLabel);
+        Assert.NotNull(queue.TryStart("next action", "root"));
+    }
+
     [Fact]
     public void Result_actions_use_typed_destinations_and_survive_late_updates()
     {

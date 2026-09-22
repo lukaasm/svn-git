@@ -18,6 +18,25 @@ public sealed record TaskSnapshot(Guid Id, string Title, string Root, TaskState 
 {
     public TaskFollowUp? FollowUp { get; init; }
     public bool Active => State is TaskState.Waiting or TaskState.Running;
+    public bool Stopping => Active && StopRequested;
+    public string StatusLabel => Stopping
+        ? State == TaskState.Waiting ? "Cancelling queued task" : StopAtBoundary ? "Stopping after current step" : "Cancelling"
+        : State switch
+        {
+            TaskState.Waiting => "Waiting", TaskState.Running => "Running", TaskState.Succeeded => "Completed",
+            TaskState.NeedsAttention => "Needs attention", TaskState.Failed => "Failed", _ => "Cancelled"
+        };
+    public string CancellationExplanation => State == TaskState.Waiting
+        ? StopRequested ? "No work has started. Waiting for cancellation to finish." : "Cancel before this task starts work."
+        : StopRequested
+            ? StopAtBoundary ? "The current step will finish before stopping. Completed steps are kept."
+                : "Cancellation requested. Waiting for the operation to stop; completed steps are kept."
+            : StopAtBoundary ? "Finish the current step, then stop. Completed steps are kept."
+                : "Request cancellation. Completed steps are kept; stopping may take a moment.";
+    public string BlockingExplanation => Stopping
+        ? $"{Title} is stopping. {CancellationExplanation} Repository actions unlock after it stops."
+        : $"Unavailable while {Title} is in progress. Wait for it to finish, or cancel it in Tasks. Repository actions unlock after it stops.";
+
 }
 
 /// <summary>Process-wide operation ownership, independent of windows. Mutations share a root's Git store.</summary>

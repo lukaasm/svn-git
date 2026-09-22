@@ -198,16 +198,13 @@ public static class Runner
                 return result;
             }
         }
-        catch (SgCancelledException)
+        catch (Exception ex) when (ex is SgCancelledException or OperationCanceledException)
         {
-            task.Finish(TaskState.Cancelled, "Cancelled. Any completed steps remain; check Activity for resumable work.");
-            pane.End(title + ": cancelled");
-            pane.Append("cancelled");
-            return null;
-        }
-        catch (OperationCanceledException)
-        {
-            task.Finish(TaskState.Cancelled, "Cancelled. Any completed steps remain; check Activity for resumable work.");
+            var started = task.Snapshot().State != TaskState.Waiting;
+            task.Finish(TaskState.Cancelled, started
+                ? "Cancelled. Completed steps are kept. Review Activity for saved work before starting again."
+                : "No work started. Cancelled while waiting for repository access.",
+                started ? new(TaskTargetKind.Activity) : null);
             pane.End(title + ": cancelled");
             pane.Append("cancelled");
             return null;

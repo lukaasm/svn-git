@@ -157,6 +157,13 @@ try {
     Invoke-Element (Wait-For 'global task cancellation' { By-Name 'Cancel task' })
     Select-TaskFilter 0
     $null = Wait-For 'cancellation result retained' { Task-Buttons | Where-Object { $_.Current.Name -like 'Cancelled*' } }
+    $cancelled = Task-Buttons | Where-Object { $_.Current.Name -like 'Cancelled*' } | Select-Object -First 1
+    Invoke-Element $cancelled
+    $null = Wait-For 'queued cancellation explains that no work started' {
+        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -like 'No work started. Cancelled while waiting for repository access.*' } | Select-Object -First 1
+    }
+    Invoke-Element $cancelled
     $null = Wait-For 'repository settings enabled again' { (By-Id 'MinLength').Current.IsEnabled }
     if (Test-Path -LiteralPath (Join-Path $rootPath $name)) { throw 'Cancelled waiting task created a folder.' }
     $heldLock.Dispose(); $heldLock = $null

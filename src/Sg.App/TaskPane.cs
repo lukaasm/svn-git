@@ -135,7 +135,9 @@ public sealed class TaskPane : UserControl
             if (row.Output.Text != task.Log) row.Output.Text = task.Log;
             row.Cancel.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
             row.Cancel.IsEnabled = !task.StopRequested;
-            row.Cancel.Content = task.StopAtBoundary ? "Stop after current step" : "Cancel task";
+            row.Cancel.Content = task.StopRequested ? "Stop requested" : task.StopAtBoundary ? "Stop after current step" : "Cancel task";
+            ToolTipService.SetToolTip(row.Cancel, task.CancellationExplanation);
+            AutomationProperties.SetHelpText(row.Cancel, task.CancellationExplanation);
             row.Bar.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
             row.Bar.IsIndeterminate = task.Active && task.Percent == null;
             row.Bar.Value = task.Percent ?? 0;
@@ -176,12 +178,13 @@ public sealed class TaskPane : UserControl
         }
     }
 
-    static string Message(TaskSnapshot t) => t.StopRequested && t.Active
-        ? (t.StopAtBoundary ? "Will stop after the current step. " : "Cancelling… ") + t.Detail : t.Detail;
+    static string Message(TaskSnapshot t) => t.Stopping
+        ? t.StatusLabel + ": " + t.CancellationExplanation + " Repository actions remain blocked.\n" + t.Detail : t.Detail;
     internal static string State(TaskSnapshot t) => t.State switch
     {
-        TaskState.Waiting => "Waiting", TaskState.Running => "Running", TaskState.Succeeded => "✓ Completed",
-        TaskState.NeedsAttention => "! Needs attention", TaskState.Failed => "! Failed", _ => "Cancelled"
+        TaskState.Succeeded => "✓ " + t.StatusLabel,
+        TaskState.NeedsAttention or TaskState.Failed => "! " + t.StatusLabel,
+        _ => t.StatusLabel
     };
     Row MakeRow(Guid id)
     {
@@ -190,7 +193,7 @@ public sealed class TaskPane : UserControl
         var output = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 12 };
         var cancel = new Button { Margin = new Thickness(0, 4, 12, 4), VerticalAlignment = VerticalAlignment.Top };
         AutomationProperties.SetAutomationId(cancel, "CancelTask_" + id);
-        cancel.Click += (_, _) => Session.Tasks.Cancel(id);
+        cancel.Click += (_, _) => { Session.Tasks.Cancel(id); Refresh(); };
         var followUp = new Button { Visibility = Visibility.Collapsed };
         AutomationProperties.SetAutomationId(followUp, "TaskResult_" + id);
         followUp.Click += (_, _) => OpenResult(id);
@@ -218,6 +221,19 @@ public sealed class TaskGate : ContentControl
     FrameworkElement? _child;
     string _help = "";
     bool _blocked;
+    bool _explicitHelp;
+    // Preserve normal help when a page refresh arrives before the task-change handler.
+    public static string Explain(DependencyObject control, string defaultHelp)
+    {
+        for (DependencyObject? parent = control; parent != null; parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(parent))
+        {
+            if (parent is not TaskGate gate) continue;
+            gate._help = defaultHelp;
+            gate._explicitHelp = true;
+            return Session.Tasks.Blocking(Session.Root?.RootPath ?? "")?.BlockingExplanation ?? defaultHelp;
+        }
+        return defaultHelp;
+    }
     public TaskGate()
     {
         IsTabStop = false;
@@ -229,7 +245,7 @@ public sealed class TaskGate : ContentControl
             if (_gate == null && Content is FrameworkElement child)
             {
                 _child = child;
-                _help = AutomationProperties.GetHelpText(child);
+                if (!_explicitHelp) _help = AutomationProperties.GetHelpText(child);
                 SetBinding(VisibilityProperty, new Binding { Source = child, Path = new PropertyPath("Visibility"), Mode = BindingMode.OneWay });
                 Content = null;
                 _gate = new ContentControl
@@ -249,14 +265,15 @@ public sealed class TaskGate : ContentControl
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(Changed); return; }
         var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
         if (_gate != null) _gate.IsEnabled = busy == null;
-        var reason = busy == null ? null : $"Unavailable while {busy.Title} is running. Wait for it to finish, or cancel it in Tasks. This action becomes available after the task stops.";
+        var reason = busy?.BlockingExplanation;
         // Keep the wrapper enabled so the tooltip remains reachable over its disabled child.
         ToolTipService.SetToolTip(this, reason);
         AutomationProperties.SetHelpText(this, reason ?? "");
         if (_child != null)
         {
-            if (reason != null && !_blocked) _help = AutomationProperties.GetHelpText(_child);
+            if (reason != null && !_blocked && !_explicitHelp) _help = AutomationProperties.GetHelpText(_child);
             if (reason != null || _blocked) AutomationProperties.SetHelpText(_child, reason ?? _help);
+            if (_explicitHelp) ToolTipService.SetToolTip(_child, reason ?? _help);
         }
         _blocked = reason != null;
     }

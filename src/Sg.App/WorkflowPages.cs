@@ -48,6 +48,8 @@ public abstract class WorkflowPage : SgPage
         finally { _busy = false; _scroll.IsEnabled = true; if (Host?.Current == this) await Reload(); }
     }
     protected Task Navigate(Func<SgPage> page, string key) { Go(page, key); return Task.CompletedTask; }
+    // Keep the persisted operation kind stable for older installations and recovery records.
+    protected static string OperationTitle(OperationRecord record) => record.Kind == "Update from SVN" ? "Pull from SVN" : record.Kind;
 }
 
 public sealed class UpdateBranchPage : WorkflowPage
@@ -55,7 +57,7 @@ public sealed class UpdateBranchPage : WorkflowPage
     readonly string _path;
     Func<Task>? _submit;
     OperationRecord? _lastResult;
-    public UpdateBranchPage(string path) : base("Update from SVN")
+    public UpdateBranchPage(string path) : base("Pull from SVN")
     {
         _path = path; Subtitle = path; Pane.StopAtBoundary(true);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (_submit != null) _ = _submit(); });
@@ -68,7 +70,7 @@ public sealed class UpdateBranchPage : WorkflowPage
         Body.Children.Clear(); _submit = null;
         if (state is OperationRecord record)
         {
-            Title = record.Kind; Branch = record.Branch; Checkout = record.Checkout;
+            Title = OperationTitle(record); Branch = record.Branch; Checkout = record.Checkout;
             Text(record.PhaseLabel, true); Text(record.Detail ?? (record.Terminal ? "The recorded operation is complete. Its checkpoint and recovery shelves remain available." : "The operation can resume from its recorded step."));
             foreach (var step in record.Steps) Text("✓ " + step);
             Text("Branch checkpoint: " + record.Before + ". Restoring it does not undo SVN updates or published commits.");
@@ -76,8 +78,8 @@ public sealed class UpdateBranchPage : WorkflowPage
                 Action("Review replay", () => Navigate(() => new ConflictPage(_path), "resolve:" + _path));
             if (!record.Terminal && record.Phase != OperationPhase.NeedsReview)
             {
-                _submit = () => Execute("Resume update", () => _lastResult = Operations.Resume(root, record.Id));
-                Action(record.Kind == "Update from SVN" ? "Resume update" : "Refresh operation state", _submit, true, mutates: true);
+                _submit = () => Execute("Resume pull", () => _lastResult = Operations.Resume(root, record.Id));
+                Action(record.Kind == "Update from SVN" ? "Resume pull" : "Refresh operation state", _submit, true, mutates: true);
             }
             Action("Review saved edits", () => Navigate(() => new ShelfPage(root.Checkout(record.Checkout)), "shelves:" + record.Checkout));
             if (!record.Terminal)
@@ -91,17 +93,62 @@ public sealed class UpdateBranchPage : WorkflowPage
         {
             Branch = plan.Branch; Checkout = plan.Checkout;
             Text($"{plan.Branch} · {plan.Commits} local commits", true);
-            Text("Save edits → sync SVN → replay commits → recover checkout edits → recover branch edits");
-            foreach (var revision in plan.Revisions) Text($"{revision.WorkingCopy}: snapshot r{revision.From} → server r{revision.To} (checked now; sync may fetch newer work)");
-            Text("Ignored files stay in place and are outside shelf coverage. Shared links follow the checkout; private shared-folder copies are not refreshed by this update.");
-            Text($"Branch edits to preserve ({plan.BranchEdits.Count})\n" + string.Join("\n", plan.BranchEdits));
-            Text($"Checkout edits to preserve ({plan.CheckoutEdits.Count})\n" + string.Join("\n", plan.CheckoutEdits));
-            foreach (var blocker in plan.Blockers) Text(blocker);
-            if (plan.Ready) _submit = () => Execute("Update from SVN", () => _lastResult = Operations.Run(root, plan));
-            Action(plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and update" : "Update branch", () => Execute("Update from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true);
+            Body.Children.Add(new StatusChip { Text = plan.Ready ? "Ready to pull" : "Needs attention", Severity = plan.Ready ? ChipSeverity.Success : ChipSeverity.Critical, Glyph = plan.Ready ? "\uE73E" : "\uE7BA" });
+            Text("Save edits → sync SVN → replay commits → restore edits");
+            Link("Review local commits", "\uE81C", () => new LogPage(_path), "log:" + _path);
+            Text("SVN revisions", true);
+            foreach (var revision in plan.Revisions)
+            {
+                var changed = revision.From != revision.To;
+                var row = new Grid { ColumnSpacing = 12 };
+                row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+                row.Children.Add(new StatusChip { Text = changed ? "Changed" : "Matching", Severity = changed ? ChipSeverity.Caution : ChipSeverity.Success, Glyph = changed ? "\uE895" : "\uE73E" });
+                var description = new TextBlock { Text = $"{revision.WorkingCopy} · r{revision.From} → r{revision.To}", TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(description, 1);
+                row.Children.Add(description);
+                Body.Children.Add(row);
+            }
+            Text("Checked now. Sync may fetch newer work.");
+            Link("View SVN log", "\uE81C", () => new SvnLogPage(root.Checkout(plan.Checkout)), "svnlog:" + plan.Checkout);
+            Edits("Branch edits", plan.BranchEdits, _path);
+            Edits("Checkout edits", plan.CheckoutEdits, root.Checkout(plan.Checkout).Path);
+            Body.Children.Add(new Expander { Header = "What is preserved?", HorizontalAlignment = HorizontalAlignment.Stretch, Content = new TextBlock { Text = "Ignored files stay in place and are outside shelf coverage. Shared links follow the checkout; private shared-folder copies are not refreshed by this update.", TextWrapping = TextWrapping.Wrap } });
+            foreach (var blocker in plan.Blockers) Body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Error, Message = blocker });
+            if (plan.Ready) _submit = () => Execute("Pull from SVN", () => _lastResult = Operations.Run(root, plan));
+            var updateLabel = plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and pull" : "Pull from SVN";
+            var update = Action(updateLabel, () => Execute("Pull from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true);
+            update.Content = Label(updateLabel, "\uE8AB");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(update, updateLabel);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(update, "PullFromSvnButton");
         }
-        Action("Activity and checkpoints", () => Navigate(() => new ActivityPage(), "activity"));
-        Action("Plan another update", () => { _lastResult = null; return Reload(); });
+        Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
+        var refresh = Action("Refresh pull plan", () => { _lastResult = null; return Reload(); });
+        refresh.Content = Label("Refresh pull plan", "\uE72C");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(refresh, "Refresh pull plan");
+    }
+
+    static StackPanel Label(string text, string glyph)
+    {
+        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        label.Children.Add(new FontIcon { Glyph = glyph, FontSize = 16 });
+        label.Children.Add(new TextBlock { Text = text });
+        return label;
+    }
+    void Link(string text, string glyph, Func<SgPage> page, string key)
+    {
+        var link = new HyperlinkButton { Content = Label(text, glyph), Padding = new Thickness(0, 4, 0, 4) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(link, text);
+        // Finish the link's invocation before replacing its visual tree with a page containing WebView.
+        link.Click += (_, _) => DispatcherQueue.TryEnqueue(() => Go(page, key));
+        Body.Children.Add(link);
+    }
+    void Edits(string title, IReadOnlyCollection<string> files, string path)
+    {
+        Body.Children.Add(new StatusChip { Text = files.Count == 0 ? title + ": clean" : $"{title}: {files.Count} to preserve", Glyph = files.Count == 0 ? "\uE73E" : "\uE70F", Severity = files.Count == 0 ? ChipSeverity.Success : ChipSeverity.Attention });
+        if (files.Count == 0) return;
+        Body.Children.Add(new Expander { Header = $"Show {files.Count} changed files", HorizontalAlignment = HorizontalAlignment.Stretch, Content = new TextBlock { Text = string.Join("\n", files), TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true } });
+        Link("Review " + title.ToLowerInvariant(), "\uE70F", () => new CommitPage(path), "commit:" + path);
     }
 }
 
@@ -129,7 +176,7 @@ public sealed class ActivityPage : WorkflowPage
         if (records.Count == 0 && data.Replays.Count == 0) Text("No recorded operations yet.");
         foreach (var record in records)
         {
-            Text(record.Kind + " · " + record.Branch, true);
+            Text(OperationTitle(record) + " · " + record.Branch, true);
             Text($"{record.Updated.LocalDateTime:g} · {record.PhaseLabel}\n{record.Detail}\n" + string.Join("\n", record.Steps));
             if (!record.Terminal) Action(record.Action, () => Navigate(() => new UpdateBranchPage(record.Path), "update-branch:" + record.Path));
             if (record.Before.Length > 0) Action("Restore commits to a separate branch", () =>

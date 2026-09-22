@@ -250,6 +250,42 @@ try {
     Invoke-Element (By-Id 'ClearFinishedTasks')
     $null = Wait-For 'clear finished updates list and summary' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 0 tasks' }
     if ((By-Id 'ClearFinishedTasks').Current.IsEnabled) { throw 'Clear finished remained enabled for an empty queue.' }
+    Start-UiScenario 'Advanced worktree actions'
+    $branch = Wait-For 'created branch card' { By-Name $name }
+    $parent = $branch
+    $scroll = $null
+    while ($parent) {
+        if ($parent.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable) { break }
+        $parent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
+    }
+    if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
+    $expandable = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
+    $branchControl = $branch.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable)
+    if (!$branchControl) { throw 'Worktree card has no accessible expansion control.' }
+    $expand = $branchControl.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
+    $advanced = Wait-For 'advanced worktree menu' { By-Id 'AdvancedWorktreeActions' }
+    $advancedControl = $advanced.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable)
+    $advancedPattern = $advancedControl.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    if ($advancedPattern.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { throw 'Advanced options must start collapsed.' }
+    $advancedPattern.Expand()
+    if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
+    $review = Wait-For 'visible review action in expanded menu' {
+        $action = By-Id 'ReviewReadinessAction'
+        if ($action) {
+            $bounds = $action.Current.BoundingRectangle
+            $viewport = $parent.Current.BoundingRectangle
+            if ($bounds.Height -gt 0 -and $bounds.Top -ge $viewport.Top -and $bounds.Bottom -le $viewport.Bottom) { return $action }
+        }
+        if ($scroll) { $scroll.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount, [System.Windows.Automation.ScrollAmount]::SmallDecrement) }
+    }
+    if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'advanced-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
+    Invoke-Element $review
+    $null = Wait-For 'review page opens from advanced menu' { By-Name 'Run local checks' }
+    Invoke-Element (By-Id 'NavigationViewBackButton')
+    $null = Wait-For 'overview returns after advanced navigation' { By-Id 'SyncButton' }
+    if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'worktree-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
     Complete-UiScenario
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }

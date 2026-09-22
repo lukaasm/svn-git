@@ -183,7 +183,7 @@
                             <!-- Closed, the card is the branch, its badges, what to do about them, and the button that
                                  does it. Open, it is every other thing a worktree can do. A worktree with nothing to
                                  say keeps all of that but steps back, so the card that is asking is the one the eye lands on. -->
-                            <controls:SettingsExpander Margin="0,0,0,4" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" Opacity="{x:Bind CardOpacity, Mode=OneWay}">
+                            <controls:SettingsExpander Margin="0,0,0,4" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" Opacity="{x:Bind CardOpacity, Mode=OneWay}" AutomationProperties.Name="{x:Bind Branch}">
                                 <!-- No icon on the left: the chips on the right already wear the glyph and the colour of
                                      every state, and a glyph that repeated the loudest of them was the same fact twice.
                                      The sentence that used to run under the name is the first row inside the card, so
@@ -287,8 +287,6 @@
                                             <FontIcon Glyph="&#xE7B8;" />
                                         </controls:SettingsCard.HeaderIcon>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Review readiness" Description="Review a specific branch version and run local checks." IsClickEnabled="True" Tag="{x:Bind}" Click="Review_Click" />
-                                      <controls:SettingsCard Header="Backup coverage" Description="Check included work, test restoration, and create a handoff receipt." IsClickEnabled="True" Tag="{x:Bind}" Click="Coverage_Click" />
                                       <controls:SettingsCard Header="Log" Description="The commits on the branch and the snapshots under it, with files and diffs."
                                                            IsClickEnabled="True" Tag="{x:Bind}" Click="Log_Click">
                                         <controls:SettingsCard.HeaderIcon>
@@ -306,12 +304,12 @@
                                          else: six left edges down one column, each a few pixels off the last. The
                                          width is the widest word here with room around it, and MinWidth rather than
                                          Width so a longer label or a larger font still fits rather than being cut. -->
-                                    <controls:SettingsCard Header="Update from SVN" Description="Save local edits, sync SVN, replay commits, and recover edits."
+                                    <controls:SettingsCard Header="Pull from SVN" Description="Save local edits, sync SVN, replay commits, and recover edits."
                                                            Visibility="{x:Bind RebaseVisibility, Mode=OneWay}">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE8AB;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Update from SVN" Tag="{x:Bind}" Click="Rebase_Click" />
+                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Pull from SVN" Tag="{x:Bind}" Click="Rebase_Click" />
                                     </controls:SettingsCard>
                                     <!-- Only while the last backup found the remote holding something this machine does not: the
                                          row is the way to take it, where the reader is, instead of a toast that points at another page. -->
@@ -341,6 +339,18 @@
                                             <local:IconButton MinWidth="124" Glyph="&#xE70F;" Text="Editor" Tag="{x:Bind}" Click="Editor_Click" ToolTipService.ToolTip="Open the worktree in the editor set in Settings, or the Windows default for a folder." />
                                         </StackPanel>
                                     </controls:SettingsCard>
+                                    <controls:SettingsCard Padding="0" HorizontalContentAlignment="Stretch" ContentAlignment="Vertical">
+                                    <controls:SettingsExpander Header="Advanced" Description="Review checks, backup coverage, export, and worktree settings." HorizontalAlignment="Stretch" AutomationProperties.Name="Advanced" AutomationProperties.AutomationId="AdvancedWorktreeActions">
+                                      <controls:SettingsExpander.HeaderIcon><FontIcon Glyph="&#xE713;" /></controls:SettingsExpander.HeaderIcon>
+                                      <controls:SettingsExpander.Items>
+                                        <controls:SettingsCard Header="Review readiness" Description="Review a branch version and run local checks.">
+                                            <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE73E;" /></controls:SettingsCard.HeaderIcon>
+                                            <local:IconButton MinWidth="124" Text="Review" Glyph="&#xE73E;" Tag="{x:Bind}" Click="Review_Click" AutomationProperties.AutomationId="ReviewReadinessAction" />
+                                        </controls:SettingsCard>
+                                        <controls:SettingsCard Header="Backup coverage" Description="Check coverage, test restoration, and create a handoff receipt.">
+                                            <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE74E;" /></controls:SettingsCard.HeaderIcon>
+                                            <local:IconButton MinWidth="124" Text="Coverage" Glyph="&#xE74E;" Tag="{x:Bind}" Click="Coverage_Click" />
+                                        </controls:SettingsCard>
                                     <!-- Whether this worktree goes with the backup at all. On the card rather than in Settings: the
                                          choice is about one worktree, and the chip that says "excluded" is on this same card. -->
                                     <controls:SettingsCard Header="Backup" Description="{x:Bind ExcludeDescription, Mode=OneWay}"
@@ -370,6 +380,9 @@
                                         <local:TaskGate>
                                             <local:IconButton MinWidth="124" Glyph="&#xE74D;" Text="Remove" Tag="{x:Bind}" Click="Remove_Click" />
                                         </local:TaskGate>
+                                    </controls:SettingsCard>
+                                      </controls:SettingsExpander.Items>
+                                    </controls:SettingsExpander>
                                     </controls:SettingsCard>
                                 </controls:SettingsExpander.Items>
                             </controls:SettingsExpander>

@@ -447,7 +447,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
             ? $"The {StoppedVerb} stopped on 1 file. Resolve it to continue."
             : $"The {StoppedVerb} stopped on {Conflicts} files. Resolve them to continue.")
         : Pending ? "A push stopped half way. Fix the cause and push again."
-        : Dirty && Behind > 0 ? $"Update from SVN will save and recover the {DirtyFilesText}."
+        : Dirty && Behind > 0 ? $"Pull from SVN will save and recover the {DirtyFilesText}."
         : Dirty ? $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} not committed. Commit them, or discard them."
         : Behind > 0 ? (Behind == 1
             ? "1 snapshot behind. Rebase onto the current SVN snapshot."
@@ -495,7 +495,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         WorktreeAction.Resolve => Conflicts > 0 ? $"Resolve {Conflicts} file(s)" : "Resume operation",
         WorktreeAction.Push => "Push to SVN",
         WorktreeAction.Commit => "Commit",
-        WorktreeAction.Rebase => "Update from SVN",
+        WorktreeAction.Rebase => "Pull from SVN",
         _ => "Log",
     };
 

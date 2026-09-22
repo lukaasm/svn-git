@@ -40,10 +40,7 @@ function Wait-For([string]$description, [scriptblock]$read) {
 }
 function Find-Ui([string]$value, [switch]$Name, [switch]$Invokable, [switch]$IncludeOffscreen) {
     $property = if ($Name) { [System.Windows.Automation.AutomationElement]::NameProperty } else { [System.Windows.Automation.AutomationElement]::AutomationIdProperty }
-    $found = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new($property, $value)) |
-        Where-Object { ($IncludeOffscreen -or $Invokable -or !$_.Current.IsOffscreen) -and (!$Invokable -or $_.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty)) } | Select-Object -First 1
-    if ($found) { return $found }
-    # WebView's provider can truncate FindAll before the native footer. Walk native controls
+    # WebView's provider can stall or truncate FindAll before the native footer. Walk native controls
     # without entering the embedded browser; all workflow actions belong to the XAML host.
     function Find-Native($parent) {
         $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
@@ -224,13 +221,23 @@ try {
     Stop-App
 
     # Sync real changes from a second SVN working copy, then update a branch through the GUI.
-    Start-UiScenario 'Update from SVN'
+    Start-UiScenario 'Pull from SVN'
     $other = Join-Path $fixture 'other'
     $null = Run 'svn' @('checkout', '--non-interactive', ($url + '/trunk'), $other)
     [IO.File]::WriteAllText((Join-Path $other 'base.txt'), "fresh SVN content`n")
     $null = Run 'svn' @('commit', '--non-interactive', $other, '-m', 'Fresh upstream content')
     Start-App 'rebase' $imported
-    Invoke-Ui 'Update branch' -Name
+    $null = Wait-For 'structured update plan' { Find-Ui 'View SVN log' -Name -Invokable }
+    if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'update-plan.png') } catch { Write-Host "Optional preview capture: $_" } }
+    Invoke-Ui 'Review local commits' -Name
+    $null = Wait-For 'local commit log opened' { Find-Ui 'Commits' }
+    Invoke-Ui 'NavigationViewBackButton'
+    $null = Wait-For 'update plan restored after log navigation' { Find-Ui 'Refresh pull plan' -Name -Invokable }
+    Invoke-Ui 'View SVN log' -Name
+    $null = Wait-For 'SVN log opened' { Find-Ui 'Revisions' }
+    Invoke-Ui 'NavigationViewBackButton'
+    $null = Wait-For 'update plan restored after SVN navigation' { Find-Ui 'Refresh pull plan' -Name -Invokable }
+    Invoke-Ui 'PullFromSvnButton'
     Wait-Receipt
     $null = Run 'git' @('-C', $imported, 'merge-base', '--is-ancestor', 'svn/checkout', 'HEAD')
     if ([IO.File]::ReadAllText((Join-Path $imported 'base.txt')) -ne "fresh SVN content`n") { throw 'Update missed fresh SVN content.' }

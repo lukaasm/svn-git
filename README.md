@@ -32,7 +32,9 @@ For full workflow checks, also build the Debug CLI and run `scripts/test-workflo
 
 Import and backup restore validate branch names and destination folders before enabling submission. Checks run after a short typing pause without blocking the UI; the full reason remains visible and available to screen readers.
 
-Branch cards offer **Update from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
+Branch cards offer **Pull from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
+
+Pull previews use labeled status colors for revisions and saved edits, with links to local commits, SVN history, and changed files. File lists and preservation details expand on demand. Worktree **Advanced** actions group readiness checks, backup coverage, export, and worktree settings; daily actions and recovery remain directly available.
 
 **Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
 

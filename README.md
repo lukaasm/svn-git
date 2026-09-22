@@ -451,7 +451,11 @@ exist. Finish later leaves the operation available on the branch card. Manual pa
 resolution of the remaining series are under More.
 
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
-default). Automatic backups run only at that interval; commits, shelves, rebases, and navigation do not trigger extra runs. Zero disables automatic backups. Manual backup remains available. Every worktree card
+default). Automatic backups run only at that interval; commits, shelves, rebases, and navigation do not trigger extra runs.
+Settings and Backup show the next scheduled time and the last complete successful backup for this destination.
+Changing the interval starts a new countdown immediately; navigation does not reset it. Keep the overview open or
+running in the tray: busy intervals are skipped until the next tick. Zero disables automatic backups. Manual backup remains available.
+Success history is recorded by this version onward and survives later failures; checks and runs with conflicts or omitted files do not count as complete success. Every worktree card
 says "backed up 3 min ago", "2 commits not backed up", "backup failed" with the reason, or "backing up...", and
 its Backup row has Exclude: the worktree stays out of every backup, the chip says "excluded from the backup", and
 Include puts it back. **Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item

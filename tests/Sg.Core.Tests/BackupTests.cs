@@ -509,6 +509,8 @@ public sealed class BackupTests : IDisposable
         Fixture.Put(wt, "fort/dev/new/file.txt", "brand new\nand a line\n");
         f.Root.Git.Ok(wt, "commit", "-q", "-am", "third: one more line");
         var newer = Item(Backup.Run(f.Root), "branch", "feature-x").Thin;
+        var lastSuccess = Backup.LastSuccess(f.Root);
+        Assert.NotNull(lastSuccess);
 
         // This root loses its memory of the push and rewinds a commit: the remote now holds a strict
         // descendant of the tip here, so a push would send an older copy. Backup says behind, sends nothing.
@@ -520,6 +522,7 @@ public sealed class BackupTests : IDisposable
         Assert.True(r.Ok, item.State + " " + item.Why);
         Assert.True(item.Behind, item.State);
         Assert.Equal(1, r.Behind);
+        Assert.Equal(lastSuccess, Backup.LastSuccess(f.Root));
         Assert.Equal(newer, RemoteGit("rev-parse", "refs/heads/feature-x").Trim());
     }
 
@@ -694,6 +697,7 @@ public sealed class BackupTests : IDisposable
         var wip = Item(r, "wip", "feature-x");
         Assert.Equal("pushed", wip.State);
         Assert.Contains(wip.LeftOut, l => l.StartsWith("fort/dev/preview/big.dll (", StringComparison.Ordinal));
+        Assert.Null(Backup.LastSuccess(f.Root));
 
         var objects = RemoteGit("rev-list", "--objects", "--all");
         Assert.DoesNotContain("movie.ogv", objects);
@@ -704,6 +708,7 @@ public sealed class BackupTests : IDisposable
         var again = Backup.Run(f.Root);
         Assert.Equal("up to date", Item(again, "branch", "feature-x").State);
         Assert.Equal("up to date", Item(again, "wip", "feature-x").State);
+        Assert.Null(Backup.LastSuccess(f.Root));
 
         var far = Far();
         var back = Backup.Restore(far.Root, "feature-x", wip: true);
@@ -742,6 +747,7 @@ public sealed class BackupTests : IDisposable
         Assert.Contains("fort/dev/", wip.Why);
         Assert.False(r.Ok);
         Assert.DoesNotContain("refs/sg/wip/feature-x", RemoteGit("ls-remote", "--refs", _remote));
+        Assert.Null(Backup.LastSuccess(f.Root));
         var status = Ops.Status(f.Root, checkSvn: false).Worktrees;
         Assert.StartsWith("uncommitted changes: ", status.Single(w => w.Branch == "feature-x").BackupFailed);
         Assert.Null(status.Single(w => w.Branch == "feature-y").BackupFailed);
@@ -750,6 +756,7 @@ public sealed class BackupTests : IDisposable
         Directory.Delete(Path.Combine(wt, "fort", "dev", "output"), recursive: true);
         var after = Backup.Run(f.Root);
         Assert.True(after.Ok, string.Join("\n", after.Items.Select(i => i.State + " " + i.Why)));
+        Assert.Equal(after.When, Backup.LastSuccess(f.Root));
         Assert.Null(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-x").BackupFailed);
     }
 
@@ -783,6 +790,42 @@ public sealed class BackupTests : IDisposable
         var failed = Backup.Last(f.Root)!;
         Assert.Contains("cannot reach", failed.Error);
         Assert.False(failed.Ok);
+    }
+
+    [Fact]
+    public void LastSuccess_SurvivesFailureAndRestart_AndBelongsToItsDestination()
+    {
+        f.Setup();
+        MakeBranch("feature-success");
+        Backup.Set(f.Root, Remote());
+        Assert.Null(Backup.LastSuccess(f.Root));
+        var first = Backup.Run(f.Root);
+        Assert.Equal(first.When, Backup.LastSuccess(f.Root));
+
+        Backup.Run(f.Root, check: true);
+        Assert.Equal(first.When, Backup.LastSuccess(f.Root));
+
+        // The same destination becomes unreachable. Preserve its previous success, even after reopening.
+        var offline = _remote + ".offline";
+        Directory.Move(_remote, offline);
+        try { Assert.Throws<SgException>(() => Backup.Run(f.Root)); }
+        finally { Directory.Move(offline, _remote); }
+        Assert.NotNull(Backup.Last(f.Root)!.Error);
+        Assert.Equal(first.When, Backup.LastSuccess(SgRoot.Open(f.Root.RootPath, f.Log)));
+
+        f.Root.Config.Backup!.Prefix = "another-machine";
+        Assert.Null(Backup.LastSuccess(f.Root));
+        f.Root.Config.Backup.Prefix = "";
+        f.Root.Config.Backup.Url = Path.Combine(f.Base, "another.git");
+        Assert.Null(Backup.LastSuccess(f.Root));
+        f.Root.Config.Backup.Url = _remote;
+        Assert.Equal(first.When, Backup.LastSuccess(f.Root));
+
+        var again = Backup.Run(f.Root);
+        Assert.Equal(0, again.Pushed);
+        Assert.Equal(again.When, Backup.LastSuccess(f.Root));
+        File.WriteAllText(Path.Combine(f.Root.StorePath, "backup-success.json"), "invalid json");
+        Assert.Null(Backup.LastSuccess(f.Root));
     }
 
     /// <summary>

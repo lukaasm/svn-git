@@ -431,13 +431,17 @@ public static partial class Backup
     /// <remarks>force with only writes over just the items it names - by name, kind/name, or remote ref - and the rest reconcile as usual.</remarks>
     public static BackupResult Run(SgRoot root, bool check = false, bool force = false, IReadOnlyCollection<string>? only = null)
     {
-        Require(root);
+        var cfg = Require(root);
+        // Keep the result and its success receipt in the same operation, including CLI runs.
+        using var operation = root.Lock();
         if (check) return RunOnce(root, check: true, force, only);
         try
         {
             var res = RunOnce(root, check: false, force, only);
             res.When = DateTimeOffset.Now;
             KeepLast(root, res);
+            if (res.Error == null && res.Items.All(i => i.State is "pushed" or "up to date" && i.LeftOut.Count == 0))
+                KeepSuccess(root, new(cfg.Url, cfg.Prefix, res.When.Value));
             return res;
         }
         catch (SgException e)
@@ -451,6 +455,30 @@ public static partial class Backup
 
     /// <summary>Where the last run's result is kept, so every window can say how the timer's backup went, not only the one that ran it.</summary>
     static string LastPath(SgRoot root) => Path.Combine(root.StorePath, "backup-last.json");
+
+    sealed record SuccessReceipt(string Url, string Prefix, DateTimeOffset When);
+    static string SuccessPath(SgRoot root) => Path.Combine(root.StorePath, "backup-success.json");
+
+    /// <summary>
+    /// Last complete successful run for this destination. Checks, failures, newer remote work and
+    /// omitted files do not replace it. Older versions did not keep a success receipt.
+    /// </summary>
+    public static DateTimeOffset? LastSuccess(SgRoot root)
+    {
+        if (root.Config.Backup is not { } cfg) return null;
+        try
+        {
+            var receipt = System.Text.Json.JsonSerializer.Deserialize<SuccessReceipt>(File.ReadAllText(SuccessPath(root)), LastJson);
+            return receipt?.Url == cfg.Url && receipt.Prefix == cfg.Prefix ? receipt.When : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return null; }
+    }
+
+    static void KeepSuccess(SgRoot root, SuccessReceipt receipt)
+    {
+        try { AtomicFile.WriteAllText(SuccessPath(root), System.Text.Json.JsonSerializer.Serialize(receipt, LastJson)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { root.Log.Warn("the successful backup time could not be kept: " + e.Message); }
+    }
 
     /// <summary>How the last backup went, or null when none has run here or the file cannot be read.</summary>
     public static BackupResult? Last(SgRoot root)

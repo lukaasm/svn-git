@@ -7,6 +7,7 @@ namespace Sg.App;
 /// <summary>Per-user GUI settings in %LOCALAPPDATA%\sg\app.json. The bridge settings live in the root's sg.json.</summary>
 public sealed class AppSettings
 {
+    public event Action? Saved;
     public string? LastRoot { get; set; }
 
     /// <summary>
@@ -89,6 +90,7 @@ public sealed class AppSettings
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        Saved?.Invoke();
     }
 }
 
@@ -117,6 +119,15 @@ public static class Session
 
     /// <summary>A backup is running. The worktree badges say so, rather than what the last one found.</summary>
     public static bool BackingUp { get; set; }
+
+    /// <summary>The overview's actual timer deadline. Null when its scheduler is stopped.</summary>
+    public static DateTimeOffset? NextBackup { get; private set; }
+    public static event Action? BackupScheduleChanged;
+    internal static void SetNextBackup(DateTimeOffset? when)
+    {
+        NextBackup = when;
+        BackupScheduleChanged?.Invoke();
+    }
 
     public static bool Open(string? hint)
     {

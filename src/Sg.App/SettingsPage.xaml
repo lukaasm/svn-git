@@ -93,6 +93,7 @@
                     </controls:SettingsCard.HeaderIcon>
                     <NumberBox x:Name="BackupMinutes" Minimum="0" Maximum="1440" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
                 </controls:SettingsCard>
+                <local:BackupStatusView />
 
                 <TextBlock Text="Background" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
                 <controls:SettingsCard Header="Keep running in the tray"

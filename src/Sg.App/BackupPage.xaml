@@ -15,6 +15,7 @@
              above the scroller, and a report of a few rows pushed the list under it out of reach. -->
         <ScrollViewer Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
+                <local:BackupStatusView />
 
                 <!-- How the last backup went, whoever ran it: the timer, this page, or sg backup in a terminal. -->
                 <local:ReportCard x:Name="LastReport" />

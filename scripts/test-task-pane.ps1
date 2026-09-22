@@ -312,15 +312,22 @@ try {
     Start-UiScenario 'Only the backup interval triggers automatic backups'
     Select-Element (By-Id 'SettingsItem')
     $minutes = Wait-For 'backup interval setting' { By-Id 'BackupMinutes' }
+    $null = Wait-For 'disabled backup status' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' }
+    $intervalStarted = [DateTime]::UtcNow
     $minutes.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(1)
     $null = Wait-For 'backup interval saved' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 1 }
+    $nextRun = Wait-For 'next backup time updates without leaving Settings' { $t = By-Id 'BackupNextRun'; if ($t.Current.HelpText) { $t } }
+    $firstDue = [DateTimeOffset]::Parse($nextRun.Current.HelpText)
+    if ([Math]::Abs(($firstDue.UtcDateTime - $intervalStarted.AddMinutes(1)).TotalSeconds) -gt 5) { throw 'Displayed backup time is not the configured interval.' }
     Invoke-Element (By-Id 'NavigationViewBackButton')
     $null = Wait-For 'overview after setting interval' { By-Id 'SyncButton' }
-    $intervalStarted = [DateTime]::UtcNow
     while ([DateTime]::UtcNow -lt $intervalStarted.AddSeconds(15)) {
         if (Task-Buttons | Where-Object { $_.Current.Name -like '*Scheduled backup*' }) { throw 'Navigation triggered a backup before the interval.' }
         Start-Sleep -Milliseconds 500
     }
+    Select-Element (By-Id 'SettingsItem')
+    $nextRun = Wait-For 'schedule after returning to Settings' { $t = By-Id 'BackupNextRun'; if ($t.Current.HelpText) { $t } }
+    if ([DateTimeOffset]::Parse($nextRun.Current.HelpText) -ne $firstDue) { throw 'Navigation postponed the scheduled backup.' }
     $deadline = $intervalStarted.AddSeconds(90)
     do {
         $backups = @(Task-Buttons | Where-Object { $_.Current.Name -like '*Scheduled backup*' })
@@ -330,10 +337,31 @@ try {
     if ($backups.Count -ne 1) { throw 'Expected one scheduled backup at the configured interval.' }
     if ([DateTime]::UtcNow -lt $intervalStarted.AddSeconds(55)) { throw 'Automatic backup ran before its interval.' }
     $null = Wait-For 'scheduled backup finishes' { Task-Buttons | Where-Object { $_.Current.Name -like '*Completed*Scheduled backup*' } }
-    Select-Element (By-Id 'SettingsItem')
+    $lastSuccess = Wait-For 'successful backup updates while Settings stays open' {
+        $t = By-Id 'BackupLastSuccess'
+        if ($t.Current.HelpText -and [DateTimeOffset]::Parse($t.Current.HelpText) -ge $firstDue) { $t }
+    }
+    $receipt = Get-Content -Raw -LiteralPath (Join-Path $rootPath '.sg/backup-success.json') | ConvertFrom-Json
+    $successTime = [DateTimeOffset]::Parse($lastSuccess.Current.HelpText)
+    if ($successTime -ne [DateTimeOffset]$receipt.when -or $successTime -lt $firstDue) { throw 'Last successful backup is not the completed interval run.' }
+    $secondDue = [DateTimeOffset]::Parse((By-Id 'BackupNextRun').Current.HelpText)
+    if ($secondDue -lt $firstDue.AddSeconds(55)) { throw 'Next backup time did not advance after the interval.' }
     (Wait-For 'backup interval setting again' { By-Id 'BackupMinutes' }).GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(0)
     $null = Wait-For 'automatic backups disabled' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 0 }
+    $null = Wait-For 'disabled status updates immediately' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' -and !(By-Id 'BackupNextRun').Current.HelpText }
     Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'backup page action' { By-Id 'BackupButton' })
+    $null = Wait-For 'same schedule status on Backup' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' }
+    $lastSuccess = Wait-For 'same success history visible on Backup' {
+        $t = By-Id 'BackupLastSuccess'
+        if ($t.Current.HelpText -and !$t.Current.IsOffscreen -and $t.Current.BoundingRectangle.Width -gt 0) { $t }
+    }
+    if ([DateTimeOffset]::Parse($lastSuccess.Current.HelpText) -ne $successTime) { throw 'Backup and Settings show different success times.' }
+    if ($ReportDirectory) {
+        # Let the navigation transition render after UIA has received the new page's peers.
+        Start-Sleep -Milliseconds 500
+        try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'backup-schedule.png') } catch { Write-Host "Optional preview capture: $_" }
+    }
     Complete-UiScenario
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }
@@ -353,7 +381,7 @@ finally {
             $current.LastRoot = $previousSettings.LastRoot
             $current.RecentRoots = @(if ($previousSettings) { $previousSettings.RecentRoots })
         }
-        if ($current.BackupMinutes -eq 0) {
+        if ($current.BackupMinutes -in @(0, 1)) {
             $current.BackupMinutes = if ($previousSettings -and $null -ne $previousSettings.BackupMinutes) { $previousSettings.BackupMinutes } else { 15 }
         }
         $current | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8

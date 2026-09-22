@@ -1,0 +1,28 @@
+<UserControl
+    x:Class="Sg.App.BackupStatusView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Sg.App">
+    <Border Style="{StaticResource Card}">
+        <StackPanel Spacing="12">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
+                <local:StatusChip x:Name="ScheduleChip" Glyph="&#xE823;" VerticalAlignment="Top" />
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="Next automatic backup" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="NextRun" AutomationProperties.AutomationId="BackupNextRun"
+                               Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
+                <local:StatusChip x:Name="SuccessChip" Glyph="&#xE74E;" VerticalAlignment="Top" />
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="Last successful backup" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="LastSuccess" AutomationProperties.AutomationId="BackupLastSuccess"
+                               Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+            <TextBlock Text="Keep the overview open or running in the tray. Busy intervals are skipped."
+                       Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+        </StackPanel>
+    </Border>
+</UserControl>

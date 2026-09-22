@@ -45,6 +45,8 @@ public sealed partial class MainWindow : Window
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _updates;
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _backup;
     readonly UiRefresh _taskRefresh;
+    readonly UiRefresh _backupRefresh;
+    int _backupMinutes = -1;
     bool _backingUp;
     /// <summary>Names a backup conflict or a newer-remote was already toasted for: a lasting state is said once, not every timer tick.</summary>
     HashSet<string> _backupAlerted = new(StringComparer.Ordinal);
@@ -77,7 +79,10 @@ public sealed partial class MainWindow : Window
         _updates.Tick += (_, _) => _ = CheckUpdateAsync();
         ArmUpdates();
         _backup = DispatcherQueue.CreateTimer();
+        _backup.IsRepeating = false;
         _backup.Tick += (_, _) => _ = BackupTickAsync();
+        _backupRefresh = new(DispatcherQueue, ArmBackup);
+        Session.Settings.Saved += BackupSettingsSaved;
         ArmBackup();
         Nav.Loaded += (_, _) => DispatcherQueue.TryEnqueue(EnglishChrome);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = RefreshAllAsync());
@@ -87,7 +92,14 @@ public sealed partial class MainWindow : Window
         // Opening or closing the pane swaps which of the two unread markers is on show.
         Nav.PaneOpened += (_, _) => UpdateMonitorBadge();
         Nav.PaneClosed += (_, _) => UpdateMonitorBadge();
-        Closed += (_, _) => { _monitor.Stop(); _updates.Stop(); _backup.Stop(); MonitorService.Changed -= UpdateMonitorBadge; Session.Tasks.Changed -= TasksChanged; };
+        Closed += (_, _) =>
+        {
+            _monitor.Stop(); _updates.Stop(); _backup.Stop();
+            Session.Settings.Saved -= BackupSettingsSaved;
+            Session.SetNextBackup(null);
+            MonitorService.Changed -= UpdateMonitorBadge;
+            Session.Tasks.Changed -= TasksChanged;
+        };
         UpdateMonitorBadge();
         Updates.Sweep();
         ShowOverview((CheckoutRow?)null);
@@ -272,21 +284,30 @@ public sealed partial class MainWindow : Window
 
     // ---- backups ----
 
-    /// <summary>The periodic backup. Same shape as the update check: re-armed from the settings each time it fires.</summary>
+    void BackupSettingsSaved() => _backupRefresh.Request();
+
+    /// <summary>Only an interval change restarts the clock; navigation and unrelated settings do not.</summary>
     void ArmBackup()
     {
-        var minutes = Session.Settings.BackupMinutes;
+        var minutes = Math.Max(0, Session.Settings.BackupMinutes);
+        if (_backupMinutes == minutes) return;
+        _backupMinutes = minutes;
+        StartBackupInterval();
+    }
+
+    void StartBackupInterval()
+    {
         _backup.Stop();
-        if (minutes <= 0) return;
-        _backup.Interval = TimeSpan.FromMinutes(minutes);
-        _backup.IsRepeating = true;
+        if (_backupMinutes <= 0) { Session.SetNextBackup(null); return; }
+        _backup.Interval = TimeSpan.FromMinutes(_backupMinutes);
+        Session.SetNextBackup(DateTimeOffset.Now + _backup.Interval);
         _backup.Start();
     }
 
     async Task BackupTickAsync()
     {
-        ArmBackup();
-        if (Session.Settings.BackupMinutes <= 0) return;
+        StartBackupInterval();
+        if (_backupMinutes <= 0) return;
         await BackupAsync(quiet: true);
     }
 
@@ -383,7 +404,7 @@ public sealed partial class MainWindow : Window
     public void ShowSettings() => Host.Go(() =>
     {
         var p = new SettingsPage();
-        p.Left += () => { ArmMonitor(); ArmUpdates(); ArmBackup(); };
+        p.Left += () => { ArmMonitor(); ArmUpdates(); };
         return p;
     }, "settings");
 

@@ -116,7 +116,7 @@
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
-            <Grid RowDefinitions="Auto,*" Padding="24,0,24,16">
+            <Grid RowDefinitions="Auto,*,Auto" Padding="24,0,24,0">
                 <!-- The path to the page, written large the way Windows Settings writes "System > Display",
                      with the forward arrow beside it when there is somewhere forward to go. -->
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,6,0,12">
@@ -150,6 +150,7 @@
                 </Grid>
 
                 <local:NavHost x:Name="Host" Grid.Row="1" />
+                <local:TaskPane Grid.Row="2" />
             </Grid>
         </NavigationView>
     </Grid>

@@ -46,8 +46,10 @@
                         <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
                         <local:IconButton Glyph="&#xE7A7;" Text="Discard"
                             Click="Revert_Click" ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. Asks first, and Undo on the bar brings them back for a week." />
-                        <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
-                            Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file." />
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
+                                Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file." />
+                        </local:TaskGate>
                     </StackPanel>
                     <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
                         <Grid>
@@ -76,30 +78,32 @@
                 <!-- The same split the git changes page has, and for the same reason: the two ends of one
                      decision about the same checked files. Here putting them aside is also how a push that
                      refuses because the checkout holds an edit on the same file gets unblocked. -->
-                <local:AccentSplitButton Grid.Column="4" AutomationProperties.Name="Commit to SVN" x:Name="CommitButton"
-                                         Click="Commit_Click"
-                                         ToolTipService.ToolTip="Write the message, then commit the checked changes to SVN, one commit per working copy. Unversioned files are added first. Asks first. Ctrl+Enter opens this too.">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE898;" FontSize="14" />
-                        <TextBlock x:Name="CommitLabel" Text="Commit to SVN" />
-                    </StackPanel>
-                    <local:AccentSplitButton.Flyout>
-                        <MenuFlyout Placement="TopEdgeAlignedRight">
-                            <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
-                                            ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file.">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE7B8;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
-                                            ToolTipService.ToolTip="What is already put aside from this checkout, and the button that writes it back.">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE81C;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </local:AccentSplitButton.Flyout>
-                </local:AccentSplitButton>
+                <local:TaskGate Grid.Column="4">
+                    <local:AccentSplitButton AutomationProperties.Name="Commit to SVN" x:Name="CommitButton"
+                                             Click="Commit_Click"
+                                             ToolTipService.ToolTip="Write the message, then commit the checked changes to SVN, one commit per working copy. Unversioned files are added first. Asks first. Ctrl+Enter opens this too.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE898;" FontSize="14" />
+                            <TextBlock x:Name="CommitLabel" Text="Commit to SVN" />
+                        </StackPanel>
+                        <local:AccentSplitButton.Flyout>
+                            <MenuFlyout Placement="TopEdgeAlignedRight">
+                                <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
+                                                ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file.">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE7B8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
+                                                ToolTipService.ToolTip="What is already put aside from this checkout, and the button that writes it back.">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE81C;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </local:AccentSplitButton.Flyout>
+                    </local:AccentSplitButton>
+                </local:TaskGate>
             </Grid>
         </Grid>
 

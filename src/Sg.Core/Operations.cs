@@ -264,12 +264,12 @@ public static class Operations
         return Resume(root, record.Id);
     }
 
-    public static string RestoreCheckpoint(SgRoot root, string id)
+    public static string RestoreCheckpoint(SgRoot root, string id, string? branchName = null)
     {
         using var operation = root.Lock();
         var record = Read(root, id);
         if (root.Git.RefSha(record.Checkpoint) == null) throw new SgException("This operation has no branch checkpoint.");
-        var name = record.Branch + "-recovered-" + Guid.NewGuid().ToString("N")[..8];
+        var name = branchName ?? record.Branch + "-recovered-" + Guid.NewGuid().ToString("N")[..8];
         var made = Ops.Branch(root, name, root.Checkout(record.Checkout));
         root.Git.ResetHard(made.Path, record.Checkpoint);
         return made.Path;

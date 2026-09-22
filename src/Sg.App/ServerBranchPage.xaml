@@ -16,8 +16,10 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <local:IconButton Glyph="&#xE9D9;" Text="Dry run"
                     Click="DryRun_Click" ToolTipService.ToolTip="Work out the plan and show it below. Reads from the server, changes nothing." />
-                <local:IconButton Glyph="&#xE753;" Text="Create the branch and check it out"
-                    x:Name="CreateButton" Style="{StaticResource AccentButtonStyle}" Click="Create_Click" IsEnabled="False" ToolTipService.ToolTip="Run the plan: one revision per repository on the server, everyone sees them. Then make the checkout. Asks first. Needs a dry run first." />
+                <local:TaskGate>
+                    <local:IconButton Glyph="&#xE753;" Text="Create the branch and check it out"
+                        x:Name="CreateButton" Style="{StaticResource AccentButtonStyle}" Click="Create_Click" IsEnabled="False" ToolTipService.ToolTip="Run the plan: one revision per repository on the server, everyone sees them. Then make the checkout. Asks first. Needs a dry run first." />
+                </local:TaskGate>
                 <CheckBox x:Name="NoCheckout" Content="Branch only, no checkout" VerticalAlignment="Center"
                           ToolTipService.ToolTip="Make the branch on the server but no local checkout. You can add one later with New server checkout." />
                 <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />

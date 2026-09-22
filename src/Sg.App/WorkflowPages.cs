@@ -31,20 +31,21 @@ public abstract class WorkflowPage : SgPage
     protected int BeginRead() => ++_generation;
     protected bool Current(int generation) => generation == _generation;
     protected void Text(string text, bool heading = false) => Body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = heading ? 20 : 14 });
-    protected Button Action(string label, Func<Task> action, bool primary = false, bool enabled = true)
+    protected Button Action(string label, Func<Task> action, bool primary = false, bool enabled = true, bool mutates = false)
     {
         var button = new Button { Content = label, IsEnabled = enabled };
         if (primary) button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         button.Click += async (_, _) => { if (!_busy) await action(); };
-        Body.Children.Add(button);
+        Body.Children.Add(mutates ? new TaskGate { Content = button } : button);
         return button;
     }
-    protected async Task Execute(string title, Action work)
+    protected Task Execute(string title, Action work) => Execute(title, () => { work(); return (object)"ok"; });
+    protected async Task Execute<T>(string title, Func<T> work, PendingWorktree? worktree = null) where T : class
     {
         if (_busy) return;
         _busy = true; _scroll.IsEnabled = false;
-        try { await Runner.Run(Pane, title, work); }
-        finally { _busy = false; _scroll.IsEnabled = true; await Reload(); }
+        try { await Runner.Run(Pane, title, work, worktree: worktree); }
+        finally { _busy = false; _scroll.IsEnabled = true; if (Host?.Current == this) await Reload(); }
     }
     protected Task Navigate(Func<SgPage> page, string key) { Go(page, key); return Task.CompletedTask; }
 }
@@ -76,13 +77,13 @@ public sealed class UpdateBranchPage : WorkflowPage
             if (!record.Terminal && record.Phase != OperationPhase.NeedsReview)
             {
                 _submit = () => Execute("Resume update", () => _lastResult = Operations.Resume(root, record.Id));
-                Action(record.Kind == "Update from SVN" ? "Resume update" : "Refresh operation state", _submit, true);
+                Action(record.Kind == "Update from SVN" ? "Resume update" : "Refresh operation state", _submit, true, mutates: true);
             }
             Action("Review saved edits", () => Navigate(() => new ShelfPage(root.Checkout(record.Checkout)), "shelves:" + record.Checkout));
             if (!record.Terminal)
             {
                 Text("Close operation keeps current files and every shelf. Any edits not restored yet remain on their shelves.");
-                Action("Keep current files and close operation", () => Execute("Close operation", () => _lastResult = Operations.FinishReview(root, record.Id)));
+                Action("Keep current files and close operation", () => Execute("Close operation", () => _lastResult = Operations.FinishReview(root, record.Id)), mutates: true);
             }
             else Action("Back to branch", () => { Close(); return Task.CompletedTask; }, true);
         }
@@ -97,7 +98,7 @@ public sealed class UpdateBranchPage : WorkflowPage
             Text($"Checkout edits to preserve ({plan.CheckoutEdits.Count})\n" + string.Join("\n", plan.CheckoutEdits));
             foreach (var blocker in plan.Blockers) Text(blocker);
             if (plan.Ready) _submit = () => Execute("Update from SVN", () => _lastResult = Operations.Run(root, plan));
-            Action(plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and update" : "Update branch", () => Execute("Update from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready);
+            Action(plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and update" : "Update branch", () => Execute("Update from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true);
         }
         Action("Activity and checkpoints", () => Navigate(() => new ActivityPage(), "activity"));
         Action("Plan another update", () => { _lastResult = null; return Reload(); });
@@ -131,7 +132,12 @@ public sealed class ActivityPage : WorkflowPage
             Text(record.Kind + " · " + record.Branch, true);
             Text($"{record.Updated.LocalDateTime:g} · {record.PhaseLabel}\n{record.Detail}\n" + string.Join("\n", record.Steps));
             if (!record.Terminal) Action(record.Action, () => Navigate(() => new UpdateBranchPage(record.Path), "update-branch:" + record.Path));
-            if (record.Before.Length > 0) Action("Restore commits to a separate branch", () => Execute("Restore checkpoint", () => root.Log.Info(Operations.RestoreCheckpoint(root, record.Id))));
+            if (record.Before.Length > 0) Action("Restore commits to a separate branch", () =>
+            {
+                var name = record.Branch + "-recovered-" + Guid.NewGuid().ToString("N")[..8];
+                return Execute("Restore checkpoint", () => Operations.RestoreCheckpoint(root, record.Id, name),
+                    new(record.Checkout, name, root.WorktreePathFor(name)));
+            }, mutates: true);
         }
         Action("Refresh", Reload);
     }
@@ -158,8 +164,8 @@ public sealed class ReviewPage : WorkflowPage
         }
         Action("Review branch diff", () => Navigate(() => new PushPage(_path), "push:" + _path));
         Action("Review uncommitted edits", () => Navigate(() => new CommitPage(_path), "commit:" + _path));
-        Action("Run local checks", () => Execute("Review checks", () => Review.RunChecks(root, _path)), true);
-        Action("Mark this version ready", () => Execute("Mark reviewed", () => Review.MarkReady(root, _path)), enabled: status[0] == "Checks complete; review required");
+        Action("Run local checks", () => Execute("Review checks", () => Review.RunChecks(root, _path)), true, mutates: true);
+        Action("Mark this version ready", () => Execute("Mark reviewed", () => Review.MarkReady(root, _path)), enabled: status[0] == "Checks complete; review required", mutates: true);
         Text("Local check configuration (JSON array: name, executable, arguments). Commands run in this branch's folder.");
         var config = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 500, MinHeight = 100, Text = JsonSerializer.Serialize(root.Config.ReviewChecks, SgConfig.JsonOptions) };
         Body.Children.Add(config);
@@ -172,7 +178,7 @@ public sealed class ReviewPage : WorkflowPage
                 if (checks.Any(x => string.IsNullOrWhiteSpace(x.Executable))) throw new SgException("Every check needs an executable.");
                 root.Config.ReviewChecks = checks; root.Save();
             });
-        });
+        }, mutates: true);
     }
 }
 
@@ -185,7 +191,7 @@ public sealed class CoveragePage : WorkflowPage
     {
         var generation = BeginRead(); Body.Children.Clear(); var root = Session.Require();
         Text("Uploaded, remote refs checked, and restore tested are separate results. Ignored/shared files are outside coverage. A receipt is a point-in-time record.");
-        Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true);
+        Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true, mutates: true);
         if (_receipt != null)
         {
             var receipt = _receipt;
@@ -196,7 +202,12 @@ public sealed class CoveragePage : WorkflowPage
             foreach (var item in receipt.Coverage) Text($"{item.Kind}/{item.Name}: {item.State} · {item.Commits} commits · last upload {item.Uploaded?.LocalDateTime.ToString("g") ?? "not recorded"}\nPaths in this category (exclusions below):\n" + string.Join("\n", item.Files) + "\n" + string.Join("\n", item.Excluded.Select(x => "Excluded: " + x)));
             Text(receipt.RestoreTested == null ? "Restore not verified" : $"Restore tested {receipt.RestoreTested.Value.LocalDateTime:g}, base {receipt.TestedSnapshot}");
             if (receipt.RestorePath != null) Text("Rehearsal retained at " + receipt.RestorePath);
-            Action("Test restore in a separate branch", () => Execute("Test backup restore", () => _receipt = Backup.TestRestore(root, receipt)));
+            Action("Test restore in a separate branch", () =>
+            {
+                var name = receipt.Branch + "-restore-test-" + Guid.NewGuid().ToString("N")[..8];
+                return Execute("Test backup restore", () => _receipt = Backup.TestRestore(root, receipt, name),
+                    new(receipt.Checkout, name, root.WorktreePathFor(name)));
+            }, mutates: true);
             var note = new TextBox { Header = "Handoff note (text only)", Text = receipt.Note, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
             Body.Children.Add(note);
             Action("Save handoff receipt", async () =>
@@ -207,7 +218,7 @@ public sealed class CoveragePage : WorkflowPage
                     receipt.Note = note.Text;
                     await Execute("Save handoff", () => Backup.WriteReceipt(receipt, file));
                 }
-            });
+            }, mutates: true);
         }
         Action("Preview handoff receipt", async () =>
         {
@@ -215,7 +226,7 @@ public sealed class CoveragePage : WorkflowPage
             if (file == null) return;
             await Execute("Read handoff", () => _receipt = Backup.ReadReceipt(file));
             if (_receipt != null) await Execute("Check handoff refs", () => { foreach (var issue in Backup.ValidateReceipt(root, _receipt)) root.Log.Warn(issue); });
-        });
+        }, mutates: true);
         Action("Open backup restore preview", () => Navigate(() => new BackupPage(), "backup"));
     }
 }
@@ -237,7 +248,7 @@ public sealed class StoragePage : WorkflowPage
             Action("Preview archive removal", () =>
             {
                 Text("Remove exactly " + plan.Path + " and preserve commit " + plan.Head + " as an Activity checkpoint.", true);
-                Action("Archive and remove this worktree", () => Execute("Archive branch", () => Storage.Archive(root, plan)), true, plan.Ready);
+                Action("Archive and remove this worktree", () => Execute("Archive branch", () => Storage.Archive(root, plan)), true, plan.Ready, mutates: true);
                 return Task.CompletedTask;
             }, enabled: plan.Ready);
         }
@@ -248,7 +259,7 @@ public sealed class StoragePage : WorkflowPage
             {
                 Text($"Temporary data: {item.Path}\n{item.LogicalBytes:N0} logical bytes; reclaimable unknown");
                 foreach (var blocker in item.Blockers) Text(blocker);
-                Action("Remove this temporary directory", () => Execute("Remove temporary data", () => Storage.CleanTemporaryData(root, item)), enabled: item.Blockers.Count == 0);
+                Action("Remove this temporary directory", () => Execute("Remove temporary data", () => Storage.CleanTemporaryData(root, item)), enabled: item.Blockers.Count == 0, mutates: true);
             }
         Action("View retained shelves", () => Navigate(() => new ShelfPage(), "shelves"));
         Action("View recovery checkpoints", () => Navigate(() => new ActivityPage(), "activity"));

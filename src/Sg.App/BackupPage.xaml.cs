@@ -230,7 +230,7 @@ public sealed partial class BackupPage : SgPage
         if (!confirmed) return;
 
         var res = await Busy.During(sender, () => Runner.Run(Pane, "restore " + name,
-            () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip, force)), restoreEnabled: false);
+            () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip, force), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
         if (res == null) { SyncButton(); return; }
 
         var lines = new List<string>();

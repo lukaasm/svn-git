@@ -44,14 +44,22 @@
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
                         <Button Content="All" Click="All_Click" ToolTipService.ToolTip="Check every change, untracked files too." />
                         <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
-                        <local:IconButton Glyph="&#xE710;" Text="Stage"
-                            Click="Stage_Click" ToolTipService.ToolTip="Put the whole of every checked file in the index. A commit then takes exactly that, whatever you edit afterwards." />
-                        <local:IconButton Glyph="&#xE738;" Text="Unstage"
-                            Click="Unstage_Click" ToolTipService.ToolTip="Take the checked files out of the index again. The files on disk are untouched." />
-                        <local:IconButton Glyph="&#xE7A7;" Text="Discard"
-                            Click="Discard_Click" ToolTipService.ToolTip="Put the checked files back the way the last commit has them; untracked files get deleted. Asks first, and Undo on the bar brings them back for a week." />
-                        <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
-                            Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run." />
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE710;" Text="Stage"
+                                Click="Stage_Click" ToolTipService.ToolTip="Put the whole of every checked file in the index. A commit then takes exactly that, whatever you edit afterwards." />
+                        </local:TaskGate>
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE738;" Text="Unstage"
+                                Click="Unstage_Click" ToolTipService.ToolTip="Take the checked files out of the index again. The files on disk are untouched." />
+                        </local:TaskGate>
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE7A7;" Text="Discard"
+                                Click="Discard_Click" ToolTipService.ToolTip="Put the checked files back the way the last commit has them; untracked files get deleted. Asks first, and Undo on the bar brings them back for a week." />
+                        </local:TaskGate>
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
+                                Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run." />
+                        </local:TaskGate>
                     </StackPanel>
                     <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
                         <Grid>
@@ -82,30 +90,32 @@
                 <!-- The left half commits. The right half is the other thing to do with the same checked
                      files: put them aside instead. Both act on exactly what is ticked, so the decision at
                      the end of reading a diff - send it, or keep it for later - is one button. -->
-                <local:AccentSplitButton Grid.Column="5" AutomationProperties.Name="Commit" x:Name="CommitButton"
-                                         Click="Commit_Click"
-                                         ToolTipService.ToolTip="Write the message, then commit the checked files to the git branch under your own git identity. Nothing goes to SVN. Ctrl+Enter opens this too.">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE73E;" FontSize="14" />
-                        <TextBlock x:Name="CommitLabel" Text="Commit" />
-                    </StackPanel>
-                    <local:AccentSplitButton.Flyout>
-                        <MenuFlyout Placement="TopEdgeAlignedRight">
-                            <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
-                                            ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run.">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE7B8;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
-                                            ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back.">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE81C;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </local:AccentSplitButton.Flyout>
-                </local:AccentSplitButton>
+                <local:TaskGate Grid.Column="5">
+                    <local:AccentSplitButton AutomationProperties.Name="Commit" x:Name="CommitButton"
+                                             Click="Commit_Click"
+                                             ToolTipService.ToolTip="Write the message, then commit the checked files to the git branch under your own git identity. Nothing goes to SVN. Ctrl+Enter opens this too.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE73E;" FontSize="14" />
+                            <TextBlock x:Name="CommitLabel" Text="Commit" />
+                        </StackPanel>
+                        <local:AccentSplitButton.Flyout>
+                            <MenuFlyout Placement="TopEdgeAlignedRight">
+                                <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
+                                                ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run.">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE7B8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
+                                                ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back.">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE81C;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </local:AccentSplitButton.Flyout>
+                    </local:AccentSplitButton>
+                </local:TaskGate>
             </Grid>
         </Grid>
 

@@ -8,11 +8,11 @@ namespace Sg.App;
 public static class Reports
 {
     /// <summary>Runs the work. Done, the card shows what show makes of the result; failed, the error; cancelled, nothing.</summary>
-    public static async Task<T?> Run<T>(ReportCard card, StatusStrip pane, string title, Func<T> work, Action<ReportCard, T> show) where T : class
+    public static async Task<T?> Run<T>(ReportCard card, StatusStrip pane, string title, Func<T> work, Action<ReportCard, T> show, Sg.Core.PendingWorktree? worktree = null) where T : class
     {
-        card.Running(Capital(title) + "...");
+        card.Hide(); // The persistent task footer owns progress; this card is only the result.
         string? error = null;
-        var r = await Runner.Run(pane, title, work, m => error = m);
+        var r = await Runner.Run(pane, title, work, m => error = m, worktree);
         if (r != null) show(card, r);
         else if (error != null) Failed(card, title, error);
         else card.Hide();
@@ -22,7 +22,7 @@ public static class Reports
     /// <summary>The same, for work that hands nothing back.</summary>
     public static async Task<bool> Run(ReportCard card, StatusStrip pane, string title, Action work, Action<ReportCard> show)
     {
-        card.Running(Capital(title) + "...");
+        card.Hide();
         string? error = null;
         var ok = await Runner.Run(pane, title, work, m => error = m);
         if (ok) show(card);

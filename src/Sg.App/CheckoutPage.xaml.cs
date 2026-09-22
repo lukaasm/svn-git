@@ -31,6 +31,8 @@ public sealed partial class CheckoutPage : SgPage
         InitializeComponent();
         _owner = owner;
         Title = "Overview";
+        Loaded += (_, _) => { Session.Tasks.Changed += TaskStateChanged; TaskStateChanged(); };
+        Unloaded += (_, _) => Session.Tasks.Changed -= TaskStateChanged;
         // A card's glyph colour, its sentence colour and its accent button are a brush and a style taken
         // out of the app's resources, and the ones taken belong to the theme that was on at the time. The
         // chips beside them re-read their own on a theme change; without this the rest of the card does
@@ -43,6 +45,12 @@ public sealed partial class CheckoutPage : SgPage
         openBackup.Click += Backup_Click;
         BackupBar.ActionButton = openBackup;
         BackupBar.Closed += BackupBar_Closed;
+    }
+
+    void TaskStateChanged()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(TaskStateChanged); return; }
+        NewWorktreeButton.IsEnabled = _current != null && Session.Tasks.Blocking(Session.Root?.RootPath ?? "") == null;
     }
 
     /// <summary>The strip the overview's operations report into. The main window uses it for its own reads.</summary>
@@ -117,6 +125,9 @@ public sealed partial class CheckoutPage : SgPage
         // A report is about the checkout it was made on: another checkout coming on screen does not inherit it.
         if (_current?.Name != row?.Name) OpReport.Hide();
         _current = row;
+        TaskStateChanged();
+        PendingTrees.Checkout = row?.Name;
+        PendingTrees.Refresh();
         _shown++;   // anything a previous checkout's size walk reports from here is stale
         var noRoot = Session.Root == null;
         NoRoot.Visibility = noRoot ? Visibility.Visible : Visibility.Collapsed;
@@ -155,7 +166,9 @@ public sealed partial class CheckoutPage : SgPage
         ShowRemote(_owner.Remote.GetValueOrDefault(row.Name), _owner.RemoteErrors.GetValueOrDefault(row.Name));
         ShowLocalEdits(_owner.LocalEdits.TryGetValue(row.Name, out var edits) ? edits : null);
         ShowShelves(co.Shelves);
+        var preparing = Session.Tasks.Snapshot().Where(t => t.Active && t.Root == Session.Root?.RootPath && t.Worktree != null).Select(t => t.Worktree!.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var worktrees = status.Worktrees
+            .Where(w => !preparing.Contains(w.Path))
             .Where(w => w.Base.Equals(row.Name, StringComparison.OrdinalIgnoreCase))
             .Select(w => new WorktreeRow
             {
@@ -218,7 +231,7 @@ public sealed partial class CheckoutPage : SgPage
         }
         ShowWorktreesHeader(worktrees);
         _ = MeasureWorktreesAsync(worktrees, _shown);
-        NoWorktrees.Visibility = worktrees.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        NoWorktrees.Visibility = worktrees.Count == 0 && !Session.Tasks.Snapshot().Any(t => t.Active && t.Root == Session.Root?.RootPath && t.Worktree?.Checkout == row.Name) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Opens the card of one branch, for the crumb that names it.</summary>

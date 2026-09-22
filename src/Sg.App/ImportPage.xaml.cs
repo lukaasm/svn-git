@@ -191,7 +191,8 @@ public sealed partial class ImportPage : SgPage
                 "Import"))
             return;
 
-        var res = await Busy.During(sender, () => Runner.Run(Pane, "import " + name, () => Export.Import(root, _file, name, co.Name)), restoreEnabled: false);
+        var file = _file;
+        var res = await Busy.During(sender, () => Runner.Run(Pane, "import " + name, () => Export.Import(root, file, name, co.Name), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
         if (res == null) { SyncButton(); return; }
 
         ResultBar.Severity = res.Ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning;

@@ -31,14 +31,22 @@
                     <!-- Which two versions these are depends on what stopped, so both buttons are named
                          from the page rather than written here. -->
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-                        <local:IconButton x:Name="TakeOurs" Glyph="&#xE753;" Text="Keep this side" Click="TakeOurs_Click" />
-                        <local:IconButton x:Name="TakeTheirs" Glyph="&#xE8A5;" Text="Keep that side" Click="TakeTheirs_Click" />
+                        <local:TaskGate>
+                            <local:IconButton x:Name="TakeOurs" Glyph="&#xE753;" Text="Keep this side" Click="TakeOurs_Click" />
+                        </local:TaskGate>
+                        <local:TaskGate>
+                            <local:IconButton x:Name="TakeTheirs" Glyph="&#xE8A5;" Text="Keep that side" Click="TakeTheirs_Click" />
+                        </local:TaskGate>
                         <local:IconButton Glyph="&#xE70F;" Text="Edit"
                             Click="OpenFile_Click" ToolTipService.ToolTip="Open the ticked files in their default editor. Each holds both versions between conflict markers. Edit it, save, then mark it resolved." />
-                        <local:IconButton Glyph="&#xE73E;" Text="Mark resolved"
-                            Click="MarkResolved_Click" ToolTipService.ToolTip="Tell git the ticked files are done, after you edited them by hand." />
-                        <local:IconButton x:Name="AutoButton" Glyph="&#xE945;" Text="Resolve with AI"
-                            Click="Auto_Click" ToolTipService.ToolTip="Hand the ticked files, or every file in conflict, to the resolver: Claude Code, unless Settings names another command. It edits them in place, keeping both sides' changes. What comes back whole is marked resolved and stays here to read before you continue." />
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE73E;" Text="Mark resolved"
+                                Click="MarkResolved_Click" ToolTipService.ToolTip="Tell git the ticked files are done, after you edited them by hand." />
+                        </local:TaskGate>
+                        <local:TaskGate>
+                            <local:IconButton x:Name="AutoButton" Glyph="&#xE945;" Text="Resolve with AI"
+                                Click="Auto_Click" ToolTipService.ToolTip="Hand the ticked files, or every file in conflict, to the resolver: Claude Code, unless Settings names another command. It edits them in place, keeping both sides' changes. What comes back whole is marked resolved and stays here to read before you continue." />
+                        </local:TaskGate>
                     </StackPanel>
                     <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
                         <Grid>
@@ -75,13 +83,19 @@
                 <local:IconButton x:Name="ReviewEditsButton" Glyph="&#xE8A5;" Text="Review local edits" Visibility="Collapsed" Click="ReviewEdits_Click" />
                 <local:IconButton x:Name="ReviewResultButton" Glyph="&#xE8A5;" Text="Review staged result" Click="ReviewResult_Click" />
                 <local:IconButton x:Name="InspectButton" Glyph="&#xE8A5;" Text="View current patch" Click="Inspect_Click" />
-                <local:IconButton x:Name="ContinueButton" Glyph="&#xE768;" Text="Continue"
-                    Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"
-                    ToolTipService.ToolTip="Go on. Works when no file is in conflict any more. The next commit may stop again." />
-                <local:IconButton x:Name="SkipButton" Glyph="&#xE72A;" Text="Skip this one"
-                    Click="Skip_Click" ToolTipService.ToolTip="Drop the commit this stopped on and go on with the ones after it. Asks first." />
-                <local:IconButton x:Name="AbortButton" Glyph="&#xE711;" Text="Abort"
-                    Click="Abort_Click" ToolTipService.ToolTip="Stop and put the branch back. Asks first, and says what it costs." />
+                <local:TaskGate>
+                    <local:IconButton x:Name="ContinueButton" Glyph="&#xE768;" Text="Continue"
+                        Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"
+                        ToolTipService.ToolTip="Go on. Works when no file is in conflict any more. The next commit may stop again." />
+                </local:TaskGate>
+                <local:TaskGate>
+                    <local:IconButton x:Name="SkipButton" Glyph="&#xE72A;" Text="Skip this one"
+                        Click="Skip_Click" ToolTipService.ToolTip="Drop the commit this stopped on and go on with the ones after it. Asks first." />
+                </local:TaskGate>
+                <local:TaskGate>
+                    <local:IconButton x:Name="AbortButton" Glyph="&#xE711;" Text="Abort"
+                        Click="Abort_Click" ToolTipService.ToolTip="Stop and put the branch back. Asks first, and says what it costs." />
+                </local:TaskGate>
                 <Button Content="More">
                     <Button.Flyout>
                         <MenuFlyout>

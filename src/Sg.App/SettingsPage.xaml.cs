@@ -11,6 +11,7 @@ public sealed partial class SettingsPage : SgPage
 {
     /// <summary>The controls are being filled from the settings, so their change events are not the user's.</summary>
     bool _filling = true;
+    readonly Sg.Core.SgRoot? _settingsRoot = Session.Root;
 
     public SettingsPage()
     {
@@ -164,7 +165,13 @@ public sealed partial class SettingsPage : SgPage
     {
         if (_filling) return;
         _typing.Stop();
-        var root = Session.Root;
+        var root = _settingsRoot;
+        if (root != null && Session.Tasks.Blocking(root.RootPath) is { } busy)
+        {
+            Status.Text = "Settings will save after " + busy.Title;
+            _typing.Start();
+            return;
+        }
         if (root != null)
         {
             root.Config.MinMessageLength = double.IsNaN(MinLength.Value) ? 10 : (int)MinLength.Value;

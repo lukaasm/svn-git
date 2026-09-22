@@ -32,13 +32,19 @@
                 <!-- What can be done to the shelf that is picked. Restore is the one that is meant, so it
                      is the loud one; the other two are the ways out of it. -->
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
-                    <local:IconButton x:Name="RestoreButton" Glyph="&#xE7B8;" Text="Put back" Click="Restore_Click" IsEnabled="False"
-                                      Style="{StaticResource AccentButtonStyle}"
-                                      ToolTipService.ToolTip="Write these changes back into the folder they came from, and take the shelf off. A file that changed since gets the change merged into it." />
-                    <local:IconButton x:Name="KeepButton" Glyph="&#xE8C8;" Text="Put back and keep" Click="RestoreKeep_Click" IsEnabled="False"
-                                      ToolTipService.ToolTip="The same, and the shelf stays where it is. For trying a change in two places." />
-                    <local:IconButton x:Name="DropButton" Glyph="&#xE74D;" Text="Drop" Click="Drop_Click" IsEnabled="False"
-                                      ToolTipService.ToolTip="Throw this shelf away without putting it back. Asks first." />
+                    <local:TaskGate>
+                        <local:IconButton x:Name="RestoreButton" Glyph="&#xE7B8;" Text="Put back" Click="Restore_Click" IsEnabled="False"
+                                          Style="{StaticResource AccentButtonStyle}"
+                                          ToolTipService.ToolTip="Write these changes back into the folder they came from, and take the shelf off. A file that changed since gets the change merged into it." />
+                    </local:TaskGate>
+                    <local:TaskGate>
+                        <local:IconButton x:Name="KeepButton" Glyph="&#xE8C8;" Text="Put back and keep" Click="RestoreKeep_Click" IsEnabled="False"
+                                          ToolTipService.ToolTip="The same, and the shelf stays where it is. For trying a change in two places." />
+                    </local:TaskGate>
+                    <local:TaskGate>
+                        <local:IconButton x:Name="DropButton" Glyph="&#xE74D;" Text="Drop" Click="Drop_Click" IsEnabled="False"
+                                          ToolTipService.ToolTip="Throw this shelf away without putting it back. Asks first." />
+                    </local:TaskGate>
                 </StackPanel>
 
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4" MaxHeight="260">

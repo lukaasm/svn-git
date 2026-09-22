@@ -33,7 +33,9 @@
                                   Text="The first backup puts every branch there. Press Back up now, or wait for the timer.">
                     <local:EmptyState.Action>
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" Style="{StaticResource AccentButtonStyle}" />
+                            <local:TaskGate>
+                                <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" Style="{StaticResource AccentButtonStyle}" />
+                            </local:TaskGate>
                             <Button Content="Close" Click="Close_Click" />
                         </StackPanel>
                     </local:EmptyState.Action>
@@ -149,20 +151,26 @@
         </Grid>
 
         <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-            <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" x:Name="BackupNowButton"
-                              ToolTipService.ToolTip="Send every branch, the uncommitted changes and the shelves to the backup repository now, rather than waiting for the timer." />
-            <local:IconButton Grid.Column="1" Glyph="&#xE74D;" Text="Prune" Click="Prune_Click" x:Name="PruneButton"
-                              ToolTipService.ToolTip="Delete from the backup what is not here any more: branches removed, shelves dropped. Asks first, with the list." />
+            <local:TaskGate>
+                <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" x:Name="BackupNowButton"
+                                  ToolTipService.ToolTip="Send every branch, the uncommitted changes and the shelves to the backup repository now, rather than waiting for the timer." />
+            </local:TaskGate>
+            <local:TaskGate Grid.Column="1">
+                <local:IconButton Glyph="&#xE74D;" Text="Prune" Click="Prune_Click" x:Name="PruneButton"
+                                  ToolTipService.ToolTip="Delete from the backup what is not here any more: branches removed, shelves dropped. Asks first, with the list." />
+            </local:TaskGate>
             <Button Grid.Column="2" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="8,0" />
-            <Button Grid.Column="4" x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
-                    AutomationProperties.Name="Restore the branch"
-                    ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE896;" FontSize="14" />
-                    <TextBlock x:Name="RestoreLabel" Text="Restore" />
-                </StackPanel>
-            </Button>
+            <local:TaskGate Grid.Column="4">
+                <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
+                        AutomationProperties.Name="Restore the branch"
+                        ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE896;" FontSize="14" />
+                        <TextBlock x:Name="RestoreLabel" Text="Restore" />
+                    </StackPanel>
+                </Button>
+            </local:TaskGate>
         </Grid>
 
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />

@@ -335,7 +335,7 @@ public sealed partial class LogPage : SgPage
         if (picked.Count < 2) return;
         var shas = picked.Select(p => p.Sha).ToList();
         // Asking for the message is also what checks the run: it throws the same refusals the squash would.
-        var start = await Runner.Run(Pane, "read the messages", () => Ops.SquashMessage(Session.Require(), _worktree, shas));
+        var start = await Runner.Quiet(Pane, () => Ops.SquashMessage(Session.Require(), _worktree, shas));
         if (start == null) return;
         await RewriteAsync("Squash", $"Squash {picked.Count} commits", "Message for the commit that replaces them", start,
             $"This replaces {picked.Count} commits on {Branch} with one. Do it only while nobody else has them. Continue?",
@@ -347,7 +347,7 @@ public sealed partial class LogPage : SgPage
         var picked = Picked();
         if (picked.Count != 1) return;
         var sha = picked[0].Sha;
-        var start = await Runner.Run(Pane, "read the message", () => Session.Require().Git.Body(sha).TrimEnd());
+        var start = await Runner.Quiet(Pane, () => Session.Require().Git.Body(sha).TrimEnd());
         if (start == null) return;
         await RewriteAsync("Reword", "Reword", "New message for " + picked[0].ShortSha, start,
             $"This replaces commit {picked[0].ShortSha} on {Branch}, and every commit above it gets a new sha. Do it only while nobody else has them. Continue?",
@@ -359,7 +359,7 @@ public sealed partial class LogPage : SgPage
         var picked = Picked();
         if (picked.Count == 0) return;
         var shas = picked.Select(p => p.Sha).ToList();
-        var start = await Runner.Run(Pane, "read the messages", () => Ops.RevertMessage(Session.Require(), _worktree, shas));
+        var start = await Runner.Quiet(Pane, () => Ops.RevertMessage(Session.Require(), _worktree, shas));
         if (start == null) return;
         var what = picked.Count == 1 ? picked[0].ShortSha : picked.Count + " commits";
         await RewriteAsync("Revert", picked.Count == 1 ? "Revert" : $"Revert {picked.Count}", "Message for the commit that undoes " + what, start,

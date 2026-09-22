@@ -64,16 +64,20 @@
                 <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is undone by leaving." />
                 <local:IconButton Grid.Column="2" x:Name="TestButton" Glyph="&#xE9D9;" Text="Test merge" Click="Test_Click"
                                   ToolTipService.ToolTip="Run the merge without writing anything, and list what it would change. Safe to press at any time." />
-                <local:IconButton Grid.Column="3" x:Name="TakeOutButton" Glyph="&#xE7A7;" Text="Take back out" Click="TakeOut_Click" IsEnabled="False"
-                                  ToolTipService.ToolTip="Undo the picked revisions in this working copy, the way TortoiseSVN reverts changes from a revision. It is the same merge run backwards, and it lands as local changes to commit." />
+                <local:TaskGate Grid.Column="3">
+                    <local:IconButton x:Name="TakeOutButton" Glyph="&#xE7A7;" Text="Take back out" Click="TakeOut_Click" IsEnabled="False"
+                                      ToolTipService.ToolTip="Undo the picked revisions in this working copy, the way TortoiseSVN reverts changes from a revision. It is the same merge run backwards, and it lands as local changes to commit." />
+                </local:TaskGate>
                 <TextBlock Grid.Column="4" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                <Button Grid.Column="5" x:Name="MergeButton" Style="{StaticResource AccentButtonStyle}" Click="Merge_Click" AutomationProperties.Name="Merge"
-                        ToolTipService.ToolTip="Bring the changes into the checkout. They land as local changes there; nothing is committed until you commit them.">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE8AB;" FontSize="14" />
-                        <TextBlock x:Name="MergeLabel" Text="Merge" />
-                    </StackPanel>
-                </Button>
+                <local:TaskGate Grid.Column="5">
+                    <Button x:Name="MergeButton" Style="{StaticResource AccentButtonStyle}" Click="Merge_Click" AutomationProperties.Name="Merge"
+                            ToolTipService.ToolTip="Bring the changes into the checkout. They land as local changes there; nothing is committed until you commit them.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE8AB;" FontSize="14" />
+                            <TextBlock x:Name="MergeLabel" Text="Merge" />
+                        </StackPanel>
+                    </Button>
+                </local:TaskGate>
             </Grid>
         </Grid>
 

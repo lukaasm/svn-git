@@ -94,13 +94,13 @@ public static partial class Backup
         return "Receipt matches this local branch version. Remote refs require a fresh check.";
     }
 
-    public static HandoffReceipt TestRestore(SgRoot root, HandoffReceipt receipt)
+    public static HandoffReceipt TestRestore(SgRoot root, HandoffReceipt receipt, string? branchName = null)
     {
         using var operation = root.Lock();
         receipt.RestoreTested = null;
         var issues = ValidateReceipt(root, receipt);
         if (issues.Count > 0) throw new SgException(string.Join("\n", issues));
-        var name = receipt.Branch + "-restore-test-" + Guid.NewGuid().ToString("N")[..8];
+        var name = branchName ?? receipt.Branch + "-restore-test-" + Guid.NewGuid().ToString("N")[..8];
         // Force replay from the fetched thin objects; relinking existing local commits would not test the backup.
         var result = Restore(root, receipt.Branch, asBranch: name, wip: true, expectedRefs: receipt.Refs, rehearsal: true);
         receipt.RestorePath = result.Path;

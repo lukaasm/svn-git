@@ -90,15 +90,19 @@ public abstract class SgPage : Page
     internal void RaiseLeft() => Left?.Invoke();
 
     /// <summary>Opens another page over this one, in the same host.</summary>
-    protected void Go(Func<SgPage> make, string key) => Host?.Go(make, key);
+    protected void Go(Func<SgPage> make, string key) { if (Host?.Current == this) Host.Go(make, key); }
 
     /// <summary>Shows a page over this one and runs a callback when the user comes back from it.</summary>
-    protected void GoThen(Func<SgPage> make, string key, Action back) => Host?.Go(() =>
+    protected void GoThen(Func<SgPage> make, string key, Action back)
     {
-        var p = make();
-        p.Left += back;
-        return p;
-    }, key);
+        if (Host?.Current != this) return;
+        Host.Go(() =>
+        {
+            var p = make();
+            p.Left += back;
+            return p;
+        }, key);
+    }
 }
 
 /// <summary>

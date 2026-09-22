@@ -22,34 +22,34 @@
             <StaticResource x:Key="SplitButtonBackground" ResourceKey="AccentFillColorDefaultBrush" />
             <StaticResource x:Key="SplitButtonBackgroundPointerOver" ResourceKey="AccentFillColorSecondaryBrush" />
             <StaticResource x:Key="SplitButtonBackgroundPressed" ResourceKey="AccentFillColorTertiaryBrush" />
-            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="ControlFillColorDisabledBrush" />
             <StaticResource x:Key="SplitButtonForeground" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
             <StaticResource x:Key="SplitButtonForegroundPointerOver" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
             <StaticResource x:Key="SplitButtonForegroundPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
-            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="TextOnAccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="TextFillColorDisabledBrush" />
             <StaticResource x:Key="SplitButtonForegroundSecondary" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
             <StaticResource x:Key="SplitButtonForegroundSecondaryPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
             <StaticResource x:Key="SplitButtonBorderBrush" ResourceKey="AccentControlElevationBorderBrush" />
             <StaticResource x:Key="SplitButtonBorderBrushPointerOver" ResourceKey="AccentControlElevationBorderBrush" />
             <StaticResource x:Key="SplitButtonBorderBrushPressed" ResourceKey="AccentFillColorTertiaryBrush" />
-            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="ControlStrokeColorDefaultBrush" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Light">
             <StaticResource x:Key="SplitButtonBackground" ResourceKey="AccentFillColorDefaultBrush" />
             <StaticResource x:Key="SplitButtonBackgroundPointerOver" ResourceKey="AccentFillColorSecondaryBrush" />
             <StaticResource x:Key="SplitButtonBackgroundPressed" ResourceKey="AccentFillColorTertiaryBrush" />
-            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonBackgroundDisabled" ResourceKey="ControlFillColorDisabledBrush" />
             <StaticResource x:Key="SplitButtonForeground" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
             <StaticResource x:Key="SplitButtonForegroundPointerOver" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
             <StaticResource x:Key="SplitButtonForegroundPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
-            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="TextOnAccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonForegroundDisabled" ResourceKey="TextFillColorDisabledBrush" />
             <StaticResource x:Key="SplitButtonForegroundSecondary" ResourceKey="TextOnAccentFillColorPrimaryBrush" />
             <StaticResource x:Key="SplitButtonForegroundSecondaryPressed" ResourceKey="TextOnAccentFillColorSecondaryBrush" />
             <StaticResource x:Key="SplitButtonBorderBrush" ResourceKey="AccentControlElevationBorderBrush" />
             <StaticResource x:Key="SplitButtonBorderBrushPointerOver" ResourceKey="AccentControlElevationBorderBrush" />
             <StaticResource x:Key="SplitButtonBorderBrushPressed" ResourceKey="AccentFillColorTertiaryBrush" />
-            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="AccentFillColorDisabledBrush" />
+            <StaticResource x:Key="SplitButtonBorderBrushDisabled" ResourceKey="ControlStrokeColorDefaultBrush" />
         </ResourceDictionary>
 
         <!-- High contrast has one accent and it is the system's. Pointing at the accent brushes here would

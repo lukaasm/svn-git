@@ -17,6 +17,12 @@ public sealed partial class PageWindow : Window
         Host.Changed += Sync;
         Host.AttachShortcuts((FrameworkElement)Content, escapeCloses: true);
         Host.Go(make, key);
+        AppWindow.Closing += (_, args) =>
+        {
+            if (App.HasMainWindow || Live.Count > 1 || !Session.Tasks.Snapshot().Any(t => t.Active)) return;
+            args.Cancel = true;
+            OutputWindow.Show("Tasks are running. You can navigate away; finish or cancel tasks before closing this window.");
+        };
     }
 
     /// <summary>The page on screen, for whoever opened the window and wants its answer.</summary>

@@ -32,21 +32,27 @@
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE8BD;" />
                     </controls:SettingsCard.HeaderIcon>
-                    <NumberBox x:Name="MinLength" Minimum="0" Maximum="500" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
+                    <local:TaskGate>
+                        <NumberBox x:Name="MinLength" Minimum="0" Maximum="500" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
+                    </local:TaskGate>
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Agents may push"
                                        Description="Allow 'sg push' without an interactive terminal. Off means only a human pushes, from a terminal or from here.">
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE898;" />
                     </controls:SettingsCard.HeaderIcon>
-                    <ToggleSwitch x:Name="AgentPush" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                    <local:TaskGate>
+                        <ToggleSwitch x:Name="AgentPush" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                    </local:TaskGate>
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Conflict resolver"
                                        Description="The command Auto-resolve runs when a rebase or an import stops. It runs in the worktree, gets the task on stdin and the files in SG_FILES, and edits them in place. Empty runs Claude Code in print mode, allowed to read and edit files and to ask git to show things.">
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE945;" />
                     </controls:SettingsCard.HeaderIcon>
-                    <TextBox x:Name="ResolveCommand" PlaceholderText="claude -p ..." Width="360" />
+                    <local:TaskGate>
+                        <TextBox x:Name="ResolveCommand" PlaceholderText="claude -p ..." Width="360" />
+                    </local:TaskGate>
                 </controls:SettingsCard>
 
                 <TextBlock Text="Backup" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
@@ -56,7 +62,9 @@
                         <FontIcon Glyph="&#xE74E;" />
                     </controls:SettingsCard.HeaderIcon>
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBox x:Name="BackupUrl" PlaceholderText="\\nas\git\fort-backup.git" Width="360" />
+                        <local:TaskGate>
+                            <TextBox x:Name="BackupUrl" PlaceholderText="\\nas\git\fort-backup.git" Width="360" />
+                        </local:TaskGate>
                         <Button x:Name="BackupCheck" Content="Check" Click="BackupCheck_Click" ToolTipService.ToolTip="Ask the URL whether a git repository answers there." />
                     </StackPanel>
                 </controls:SettingsCard>
@@ -65,14 +73,18 @@
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE8B7;" />
                     </controls:SettingsCard.HeaderIcon>
-                    <TextBox x:Name="BackupPrefix" PlaceholderText="this-machine" Width="220" />
+                    <local:TaskGate>
+                        <TextBox x:Name="BackupPrefix" PlaceholderText="this-machine" Width="220" />
+                    </local:TaskGate>
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Uncommitted changes go too"
                                        Description="What is changed and not committed in a worktree, and the local edits of a checkout, go with each backup as one commit above the branch. Off sends committed work only.">
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE70F;" />
                     </controls:SettingsCard.HeaderIcon>
-                    <ToggleSwitch x:Name="BackupUncommitted" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                    <local:TaskGate>
+                        <ToggleSwitch x:Name="BackupUncommitted" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                    </local:TaskGate>
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Back up every N minutes"
                                        Description="The app sends what changed on this schedule, and a few seconds after a commit, a shelve or a rebase made here. 0 turns the timer off; Backup on the checkout still sends on demand.">

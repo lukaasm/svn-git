@@ -85,15 +85,33 @@ public sealed partial class MainWindow : Window
         Shortcuts.Add(this, VirtualKey.F5, () => _ = RefreshAllAsync());
         Shortcuts.Add(this, VirtualKey.K, VirtualKeyModifiers.Control, () => _ = QuickJump.ShowAsync(this, JumpEntries()));
         MonitorService.Changed += UpdateMonitorBadge;
+        Session.Tasks.Changed += TasksChanged;
         // Opening or closing the pane swaps which of the two unread markers is on show.
         Nav.PaneOpened += (_, _) => UpdateMonitorBadge();
         Nav.PaneClosed += (_, _) => UpdateMonitorBadge();
-        Closed += (_, _) => { _monitor.Stop(); _updates.Stop(); _backup.Stop(); _backupSoon.Stop(); MonitorService.Changed -= UpdateMonitorBadge; };
+        Closed += (_, _) => { _monitor.Stop(); _updates.Stop(); _backup.Stop(); _backupSoon.Stop(); MonitorService.Changed -= UpdateMonitorBadge; Session.Tasks.Changed -= TasksChanged; };
         UpdateMonitorBadge();
         Updates.Sweep();
         ShowOverview((CheckoutRow?)null);
         _ = RefreshAsync(runStartAction: true);
         _ = CheckUpdateAsync();
+    }
+
+    string _finishedTasks = "";
+    string _pendingTrees = "";
+    void TasksChanged()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(TasksChanged); return; }
+        var pending = string.Join("|", Session.Tasks.Snapshot().Where(t => t.Active && t.Worktree != null && t.Root == Session.Root?.RootPath).Select(t => t.Id));
+        if (pending != _pendingTrees)
+        {
+            _pendingTrees = pending;
+            Overview.Show(_current, _status);
+        }
+        var finished = string.Join("|", Session.Tasks.Snapshot().Where(t => !t.Active && t.Root == Session.Root?.RootPath).Select(t => t.Id));
+        if (finished == _finishedTasks) return;
+        _finishedTasks = finished;
+        _ = RefreshAsync();
     }
 
     /// <summary>
@@ -269,15 +287,13 @@ public sealed partial class MainWindow : Window
     internal async Task<BackupResult?> BackupAsync(bool quiet)
     {
         var root = Session.Root;
-        if (root == null || !Backup.Configured(root) || _backingUp) return null;
+        if (root == null || !Backup.Configured(root) || _backingUp || Session.Tasks.Blocking(root.RootPath) != null) return null;
         _backingUp = true;
         Session.BackingUp = true;
         Overview.RepaintWorktrees();
         try
         {
-            var res = quiet
-                ? await Runner.Quiet(Pane, () => Backup.Run(root))
-                : await Runner.Run(Pane, "backup", () => Backup.Run(root));
+            var res = await Runner.Run(Pane, quiet ? "Scheduled backup" : "Backup", () => Backup.Run(root));
             if (res == null) return null;
             var rejected = res.Items.Where(i => i.Rejected).Select(i => i.Name).ToList();
             var behind = res.Items.Where(i => i.Behind).Select(i => i.Name).ToList();
@@ -376,11 +392,17 @@ public sealed partial class MainWindow : Window
     {
         var check = _update;
         if (check == null || _updating) return;
+        if (Session.Tasks.Snapshot().Any(t => t.Active))
+        {
+            await Dialogs.Info(this, "Tasks are running", "Finish or cancel active tasks in the task pane before restarting.");
+            return;
+        }
         if (!await Dialogs.Confirm(this, "Update and restart",
                 $"sg closes, {check.Remote} is written over {Updates.InstallDir()}, then sg opens again.\n\n"
                 + "Anything you typed in another sg window is lost.", "Update"))
             return;
 
+        if (Session.Tasks.Snapshot().Any(t => t.Active)) return;
         _updating = true;
         UpdateItem.IsEnabled = false;
         try
@@ -1077,7 +1099,8 @@ public sealed partial class MainWindow : Window
         var r = await Reports.Run(Overview.Report, Pane, "new branch " + input.Name,
             () => Ops.Branch(root, input.Name, input.Checkout, input.Without, input.Minimal, input.Shared),
             (card, x) => card.Show(ChipSeverity.Success, "", $"Worktree {x.Branch} is ready",
-                x.Path + (x.Shared.Count > 0 ? "\n" + SharedFolders.Describe(x.SharedMode) + ": " + string.Join(", ", x.Shared) : "")));
+                x.Path + (x.Shared.Count > 0 ? "\n" + SharedFolders.Describe(x.SharedMode) + ": " + string.Join(", ", x.Shared) : "")),
+            worktree: new(input.Checkout.Name, input.Name, root.WorktreePathFor(input.Name)));
         if (r != null)
         {
             Pane.Append($"worktree: {r.Path}");

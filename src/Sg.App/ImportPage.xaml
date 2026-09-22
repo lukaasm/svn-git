@@ -101,14 +101,16 @@
                               Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
                               ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
             <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-            <Button Grid.Column="4" x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
-                    AutomationProperties.Name="Import the branch"
-                    ToolTipService.ToolTip="Make the branch and its worktree here, then replay every commit onto this checkout's snapshot.">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE896;" FontSize="14" />
-                    <TextBlock x:Name="ImportLabel" Text="Import" />
-                </StackPanel>
-            </Button>
+            <local:TaskGate Grid.Column="4">
+                <Button x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
+                        AutomationProperties.Name="Import the branch"
+                        ToolTipService.ToolTip="Make the branch and its worktree here, then replay every commit onto this checkout's snapshot.">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE896;" FontSize="14" />
+                        <TextBlock x:Name="ImportLabel" Text="Import" />
+                    </StackPanel>
+                </Button>
+            </local:TaskGate>
         </Grid>
 
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />

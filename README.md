@@ -5,6 +5,12 @@ The design is in [DESIGN.md](DESIGN.md). This is milestone 1: the core library a
 
 ## Guided workflows
 
+The Windows app keeps a **Tasks** pane aligned with the page content, including standalone action windows. Expand it for progress, cancellation, output, and results from this session; the latest 100 tasks are retained until cleared or the app exits. Navigating away leaves tasks running. Paused replays and partial results are marked **Needs attention**, and durable recovery remains in **Activity** after a restart.
+
+Actions that change the same root are blocked while a task holds it; browsing remains available. Scheduled backups defer while that root is busy. New worktrees, imports, backup restores, and recovery branches appear as placeholders immediately and refresh into real cards when finished. Exit and restart wait for active tasks to finish or be cancelled.
+
+For direct Windows UI Automation testing, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected.
+
 Branch cards offer **Update from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
 
 **Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.

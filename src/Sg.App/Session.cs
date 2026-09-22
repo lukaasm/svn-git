@@ -96,8 +96,19 @@ public sealed class AppSettings
 public static class Session
 {
     public static readonly UiLog Log = new();
+    public static readonly Sg.Core.TaskQueue Tasks = new();
     public static AppSettings Settings { get; } = AppSettings.Load();
-    public static SgRoot? Root { get; private set; }
+    static SgRoot? _root;
+    static readonly AsyncLocal<SgRoot?> WorkerRoot = new();
+    public static SgRoot? Root { get => WorkerRoot.Value ?? _root; private set => _root = value; }
+
+    internal static T InRoot<T>(SgRoot? root, Func<T> work)
+    {
+        var previous = WorkerRoot.Value;
+        WorkerRoot.Value = root;
+        try { return work(); }
+        finally { WorkerRoot.Value = previous; }
+    }
 
     /// <summary>A backup is running. The worktree badges say so, rather than what the last one found.</summary>
     public static bool BackingUp { get; set; }
@@ -152,42 +163,58 @@ public static class Runner
     /// Concurrent operations keep independent panes.
     /// </summary>
     /// <remarks>failed hears the message the strip shows when the work throws, so a page can say it where the reader is looking. Not on a cancel.</remarks>
-    public static async Task<T?> Run<T>(StatusStrip pane, string title, Func<T> work, Action<string>? failed = null) where T : class
+    public static async Task<T?> Run<T>(StatusStrip pane, string title, Func<T> work, Action<string>? failed = null, PendingWorktree? worktree = null) where T : class
     {
         var operationRoot = Session.Root;
+        var task = Session.Tasks.TryStart(title, operationRoot?.RootPath ?? "", pane.StopsAtBoundary, worktree);
+        if (task == null)
+        {
+            var message = "Wait for " + Session.Tasks.Blocking(operationRoot?.RootPath ?? "")?.Title + ". See Tasks below; browsing remains available.";
+            pane.End(message);
+            failed?.Invoke(message);
+            return null;
+        }
+        var previousTask = Session.Log.Task;
+        Session.Log.Task = task;
         var previous = Session.Log.Sink;
         Session.Log.Sink = pane;
         pane.Begin(title);
-        using var cancel = new CancellationTokenSource();
-        pane.Arm(cancel);
+        pane.ArmTask(task);
         try
         {
             // The token rides the async flow into Proc, which ends the child process on cancel.
-            using (Cancellation.Use(cancel.Token))
+            using (Cancellation.Use(task.Token))
             {
-                var result = await Task.Run(() =>
+                var result = await Task.Run(() => Session.InRoot(operationRoot, () =>
                 {
                     using var operation = operationRoot?.Lock();
+                    task.Token.ThrowIfCancellationRequested();
+                    task.Running();
                     return work();
-                });
-                pane.End(title + ": done");
+                }));
+                var outcome = TaskResults.Describe(result);
+                task.Finish(outcome.State, outcome.Detail);
+                pane.End(title + ": " + outcome.Detail.Split('\n')[0]);
                 return result;
             }
         }
         catch (SgCancelledException)
         {
+            task.Finish(TaskState.Cancelled, "Cancelled. Any completed steps remain; check Activity for resumable work.");
             pane.End(title + ": cancelled");
             pane.Append("cancelled");
             return null;
         }
         catch (OperationCanceledException)
         {
+            task.Finish(TaskState.Cancelled, "Cancelled. Any completed steps remain; check Activity for resumable work.");
             pane.End(title + ": cancelled");
             pane.Append("cancelled");
             return null;
         }
         catch (SgException ex)
         {
+            task.Finish(TaskState.Failed, ex.Message);
             pane.Error(ex.Message);
             failed?.Invoke(ex.Message);
             return null;
@@ -195,14 +222,16 @@ public static class Runner
         catch (Exception ex)
         {
             var line = Unexpected(ex);
+            task.Finish(TaskState.Failed, line);
             pane.Error(line);
             failed?.Invoke(line);
             return null;
         }
         finally
         {
-            pane.Arm(null);
+            pane.ArmTask(null);
             Session.Log.Sink = previous;
+            Session.Log.Task = previousTask;
         }
     }
 

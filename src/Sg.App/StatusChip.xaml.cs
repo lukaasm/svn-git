@@ -20,10 +20,8 @@ public enum ChipSeverity
 }
 
 /// <summary>
-/// The one badge in the app, drawn the way the platform draws an InfoBadge: a solid pill in the colour of
-/// its severity with the glyph and the count on it in the on-accent foreground. A plain coloured dot only
-/// says "something"; the glyph says which something, and says it again for anyone who cannot separate the
-/// colours. The optional label sits beside the pill, not in it, in the caption text of the page.
+/// A compact severity marker with a quiet background and a readable glyph/count.
+/// The optional caption stays outside the marker; meaning never depends on colour alone.
 /// </summary>
 public sealed partial class StatusChip : UserControl
 {
@@ -77,19 +75,21 @@ public sealed partial class StatusChip : UserControl
 
     void Apply()
     {
-        // The fills the platform's own Attention, Success, Caution, Critical and Informational badge styles use.
-        var fill = Severity switch
+        var tone = Severity switch
         {
-            ChipSeverity.Attention => "SystemFillColorAttentionBrush",
-            ChipSeverity.Caution => "SystemFillColorCautionBrush",
-            ChipSeverity.Critical => "SystemFillColorCriticalBrush",
-            ChipSeverity.Success => "SystemFillColorSuccessBrush",
-            _ => "SystemFillColorSolidNeutralBrush",
+            ChipSeverity.Attention => "Attention",
+            ChipSeverity.Caution => "Caution",
+            ChipSeverity.Critical => "Critical",
+            ChipSeverity.Success => "Success",
+            _ => "Neutral",
         };
-        Pill.Background = Res(fill, "AccentFillColorDefaultBrush");
-        var onFill = Res("TextOnAccentFillColorPrimaryBrush");
-        Icon.Foreground = onFill;
-        CountText.Foreground = onFill;
+        Pill.Background = Res($"SystemFillColor{tone}BackgroundBrush", "ControlFillColorSecondaryBrush");
+        Pill.BorderBrush = Res("ControlStrokeColorDefaultBrush");
+        var foreground = Severity == ChipSeverity.Neutral
+            ? Res("TextFillColorSecondaryBrush")
+            : Res($"SystemFillColor{tone}Brush", "TextFillColorPrimaryBrush");
+        Icon.Foreground = foreground;
+        CountText.Foreground = foreground;
         Icon.Glyph = Glyph;
         Icon.Visibility = Glyph.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         CountText.Text = Count.ToString();

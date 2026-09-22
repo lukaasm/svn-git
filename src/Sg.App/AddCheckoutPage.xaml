@@ -19,9 +19,11 @@
         </ScrollViewer>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-            <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
-                x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="Add_Click" IsEnabled="False"
-                ToolTipService.ToolTip="Same as 'sg checkout add'. From a URL, svn checkout runs first. Then every versioned file is read and hashed once, which is the long step." />
+            <local:TaskGate>
+                <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
+                    x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="Add_Click" IsEnabled="False"
+                    ToolTipService.ToolTip="Same as 'sg checkout add'. From a URL, svn checkout runs first. Then every versioned file is read and hashed once, which is the long step." />
+            </local:TaskGate>
             <Button x:Name="CloseButton" Content="Close" Click="Close_Click"
                     ToolTipService.ToolTip="Back to the overview. Nothing is registered unless you added it." />
             <TextBlock x:Name="Result" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />

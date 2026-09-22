@@ -21,9 +21,11 @@
                     <controls:SettingsExpander.HeaderIcon>
                         <FontIcon Glyph="&#xED25;" />
                     </controls:SettingsExpander.HeaderIcon>
-                    <local:IconButton Glyph="&#xE74E;" Text="Save"
-                        x:Name="SaveButton" Style="{StaticResource AccentButtonStyle}" Click="Save_Click"
-                        ToolTipService.ToolTip="Write the name and the folders to sg.json and rebuild the ignore rules. The checkout on disk is not touched." />
+                    <local:TaskGate>
+                        <local:IconButton Glyph="&#xE74E;" Text="Save"
+                            x:Name="SaveButton" Style="{StaticResource AccentButtonStyle}" Click="Save_Click"
+                            ToolTipService.ToolTip="Write the name and the folders to sg.json and rebuild the ignore rules. The checkout on disk is not touched." />
+                    </local:TaskGate>
                     <controls:SettingsExpander.Items>
                         <controls:SettingsCard ContentAlignment="Vertical" HorizontalContentAlignment="Stretch">
                             <StackPanel Spacing="12">
@@ -72,9 +74,11 @@
                                       ToolTipService.ToolTip="The branches that exist beside this external's own, read from the server. Anything else you type is used as a URL." />
                             <Button x:Name="RevertButton" Grid.Column="1" Content="Back to declared" Click="Revert_Click" IsEnabled="False" VerticalAlignment="Bottom"
                                     ToolTipService.ToolTip="Switch it back to the URL svn:externals declares, which is what everyone else has." />
-                            <local:IconButton Grid.Column="2" Glyph="&#xE8AB;" Text="Switch"
-                                x:Name="SwitchButton" Click="Switch_Click" IsEnabled="False" VerticalAlignment="Bottom"
-                                ToolTipService.ToolTip="Runs svn switch on this external only. It downloads the difference, and leaves the property and the server alone." />
+                            <local:TaskGate Grid.Column="2" VerticalAlignment="Bottom">
+                                <local:IconButton Glyph="&#xE8AB;" Text="Switch"
+                                    x:Name="SwitchButton" Click="Switch_Click" IsEnabled="False"
+                                    ToolTipService.ToolTip="Runs svn switch on this external only. It downloads the difference, and leaves the property and the server alone." />
+                            </local:TaskGate>
                         </Grid>
                     </StackPanel>
                 </Border>

@@ -118,30 +118,32 @@
                          what the window is for, and the right half is the other things to do with the very
                          same changes. Applying without committing is the way round a push when the change
                          wants reading first, and the shelf is where a change waits instead of going. -->
-                    <local:AccentSplitButton Grid.Column="3" AutomationProperties.Name="Push to SVN" x:Name="PushButton"
-                                             Click="Push_Click"
-                                             ToolTipService.ToolTip="Write the message, then sync the checkout, rebase the branch, and make one svn commit per repository. Asks before it commits. Ctrl+Enter opens this too.">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE898;" FontSize="14" />
-                            <TextBlock Text="Push to SVN" />
-                        </StackPanel>
-                        <local:AccentSplitButton.Flyout>
-                            <MenuFlyout Placement="TopEdgeAlignedRight">
-                                <MenuFlyoutItem x:Name="ApplyItem" Text="Apply without committing" Click="Apply_Click"
-                                                ToolTipService.ToolTip="Write the same changes into the checkout and stop there. Nothing goes to the server and the branch does not move: read them, change them, and commit them yourself from the changes window or from TortoiseSVN.">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE8DE;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
-                                                ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back.">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE81C;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </local:AccentSplitButton.Flyout>
-                    </local:AccentSplitButton>
+                    <local:TaskGate Grid.Column="3">
+                        <local:AccentSplitButton AutomationProperties.Name="Push to SVN" x:Name="PushButton"
+                                                 Click="Push_Click"
+                                                 ToolTipService.ToolTip="Write the message, then sync the checkout, rebase the branch, and make one svn commit per repository. Asks before it commits. Ctrl+Enter opens this too.">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE898;" FontSize="14" />
+                                <TextBlock Text="Push to SVN" />
+                            </StackPanel>
+                            <local:AccentSplitButton.Flyout>
+                                <MenuFlyout Placement="TopEdgeAlignedRight">
+                                    <MenuFlyoutItem x:Name="ApplyItem" Text="Apply without committing" Click="Apply_Click"
+                                                    ToolTipService.ToolTip="Write the same changes into the checkout and stop there. Nothing goes to the server and the branch does not move: read them, change them, and commit them yourself from the changes window or from TortoiseSVN.">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE8DE;" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
+                                                    ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back.">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE81C;" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </local:AccentSplitButton.Flyout>
+                        </local:AccentSplitButton>
+                    </local:TaskGate>
                 </Grid>
             </StackPanel>
         </Grid>

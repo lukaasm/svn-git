@@ -13,10 +13,13 @@ public sealed partial class StatusStrip : UserControl
     public StatusStrip()
     {
         InitializeComponent();
+        Visibility = Visibility.Collapsed;
     }
 
+    public bool StopsAtBoundary { get; private set; }
     public void StopAtBoundary(bool enabled) => Ui(() =>
     {
+        StopsAtBoundary = enabled;
         CancelText.Text = enabled ? "Stop after current step" : "Cancel";
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CancelButton, CancelText.Text);
         ToolTipService.SetToolTip(CancelButton, enabled ? "Finish the current durable step, then pause. Resume in Activity." : "Request cancellation of the running command.");
@@ -34,6 +37,7 @@ public sealed partial class StatusStrip : UserControl
     void Say(string text) => Ui(() =>
     {
         StatusText.Text = text;
+        if (_task == null) Visibility = Visibility.Visible;
         OutputWindow.SetStatus(text);
     });
 
@@ -68,6 +72,16 @@ public sealed partial class StatusStrip : UserControl
         Append(text);
     });
 
+    Sg.Core.OperationTask? _task;
+    public void ArmTask(Sg.Core.OperationTask? task) => Ui(() =>
+    {
+        // Task progress and its result belong to the persistent footer. Quiet-read errors still use this strip.
+        if (task == null && _task != null) Visibility = Visibility.Collapsed;
+        _task = task;
+        if (task != null) Visibility = Visibility.Collapsed;
+        CancelButton.Visibility = task != null ? Visibility.Visible : Visibility.Collapsed;
+        CancelButton.IsEnabled = task != null;
+    });
     CancellationTokenSource? _cancel;
 
     /// <summary>Runner hands the strip the token source, so Cancel has something to press.</summary>
@@ -82,7 +96,7 @@ public sealed partial class StatusStrip : UserControl
     {
         CancelButton.IsEnabled = false;
         StatusText.Text = CancelText.Text == "Cancel" ? "cancelling..." : "Will stop after the current step...";
-        try { _cancel?.Cancel(); }
+        try { _task?.Cancel(); _cancel?.Cancel(); }
         catch (ObjectDisposedException) { /* it already finished */ }
     }
 
@@ -114,7 +128,7 @@ public sealed partial class StatusStrip : UserControl
         Append("error: " + message);
         // The detail is the whole point of a failure, and it is one window away rather than on screen.
         // Opening it is the one case that earns the interruption.
-        OutputWindow.Show("error: " + first);
+        if (IsLoaded) OutputWindow.Show("error: " + first);
     });
 
     public void Clear() => LogStore.Clear();

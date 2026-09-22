@@ -13,6 +13,7 @@ public partial class App : Application
     static TrayIcon? _tray;
     static Microsoft.UI.Dispatching.DispatcherQueue? _queue;
     static bool _exiting;
+    internal static bool HasMainWindow => _main != null;
 
     const int MenuOpen = 1, MenuMonitor = 2, MenuCheck = 3, MenuSettings = 4, MenuExit = 9;
 
@@ -267,6 +268,12 @@ public partial class App : Application
         var main = new MainWindow(startAction, path);
         main.AppWindow.Closing += (_, args) =>
         {
+            if (!_exiting && Session.Tasks.Snapshot().Any(t => t.Active) && _tray == null)
+            {
+                args.Cancel = true;
+                OutputWindow.Show("Tasks are running. Finish or cancel them in the task pane before closing.");
+                return;
+            }
             if (_exiting || _tray == null) return;
             // Keep running in the tray. The monitor keeps checking.
             args.Cancel = true;
@@ -343,6 +350,12 @@ public partial class App : Application
     /// </summary>
     public static void ExitApp()
     {
+        if (Session.Tasks.Snapshot().Any(t => t.Active))
+        {
+            ShowMain();
+            OutputWindow.Show("Tasks are running. Finish or cancel them in the task pane before exiting.");
+            return;
+        }
         _exiting = true;
         RemoveTray();
         Current.Exit();

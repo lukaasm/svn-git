@@ -25,8 +25,10 @@
                         </Grid>
                         <CheckBox x:Name="FsMonitor" Content="Use git fsmonitor" IsChecked="True"
                                   ToolTipService.ToolTip="A background service that makes git status fast on a big worktree. Turn it off if your machine forbids it." />
-                        <local:IconButton Glyph="&#xE8F4;" Text="Create the root"
-                            x:Name="CreateRootButton" Style="{StaticResource AccentButtonStyle}" Click="CreateRoot_Click" ToolTipService.ToolTip="Same as 'sg init &lt;folder&gt;'. Fast, and it touches nothing outside .sg." />
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE8F4;" Text="Create the root"
+                                x:Name="CreateRootButton" Style="{StaticResource AccentButtonStyle}" Click="CreateRoot_Click" ToolTipService.ToolTip="Same as 'sg init &lt;folder&gt;'. Fast, and it touches nothing outside .sg." />
+                        </local:TaskGate>
                     </StackPanel>
                 </Border>
 
@@ -43,8 +45,10 @@
                         <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
                                    Text="A working copy already on disk, or one svn checks out from a URL first. Then every versioned file is hashed once into the store and one file is written into the checkout: .git, a one-line pointer back to the root. A 16 GB checkout takes minutes. You can go back and do it later instead." />
                         <local:CheckoutFields x:Name="Fields" />
-                        <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
-                            x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="AddCheckout_Click" ToolTipService.ToolTip="Same as 'sg checkout add'. This is the long step: it reads and hashes every versioned file once." />
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
+                                x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="AddCheckout_Click" ToolTipService.ToolTip="Same as 'sg checkout add'. This is the long step: it reads and hashes every versioned file once." />
+                        </local:TaskGate>
                     </StackPanel>
                 </Border>
             </StackPanel>

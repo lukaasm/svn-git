@@ -56,8 +56,10 @@
                          with the checkout's own changes, and the right half is the other thing to do with
                          exactly those changes - put them aside. Shelving from here takes all of them,
                          which is the answer when the reason is "a push wants this file". -->
-                    <local:IconButton Glyph="&#xE895;" Text="Sync"
-                        x:Name="SyncButton" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout, then take a new snapshot into svn/&lt;name&gt;. Branches are not touched, rebase them when you want the new base." />
+                    <local:TaskGate>
+                        <local:IconButton Glyph="&#xE895;" Text="Sync"
+                            x:Name="SyncButton" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout, then take a new snapshot into svn/&lt;name&gt;. Branches are not touched, rebase them when you want the new base." />
+                    </local:TaskGate>
                     <local:AccentSplitButton x:Name="SvnCommitButton" MinWidth="{StaticResource CardActionWidth}" AutomationProperties.Name="Commit"
                                              Click="SvnCommit_Click"
                                              ToolTipService.ToolTip="Pick the changed files, see each diff, write a message, and commit them straight to SVN. One commit per working copy. Asks first.">
@@ -88,7 +90,7 @@
                         IsDynamicOverflowEnabled="True">
                 <!-- First, and so the last one the bar ever folds away: a checkout is opened to start work
                      in a worktree, and every other button here is about one that already exists. -->
-                <AppBarButton Label="New worktree" Click="NewBranch_Click"
+                <AppBarButton x:Name="NewWorktreeButton" Label="New worktree" Click="NewBranch_Click"
                               ToolTipService.ToolTip="A git branch from the latest snapshot, and a worktree folder for it. Work there with plain git, or let an agent.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE8F4;" /></AppBarButton.Icon>
                 </AppBarButton>
@@ -163,10 +165,13 @@
                 <local:EmptyState x:Name="NoWorktrees" Visibility="Collapsed" Glyph="&#xE8F4;" Title="No worktrees yet" Margin="0,16,0,16"
                                   Text="A worktree is a folder with a git branch born from this checkout's snapshot. Work there, then push it back to SVN as one commit per repository.">
                     <local:EmptyState.Action>
-                        <local:IconButton Glyph="&#xE8F4;" Text="New worktree" Click="NewBranch_Click" Style="{StaticResource AccentButtonStyle}" />
+                        <local:TaskGate>
+                            <local:IconButton Glyph="&#xE8F4;" Text="New worktree" Click="NewBranch_Click" Style="{StaticResource AccentButtonStyle}" />
+                        </local:TaskGate>
                     </local:EmptyState.Action>
                 </local:EmptyState>
 
+                <local:PendingWorktrees x:Name="PendingTrees" />
                 <ItemsControl x:Name="WorktreeList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="local:WorktreeRow">
@@ -310,8 +315,10 @@
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE74E;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="&#xE896;" Text="Pull" Tag="{x:Bind}" Click="Pull_Click"
-                                                          ToolTipService.ToolTip="Put the commits the backup holds past this branch's own on top of it, and its uncommitted changes into the worktree, or on a shelf when both sides changed the same files." />
+                                        <local:TaskGate>
+                                            <local:IconButton MinWidth="124" Glyph="&#xE896;" Text="Pull" Tag="{x:Bind}" Click="Pull_Click"
+                                                              ToolTipService.ToolTip="Put the commits the backup holds past this branch's own on top of it, and its uncommitted changes into the worktree, or on a shelf when both sides changed the same files." />
+                                        </local:TaskGate>
                                     </controls:SettingsCard>
                                     <controls:SettingsCard Header="Resolve conflicts" Description="Whatever stopped here, a rebase or an import: pick a version per file, then continue, skip that one, or put it all back."
                                                            Visibility="{x:Bind ResolveVisibility, Mode=OneWay}" IsClickEnabled="True" Tag="{x:Bind}" Click="Resolve_Click">
@@ -336,22 +343,28 @@
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE74E;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="{x:Bind ExcludeGlyph, Mode=OneWay}" Text="{x:Bind ExcludeText, Mode=OneWay}" Tag="{x:Bind}" Click="Exclude_Click"
-                                                          ToolTipService.ToolTip="Leave this worktree out of every backup, or put it back in. Written to sg.json at once; nothing is sent or deleted by pressing it." />
+                                        <local:TaskGate>
+                                            <local:IconButton MinWidth="124" Glyph="{x:Bind ExcludeGlyph, Mode=OneWay}" Text="{x:Bind ExcludeText, Mode=OneWay}" Tag="{x:Bind}" Click="Exclude_Click"
+                                                              ToolTipService.ToolTip="Leave this worktree out of every backup, or put it back in. Written to sg.json at once; nothing is sent or deleted by pressing it." />
+                                        </local:TaskGate>
                                     </controls:SettingsCard>
                                     <controls:SettingsCard Header="Export the branch"
                                                            Description="Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xEDE1;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="&#xEDE1;" Text="Export" Tag="{x:Bind}" Click="Export_Click"
-                                                          ToolTipService.ToolTip="Write the branch to a file. The far side puts it back with Import a branch, or with sg import." />
+                                        <local:TaskGate>
+                                            <local:IconButton MinWidth="124" Glyph="&#xEDE1;" Text="Export" Tag="{x:Bind}" Click="Export_Click"
+                                                              ToolTipService.ToolTip="Write the branch to a file. The far side puts it back with Import a branch, or with sg import." />
+                                        </local:TaskGate>
                                     </controls:SettingsCard>
                                     <controls:SettingsCard Header="Remove worktree and branch" Description="Delete the worktree folder and the git branch. Asks first. What was pushed stays in SVN.">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE74D;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="&#xE74D;" Text="Remove" Tag="{x:Bind}" Click="Remove_Click" />
+                                        <local:TaskGate>
+                                            <local:IconButton MinWidth="124" Glyph="&#xE74D;" Text="Remove" Tag="{x:Bind}" Click="Remove_Click" />
+                                        </local:TaskGate>
                                     </controls:SettingsCard>
                                 </controls:SettingsExpander.Items>
                             </controls:SettingsExpander>

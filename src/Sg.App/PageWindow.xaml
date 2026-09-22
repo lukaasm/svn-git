@@ -9,8 +9,9 @@
     </Window.SystemBackdrop>
     <!-- One page in a window of its own: what the Explorer menu opens. The title bar carries the
          page's title and subtitle, and a back button once the page has opened another over itself. -->
-    <Grid RowDefinitions="Auto,*">
+    <Grid RowDefinitions="Auto,*,Auto">
         <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="sg" Subtitle="" IsBackButtonVisible="False" BackRequested="Back_Click" />
-        <local:NavHost x:Name="Host" Grid.Row="1" Margin="16,4,16,16" />
+        <local:NavHost x:Name="Host" Grid.Row="1" Margin="16,4,16,0" />
+        <local:TaskPane Grid.Row="2" Margin="16,0,16,0" />
     </Grid>
 </Window>

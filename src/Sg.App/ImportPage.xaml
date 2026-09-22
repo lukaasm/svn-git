@@ -100,7 +100,7 @@
             <local:IconButton Grid.Column="2" x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resume import" Visibility="Collapsed"
                               Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
                               ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
-            <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
             <local:TaskGate Grid.Column="4">
                 <Button x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
                         AutomationProperties.Name="Import the branch"

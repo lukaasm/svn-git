@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Sg.Core;
 
@@ -40,6 +41,7 @@ public sealed partial class ImportPage : SgPage
     string _file;
     ExportMeta? _meta;
     bool _binding;
+    int _nameCheck;
 
     /// <summary>A checkout here points at the URL the export names. When none does, saying so is the answer.</summary>
     bool _matched;
@@ -141,18 +143,38 @@ public sealed partial class ImportPage : SgPage
               + (moved.Count > 6 ? $", and {moved.Count - 6} more" : "");
     }
 
-    void SyncButton()
+    async void SyncButton()
     {
         var name = NameBox.Text.Trim();
-        var taken = name.Length > 0 && Session.Root?.Git.RefSha("refs/heads/" + name) != null;
-        ImportButton.IsEnabled = _meta != null && name.Length > 0 && Into != null && !taken;
+        var generation = ++_nameCheck;
+        var root = Session.Root;
+        ImportButton.IsEnabled = false;
+        BranchTarget check = new(false, null);
+        if (name.Length > 0 && root != null && _meta != null)
+        {
+            ExplainTarget("Checking branch name and destination…");
+            await Task.Delay(200);
+            if (generation != _nameCheck || root != Session.Root) return;
+            check = await Task.Run(() => BranchTarget.Check(root, name));
+            if (generation != _nameCheck || root != Session.Root) return;
+        }
+        var taken = check.Taken;
+        ImportButton.IsEnabled = _meta != null && name.Length > 0 && Into != null && !taken && check.Error == null;
         ImportLabel.Text = _meta == null ? "Import" : $"Import {_meta.Commits} commit(s)";
-        Summary.Text = _meta == null ? ""
+        ExplainTarget(_meta == null ? "Choose a readable export file to import."
             : Into == null && !_matched ? $"No checkout here points at {_meta.Root?.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."
             : name.Length == 0 ? "Give the branch a name."
+            : check.Error != null ? check.Error
             : taken ? $"{name} is already a branch here. Give it another name."
-            : $"{name} will be made on {Into.Name}, and its worktree with it.";
+            : $"{name} will be made on {Into.Name}, and its worktree with it.");
+    }
+
+    void ExplainTarget(string message)
+    {
+        Summary.Text = message;
+        AutomationProperties.SetHelpText(ImportButton, message);
+        AutomationProperties.SetHelpText(NameBox, message);
     }
 
     void Name_TextChanged(object sender, TextChangedEventArgs e)
@@ -193,6 +215,7 @@ public sealed partial class ImportPage : SgPage
 
         var file = _file;
         var res = await Busy.During(sender, () => Runner.Run(Pane, "import " + name, () => Export.Import(root, file, name, co.Name), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
+        ++_nameCheck; // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 
         ResultBar.Severity = res.Ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning;

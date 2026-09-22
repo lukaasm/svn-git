@@ -160,7 +160,7 @@
                                   ToolTipService.ToolTip="Delete from the backup what is not here any more: branches removed, shelves dropped. Asks first, with the list." />
             </local:TaskGate>
             <Button Grid.Column="2" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
-            <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="8,0" />
+            <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" Margin="8,0" />
             <local:TaskGate Grid.Column="4">
                 <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
                         AutomationProperties.Name="Restore the branch"

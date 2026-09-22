@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Sg.Core;
 
@@ -41,6 +42,7 @@ public sealed partial class BackupPage : SgPage
     List<BackupEntry> _entries = new();
     BackupEntry? _picked;
     bool _binding;
+    int _nameCheck;
 
     public BackupPage()
     {
@@ -171,22 +173,42 @@ public sealed partial class BackupPage : SgPage
     /// <summary>The entry as the export reader sees an export, so the drift is read by the same code.</summary>
     static ExportMeta MetaOf(BackupEntry e) => new() { Branch = e.Name, Bases = e.Bases };
 
-    void SyncButton()
+    async void SyncButton()
     {
         var entry = _picked;
         var name = NameBox.Text.Trim();
-        var taken = name.Length > 0 && Session.Root?.Git.RefSha("refs/heads/" + name) != null;
+        var generation = ++_nameCheck;
+        var root = Session.Root;
+        RestoreButton.IsEnabled = false;
+        BranchTarget check = new(false, null);
+        if (name.Length > 0 && root != null && _picked != null)
+        {
+            ExplainTarget("Checking branch name and destination…");
+            await Task.Delay(200);
+            if (generation != _nameCheck || root != Session.Root) return;
+            check = await Task.Run(() => BranchTarget.Check(root, name));
+            if (generation != _nameCheck || root != Session.Root) return;
+        }
+        var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
-        RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force);
+        RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
         RestoreLabel.Text = entry == null ? "Restore" : force && taken ? $"Overwrite with {entry.Commits} commit(s)" : $"Restore {entry.Commits} commit(s)";
-        Summary.Text = entry == null ? "Pick a branch."
+        ExplainTarget(entry == null ? "Pick a branch."
             : entry.Unreadable != null ? entry.Unreadable
             : Into == null && entry.Checkout.Length == 0 ? $"No checkout here points at {entry.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."
             : name.Length == 0 ? "Give the branch a name."
-            : taken && !force ? $"{name} is already a branch here. Tick Overwrite to write over it, or give it another name."
+            : check.Error != null ? check.Error
+            : taken && !force ? $"{name} is already a branch here. Choose another name, or select 'Replace if it exists here' to overwrite it."
             : taken ? $"{name} here is written over with the backup version. Its worktree is reset and any uncommitted changes in it are dropped."
-            : $"{name} will be made on {Into.Name}, and its worktree with it.";
+            : $"{name} will be made on {Into.Name}, and its worktree with it.");
+    }
+
+    void ExplainTarget(string message)
+    {
+        Summary.Text = message;
+        AutomationProperties.SetHelpText(RestoreButton, message);
+        AutomationProperties.SetHelpText(NameBox, message);
     }
 
     void Name_TextChanged(object sender, TextChangedEventArgs e)
@@ -231,6 +253,7 @@ public sealed partial class BackupPage : SgPage
 
         var res = await Busy.During(sender, () => Runner.Run(Pane, "restore " + name,
             () => Backup.Restore(root, entry.Name, name == entry.Name ? null : name, co.Name, wip, force), worktree: new(co.Name, name, root.WorktreePathFor(name))), restoreEnabled: false);
+        ++_nameCheck; // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
 
         var lines = new List<string>();

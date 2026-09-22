@@ -15,6 +15,8 @@ For direct Windows UI Automation testing, build the Debug app and run `scripts/t
 
 For full workflow checks, also build the Debug CLI and run `scripts/test-workflows-ui.ps1`. It creates a fresh local SVN repository and bare Git backup, then automates export import, update from fresh SVN, empty-commit skip, backup, and restore onto a newer snapshot. Git/SVN assertions verify the resulting files and history. Git, SVN, and `svnadmin` must be on PATH. Fixtures are retained under the temporary directory for inspection; `-FixtureParent` selects another parent folder. The scripts stop only their own Debug app, temporarily disable scheduled backups for deterministic runs, and restore the backup interval and navigation preferences.
 
+Import and backup restore validate branch names and destination folders before enabling submission. Checks run after a short typing pause without blocking the UI; the full reason remains visible and available to screen readers.
+
 Branch cards offer **Update from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
 
 **Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.

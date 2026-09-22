@@ -60,6 +60,14 @@ function Invoke-Ui([string]$value, [switch]$Name) {
 function Set-Ui([string]$id, [string]$value) {
     (Wait-For $id { Find-Ui $id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
 }
+function Assert-Blocked([string]$buttonId, [string]$explanation) {
+    $null = Wait-For "validation: $explanation" {
+        $button = Find-Ui $buttonId
+        $summary = Find-Ui 'Summary'
+        $button -and !$button.Current.IsEnabled -and $summary -and $summary.Current.Name -like $explanation -and
+            $button.Current.HelpText -like $explanation
+    }
+}
 function Stop-App {
     if ($script:process -and !$script:process.HasExited) { Stop-Process -Id $script:process.Id; $script:process.WaitForExit() }
     $script:process = $null
@@ -110,6 +118,16 @@ try {
 
     # Import through the actual preview and confirmation UI, then verify its materialized files.
     Start-App 'import' $export
+    Set-Ui 'NameBox' 'source'
+    Assert-Blocked 'ImportButton' '*already a branch*'
+    Set-Ui 'NameBox' ''
+    Assert-Blocked 'ImportButton' '*Give the branch a name*'
+    Set-Ui 'NameBox' 'bad..name'
+    Assert-Blocked 'ImportButton' '*valid Git branch name*'
+    $null = New-Item -ItemType Directory -Path (Join-Path $root 'occupied')
+    Set-Ui 'NameBox' 'occupied'
+    Assert-Blocked 'ImportButton' '*destination folder already exists*'
+    Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'imported'
     Invoke-Ui 'ImportButton'
     Invoke-Ui 'PrimaryButton'
@@ -177,6 +195,10 @@ try {
         }
     }
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Set-Ui 'NameBox' 'bad..name'
+    Assert-Blocked 'RestoreButton' '*valid Git branch name*'
+    Set-Ui 'NameBox' 'occupied'
+    Assert-Blocked 'RestoreButton' '*destination folder already exists*'
     Set-Ui 'NameBox' 'restored-backup'
     Invoke-Ui 'RestoreButton'
     Invoke-Ui 'PrimaryButton'

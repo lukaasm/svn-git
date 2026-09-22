@@ -118,7 +118,7 @@ public sealed class ActivityPage : WorkflowPage
             return new { Records = records, Replays = replays };
         });
         if (data == null || !Current(generation)) return;
-        var records = data.Records;
+        var records = data.Records.OrderBy(r => r.Terminal).ThenByDescending(r => r.Updated).ToList();
         Body.Children.Clear(); Text("Operation history for " + root.Config.Root);
         foreach (var replay in data.Replays)
         {

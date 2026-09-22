@@ -3,6 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$FixtureRoot,
     [string]$ScreenshotDirectory,
+    [switch]$CheckRecovery,
     [string]$AppExe = "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe"
 )
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,7 @@ $previousSettings = if (Test-Path -LiteralPath $settingsPath) { Get-Content -Raw
 $script:window = $null
 $process = $null
 $heldLock = $null
+$recoveryFile = $null
 
 function Find-Element($property, $value) {
     $condition = [System.Windows.Automation.PropertyCondition]::new($property, $value)
@@ -84,6 +86,17 @@ public static class TaskPaneWindowCapture {
 }
 
 try {
+    if ($CheckRecovery) {
+        $recoveryId = [Guid]::NewGuid().ToString('N')
+        $recoveryFolder = Join-Path $rootPath '.sg/operations'
+        $null = New-Item -ItemType Directory -Path $recoveryFolder -Force
+        $recoveryFile = Join-Path $recoveryFolder ($recoveryId + '.json')
+        # A saved review record is sufficient to exercise startup recovery without changing repository data.
+        @{ id = $recoveryId; kind = 'UI automation recovery'; branch = 'recovery-fixture';
+           checkout = $config.checkouts[0].name; path = $config.checkouts[0].path;
+           phase = 'needsReview'; detail = 'Saved edits need review after interruption.' } |
+            ConvertTo-Json | Set-Content -LiteralPath $recoveryFile -Encoding utf8
+    }
     $process = Start-Process -FilePath $appPath -ArgumentList @('overview', ('"' + $rootPath + '"')) -PassThru
     $script:window = Wait-For 'debug window' {
         $process.Refresh()
@@ -91,6 +104,20 @@ try {
         if ($process.MainWindowHandle -ne 0) { [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle) }
     }
     $sync = Wait-For 'checkout overview' { By-Id 'SyncButton' }
+    if ($CheckRecovery) {
+        $button = Wait-For 'startup recovery action' { $b = By-Id 'RecoveryButton'; if ($b -and !$b.Current.IsOffscreen) { $b } }
+        if ($button.Current.Name -ne 'Review saved edits') { throw 'Recovery action does not match the saved phase.' }
+        Save-Window 'recovery'
+        Invoke-Element $button
+        $null = Wait-For 'saved recovery details' { By-Name 'Saved edits need review after interruption.' }
+        Invoke-Element (By-Id 'NavigationViewBackButton')
+        $null = Wait-For 'overview after recovery' { By-Id 'SyncButton' }
+        Remove-Item -LiteralPath $recoveryFile
+        $recoveryFile = $null
+        Start-Sleep -Milliseconds 400
+        Invoke-Element (By-Id 'RefreshButton')
+        $null = Wait-For 'recovery notice clears after reconciliation' { $b = By-Id 'RecoveryButton'; !$b -or $b.Current.IsOffscreen }
+    }
     Start-Sleep -Milliseconds 400
     Save-Window 'overview'
     $heldLock = [IO.File]::Open((Join-Path $rootPath '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
@@ -140,6 +167,7 @@ catch {
 }
 finally {
     if ($heldLock) { $heldLock.Dispose() }
+    if ($recoveryFile -and (Test-Path -LiteralPath $recoveryFile)) { Remove-Item -LiteralPath $recoveryFile }
     if ($process -and !$process.HasExited) { Stop-Process -Id $process.Id }
     # Restore only navigation preferences changed by this test; preserve unrelated settings.
     if ($previousSettings -and (Test-Path -LiteralPath $settingsPath)) {

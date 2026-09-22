@@ -150,7 +150,14 @@
                 </Grid>
 
                 <local:NavHost x:Name="Host" Grid.Row="1" />
-                <local:TaskPane Grid.Row="2" />
+                <StackPanel Grid.Row="2" Spacing="8">
+                    <InfoBar x:Name="RecoveryNotice" IsOpen="False" IsClosable="False" Severity="Warning">
+                        <InfoBar.ActionButton>
+                            <Button x:Name="RecoveryButton" Content="Review recovery" Click="Recovery_Click" />
+                        </InfoBar.ActionButton>
+                    </InfoBar>
+                    <local:TaskPane />
+                </StackPanel>
             </Grid>
         </NavigationView>
     </Grid>

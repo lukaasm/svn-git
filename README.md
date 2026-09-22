@@ -9,7 +9,9 @@ The Windows app keeps a **Tasks** pane aligned with the page content, including 
 
 Actions that change the same root are blocked while a task holds it; browsing remains available. Scheduled backups defer while that root is busy. New worktrees, imports, backup restores, and recovery branches appear as placeholders immediately and refresh into real cards when finished. Exit and restart wait for active tasks to finish or be cancelled.
 
-For direct Windows UI Automation testing, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected.
+Unfinished updates and paused replays are rediscovered when a root opens. A recovery notice links to the saved step or replay review; Activity puts unfinished operations first and retains their checkpoints. Commands are never automatically repeated on startup.
+
+For direct Windows UI Automation testing, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected. Add `-CheckRecovery` to verify startup discovery, recovery navigation, and notice removal after reconciliation.
 
 Branch cards offer **Update from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
 

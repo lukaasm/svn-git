@@ -97,11 +97,36 @@ public sealed partial class MainWindow : Window
         _ = CheckUpdateAsync();
     }
 
+    IReadOnlyList<RecoveryItem> _recovery = [];
+    string? _recoveryRoot;
+    void ShowRecovery()
+    {
+        var visible = _recoveryRoot == Session.Root?.RootPath && _recovery.Count > 0
+            && Session.Root != null && Session.Tasks.Blocking(Session.Root.RootPath) == null;
+        RecoveryNotice.IsOpen = visible;
+        if (!visible) return;
+        RecoveryNotice.Title = _recovery.Count == 1 ? _recovery[0].Title : $"{_recovery.Count} unfinished operations";
+        RecoveryNotice.Message = _recovery.Count == 1 ? _recovery[0].Detail : "Saved work needs attention. Review each operation in Activity before continuing.";
+        RecoveryButton.Content = _recovery.Count == 1 ? _recovery[0].Action : "Review recovery";
+    }
+    void Recovery_Click(object sender, RoutedEventArgs e)
+    {
+        if (_recoveryRoot != Session.Root?.RootPath) return;
+        if (_recovery.Count == 1 && Directory.Exists(_recovery[0].Path))
+        {
+            var item = _recovery[0];
+            if (item.Replay) Host.Go(() => new ConflictPage(item.Path), "resolve:" + item.Path);
+            else Host.Go(() => new UpdateBranchPage(item.Path), "update-branch:" + item.Path);
+        }
+        else Host.Go(() => new ActivityPage(), "activity");
+    }
+
     string _finishedTasks = "";
     string _pendingTrees = "";
     void TasksChanged()
     {
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(TasksChanged); return; }
+        ShowRecovery();
         var pending = string.Join("|", Session.Tasks.Snapshot().Where(t => t.Active && t.Worktree != null && t.Root == Session.Root?.RootPath).Select(t => t.Id));
         if (pending != _pendingTrees)
         {
@@ -591,6 +616,7 @@ public sealed partial class MainWindow : Window
     async Task RefreshCoreAsync(bool runStartAction)
     {
         var generation = ++_generation;
+        RecoveryNotice.IsOpen = false;
         AppTitleBar.Subtitle = Session.Root?.RootPath ?? "no root open";
         var checkouts = Session.Root?.Config.Checkouts.Count ?? 0;
         // No root: the pane itself says so and offers the two ways in; the dots would only repeat them.
@@ -614,10 +640,17 @@ public sealed partial class MainWindow : Window
             return;
         }
         var root = Session.Root;
-        _status = await Runner.Quiet(Pane, () => Ops.Status(root, checkSvn: false));
-        if (_status == null || generation != _generation) return;
-        var attention = _status.Worktrees.Count(x => x.OperationPending || x.RebaseInProgress);
-        ActivityItem.Content = attention > 0 ? $"Activity ({attention})" : "Activity";
+        var snapshot = await Runner.Quiet(Pane, () =>
+        {
+            var status = Ops.Status(root, checkSvn: false);
+            return new { Status = status, Recovery = Recovery.Find(Operations.List(root), status.Worktrees) };
+        });
+        if (snapshot == null || generation != _generation || Session.Root != root) return;
+        _status = snapshot.Status;
+        _recovery = snapshot.Recovery;
+        _recoveryRoot = root.RootPath;
+        ShowRecovery();
+        ActivityItem.Content = _recovery.Count > 0 ? $"Activity ({_recovery.Count})" : "Activity";
 
         var wanted = _current?.Name
                      ?? (_startPath != null ? root.CheckoutContaining(_startPath)?.Name : null)

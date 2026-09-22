@@ -52,7 +52,7 @@ function Start-Worktree([string]$name) {
     Invoke-Element $create
 }
 function Select-TaskFilter([int]$index) {
-    (By-Id 'TaskFilter').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    (Wait-For 'task filter control' { By-Id 'TaskFilter' }).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     Select-Element (Wait-For 'task filter item' { By-Id ('TaskFilter' + $index) })
 }
 function Task-Buttons {
@@ -150,7 +150,7 @@ try {
     Select-TaskFilter 1
     $null = Wait-For 'active filter retains running work' { (By-Id 'TaskFilterSummary').Current.Name -eq '1 of 1 tasks' }
     if ((By-Id 'ClearFinishedTasks').Current.IsEnabled) { throw 'Clear finished is enabled with no finished results.' }
-    Select-Element (By-Id 'SettingsItem')
+    Select-Element (Wait-For 'settings navigation item' { By-Id 'SettingsItem' })
     $null = Wait-For 'progress survives navigation' { (By-Id 'TaskQueueSummary').Current.Name -like '*1 active*' }
     $null = Wait-For 'repository settings disabled' { $b = By-Id 'MinLength'; $b -and !$b.Current.IsEnabled }
     if (!(By-Id 'Verbose').Current.IsEnabled) { throw 'Unrelated settings were disabled.' }
@@ -162,6 +162,14 @@ try {
     $null = Wait-For 'queued cancellation explains that no work started' {
         $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
             Where-Object { $_.Current.Name -like 'No work started. Cancelled while waiting for repository access.*' } | Select-Object -First 1
+    }
+    $copyId = 'CopyTask_' + $cancelled.Current.AutomationId.Substring(5)
+    Invoke-Element (By-Id $copyId)
+    $null = Wait-For 'copy feedback' { By-Name 'Task details copied.' }
+    $report = Get-Clipboard -Raw
+    if (!$report.Contains('Status: Cancelled') -or !$report.Contains($rootPath) -or
+        !$report.Contains($name) -or !$report.Contains('No work started.') -or !$report.Contains('Started: ')) {
+        throw 'Copied task report is missing its status, context, or result.'
     }
     Invoke-Element $cancelled
     $null = Wait-For 'repository settings enabled again' { (By-Id 'MinLength').Current.IsEnabled }

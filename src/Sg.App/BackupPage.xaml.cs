@@ -207,7 +207,7 @@ public sealed partial class BackupPage : SgPage
     void ExplainTarget(string message)
     {
         Summary.Text = message;
-        AutomationProperties.SetHelpText(RestoreButton, message);
+        TaskGate.SetHelp(RestoreButton, message);
         AutomationProperties.SetHelpText(NameBox, message);
     }
 

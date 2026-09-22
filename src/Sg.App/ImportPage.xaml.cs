@@ -173,7 +173,7 @@ public sealed partial class ImportPage : SgPage
     void ExplainTarget(string message)
     {
         Summary.Text = message;
-        AutomationProperties.SetHelpText(ImportButton, message);
+        TaskGate.SetHelp(ImportButton, message);
         AutomationProperties.SetHelpText(NameBox, message);
     }
 

@@ -1,7 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Data;
 using Sg.Core;
 
 namespace Sg.App;
@@ -178,6 +177,24 @@ public sealed class TaskPane : UserControl
         }
     }
 
+    void CopyDetails(Guid id, TextBlock feedback)
+    {
+        var task = Session.Tasks.Snapshot().FirstOrDefault(t => t.Id == id);
+        if (task == null) return;
+        var report = new System.Text.StringBuilder()
+            .AppendLine(task.Title)
+            .AppendLine("Status: " + task.StatusLabel)
+            .AppendLine("Repository: " + task.Root)
+            .AppendLine("Started: " + task.Started.ToString("O"))
+            .AppendLine("Finished: " + (task.Finished?.ToString("O") ?? "Still active"));
+        if (task.Worktree is { } worktree) report.AppendLine("Worktree: " + worktree.Path);
+        report.AppendLine().AppendLine(Message(task));
+        if (!string.IsNullOrWhiteSpace(task.Log)) report.AppendLine().AppendLine("Retained output:").Append(task.Log);
+        feedback.Text = ClipboardText.Copy(report.ToString())
+            ? "Task details copied." : "Could not copy task details. Try again.";
+        feedback.Visibility = Visibility.Visible;
+    }
+
     static string Message(TaskSnapshot t) => t.Stopping
         ? t.StatusLabel + ": " + t.CancellationExplanation + " Repository actions remain blocked.\n" + t.Detail : t.Detail;
     internal static string State(TaskSnapshot t) => t.State switch
@@ -199,7 +216,18 @@ public sealed class TaskPane : UserControl
         followUp.Click += (_, _) => OpenResult(id);
         var bar = new ProgressBar { Height = 3 };
         var body = new StackPanel { Spacing = 8, Padding = new Thickness(12, 0, 12, 12), Visibility = Visibility.Collapsed };
-        body.Children.Add(detail); body.Children.Add(followUp); body.Children.Add(bar); body.Children.Add(output);
+        var copy = new Button { Content = "Copy task details" };
+        AutomationProperties.SetAutomationId(copy, "CopyTask_" + id);
+        const string copyHelp = "Copy the current status, timestamps, repository path, result, and retained output.";
+        AutomationProperties.SetHelpText(copy, copyHelp);
+        ToolTipService.SetToolTip(copy, copyHelp);
+        var feedback = new TextBlock { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        AutomationProperties.SetAutomationId(feedback, "CopyTaskFeedback_" + id);
+        AutomationProperties.SetLiveSetting(feedback, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        copy.Click += (_, _) => CopyDetails(id, feedback);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        actions.Children.Add(followUp); actions.Children.Add(copy);
+        body.Children.Add(detail); body.Children.Add(actions); body.Children.Add(feedback); body.Children.Add(bar); body.Children.Add(output);
         var toggle = new Button { Content = title, Padding = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Style = (Style)Application.Current.Resources["QuietButton"] };
         AutomationProperties.SetAutomationId(toggle, "Task_" + id);
@@ -211,71 +239,6 @@ public sealed class TaskPane : UserControl
         var layout = new StackPanel(); layout.Children.Add(heading); layout.Children.Add(body);
         var card = new Border { Child = layout, BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] };
         return new(card, toggle, title, detail, output, cancel, bar, followUp);
-    }
-}
-
-/// <summary>The parent owns busy gating; a child's validation and selection state stay untouched.</summary>
-public sealed class TaskGate : ContentControl
-{
-    ContentControl? _gate;
-    FrameworkElement? _child;
-    string _help = "";
-    bool _blocked;
-    bool _explicitHelp;
-    // Preserve normal help when a page refresh arrives before the task-change handler.
-    public static string Explain(DependencyObject control, string defaultHelp)
-    {
-        for (DependencyObject? parent = control; parent != null; parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(parent))
-        {
-            if (parent is not TaskGate gate) continue;
-            gate._help = defaultHelp;
-            gate._explicitHelp = true;
-            return Session.Tasks.Blocking(Session.Root?.RootPath ?? "")?.BlockingExplanation ?? defaultHelp;
-        }
-        return defaultHelp;
-    }
-    public TaskGate()
-    {
-        IsTabStop = false;
-        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        VerticalContentAlignment = VerticalAlignment.Stretch;
-        Loaded += (_, _) =>
-        {
-            if (_gate == null && Content is FrameworkElement child)
-            {
-                _child = child;
-                if (!_explicitHelp) _help = AutomationProperties.GetHelpText(child);
-                SetBinding(VisibilityProperty, new Binding { Source = child, Path = new PropertyPath("Visibility"), Mode = BindingMode.OneWay });
-                Content = null;
-                _gate = new ContentControl
-                {
-                    Content = child, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    VerticalContentAlignment = VerticalAlignment.Stretch, IsTabStop = false
-                };
-                Content = _gate;
-            }
-            Session.Tasks.Changed += Changed;
-            Changed();
-        };
-        Unloaded += (_, _) => Session.Tasks.Changed -= Changed;
-    }
-    void Changed()
-    {
-        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(Changed); return; }
-        var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
-        if (_gate != null) _gate.IsEnabled = busy == null;
-        var reason = busy?.BlockingExplanation;
-        // Keep the wrapper enabled so the tooltip remains reachable over its disabled child.
-        ToolTipService.SetToolTip(this, reason);
-        AutomationProperties.SetHelpText(this, reason ?? "");
-        if (_child != null)
-        {
-            if (reason != null && !_blocked && !_explicitHelp) _help = AutomationProperties.GetHelpText(_child);
-            if (reason != null || _blocked) AutomationProperties.SetHelpText(_child, reason ?? _help);
-            if (_explicitHelp) ToolTipService.SetToolTip(_child, reason ?? _help);
-        }
-        _blocked = reason != null;
     }
 }
 

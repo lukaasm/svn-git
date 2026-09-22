@@ -141,9 +141,7 @@ public static class Crash
             };
             if (await d.ShowAsync() == ContentDialogResult.Primary)
             {
-                var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
-                package.SetText(text);
-                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+                ClipboardText.Copy(text);
             }
         }
         catch (Exception) { /* the file already has it */ }

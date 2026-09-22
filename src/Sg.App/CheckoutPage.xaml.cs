@@ -56,8 +56,7 @@ public sealed partial class CheckoutPage : SgPage
         var reason = busy != null
             ? busy.BlockingExplanation
             : _current == null ? "Select a checkout before creating a worktree." : "Create a worktree from this checkout's latest snapshot.";
-        Tip(NewWorktreeButton, reason);
-        AutomationProperties.SetHelpText(NewWorktreeButton, reason);
+        TaskGate.SetHelp(NewWorktreeButton, reason);
     }
 
     async void UnavailableActions_Click(object sender, RoutedEventArgs e)
@@ -172,16 +171,16 @@ public sealed partial class CheckoutPage : SgPage
         // How long since the last sync, in the quiet voice; the exact time is one hover away. What the
         // server has since then is the badge on the right, so this line says only when, not what.
         CoSynced.Text = co.SnapshotTaken is { } taken ? "synced" + WorktreeRow.Ago(taken) : "never synced";
-        Tip(CoRevision, $"The snapshot svn/{row.Name} is at r{co.Revision}: the exact SVN state every branch of this checkout is built on.");
-        Tip(CoSynced, co.SnapshotTaken is { } t
+        TaskGate.SetHelp(CoRevision, $"The snapshot svn/{row.Name} is at r{co.Revision}: the exact SVN state every branch of this checkout is built on.");
+        TaskGate.SetHelp(CoSynced, co.SnapshotTaken is { } t
             ? $"The snapshot was taken {t.LocalDateTime:yyyy-MM-dd HH:mm}, the last time this checkout was synced. Sync takes a new one from the server."
             : "No snapshot has been taken yet. Sync takes the first one.");
         // Detail is the URL and the path, one per line. The header over the page already writes the
         // path, so the toolbar takes the line the header does not have and keeps both in its tooltip.
         CoUrl.Text = row.Detail.Split('\n')[0];
-        Tip(CoUrl, row.Detail);
-        Tip(FolderButton, "Open " + row.Path + " in your file manager.");
-        Tip(BackupButton, status.BackupUrl != null
+        TaskGate.SetHelp(CoUrl, row.Detail);
+        TaskGate.SetHelp(FolderButton, "Open " + row.Path + " in your file manager.");
+        TaskGate.SetHelp(BackupButton, status.BackupUrl != null
             ? "What the backup repository holds, a branch back from it, and a backup now. " + status.BackupUrl
             : "No backup repository is set. Set its URL in Settings, and every branch, the uncommitted changes and the shelves go there as thin histories.");
         ShowRemote(_owner.Remote.GetValueOrDefault(row.Name), _owner.RemoteErrors.GetValueOrDefault(row.Name));
@@ -267,17 +266,6 @@ public sealed partial class CheckoutPage : SgPage
     int _behind, _localEdits;
 
     /// <summary>
-    /// A toolbar button says what it is; its tooltip says what is true right now. The three that used to
-    /// be rows with a description under them keep that sentence, one hover away instead of one chevron.
-    /// </summary>
-    static void Tip(DependencyObject o, string text)
-    {
-        text = TaskGate.Explain(o, text);
-        ToolTipService.SetToolTip(o, text);
-        AutomationProperties.SetHelpText(o, text);
-    }
-
-    /// <summary>
     /// One loud button on the toolbar, never two. A worktree card offers exactly one next action and the
     /// checkout says the same thing in the same place.
     ///
@@ -301,7 +289,7 @@ public sealed partial class CheckoutPage : SgPage
     void ShowServerState(RemoteCheckResult? result, string state)
     {
         var syncs = result is { Behind: false };
-        Tip(SyncButton, (syncs
+        TaskGate.SetHelp(SyncButton, (syncs
             ? "svn update the checkout, then take a new snapshot into svn/<name>. Branches are not touched, rebase them when you want the new base. "
             : "Opens what the server has that the snapshot does not - the revisions, their messages and their diffs - with a Sync button under them. ") + state);
     }
@@ -347,7 +335,7 @@ public sealed partial class CheckoutPage : SgPage
         // empty: the page would have nothing on it, and a button you can press to reach nothing reads as
         // a place something might be. Its tooltip still says so, because a disabled button must explain.
         ShelfButton.IsEnabled = count > 0;
-        Tip(ShelfButton, count == 0
+        TaskGate.SetHelp(ShelfButton, count == 0
             ? "Changes taken out of the checkout and kept, to put back later. This is how a local edit stops blocking a push of the same file. Nothing is waiting right now."
             : $"{count} set(s) of changes are waiting to go back into the checkout. Open to read one and write it back.");
     }
@@ -366,14 +354,14 @@ public sealed partial class CheckoutPage : SgPage
         {
             CoLocalBadge.Visibility = Visibility.Collapsed;
             // A disabled button owes the reader the reason, so this is what the tooltip is for.
-            Tip(SvnCommitButton, count == null
+            TaskGate.SetHelp(SvnCommitButton, count == null
                 ? "Reading what is edited directly in the checkout..."
                 : "No checkout edits to commit. Edit files in the checkout to enable this action. For branch changes, open Commit on that worktree.");
             return;
         }
         CoLocalBadge.Count = count.Value;
         CoLocalBadge.Visibility = Visibility.Visible;
-        Tip(SvnCommitButton, $"{count} file(s) edited directly in the checkout. Pick them, see each diff, write a message, "
+        TaskGate.SetHelp(SvnCommitButton, $"{count} file(s) edited directly in the checkout. Pick them, see each diff, write a message, "
                              + "and commit them straight to SVN. One commit per working copy. Asks first.");
     }
 

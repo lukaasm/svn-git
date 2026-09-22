@@ -62,7 +62,7 @@ public static class FileActions
             Icon = new FontIcon { Glyph = "\uE8C8" },
             IsEnabled = path != null,
         };
-        copy.Click += (_, _) => CopyText(path!);
+        copy.Click += (_, _) => ClipboardText.Copy(path!);
         ToolTipService.SetToolTip(copy, "Put the full path on the clipboard.");
 
         var menu = new MenuFlyout();
@@ -70,18 +70,6 @@ public static class FileActions
         menu.Items.Add(edit);
         menu.Items.Add(copy);
         return menu;
-    }
-
-    /// <summary>The clipboard, for a path or anything else a list can hand over.</summary>
-    public static void CopyText(string text)
-    {
-        try
-        {
-            var data = new Windows.ApplicationModel.DataTransfer.DataPackage();
-            data.SetText(text);
-            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
-        }
-        catch (Exception ex) { Session.Log.Warn("cannot copy to the clipboard: " + ex.Message); }
     }
 
     /// <summary>

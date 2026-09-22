@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Sg.Core;
@@ -224,6 +223,7 @@ public sealed class ActivityPage : WorkflowPage
 public sealed class ReviewPage : WorkflowPage
 {
     readonly string _path;
+    List<ReviewCheckConfig>? _checkDraft;
     public ReviewPage(string path) : base("Review readiness") { _path = path; Subtitle = path; }
     protected override async Task Reload()
     {
@@ -261,19 +261,21 @@ public sealed class ReviewPage : WorkflowPage
         Action("Run local checks", () => Execute("Review checks", () => Review.RunChecks(root, _path)), true, mutates: true, glyph: "\uE768");
         Action("Mark this version ready", () => Execute("Mark reviewed", () => Review.MarkReady(root, _path)), enabled: status[0] == "Checks complete; review required", mutates: true, glyph: "\uE73E");
         var advancedStart = Body.Children.Count;
-        Text("Local check configuration (JSON array: name, executable, arguments). Commands run in this branch's folder.");
-        var config = new TextBox { Header = "Checks (JSON)", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, HorizontalAlignment = HorizontalAlignment.Stretch, Text = JsonSerializer.Serialize(root.Config.ReviewChecks, SgConfig.JsonOptions) };
+        var config = new ReviewChecksEditor(_checkDraft ?? root.Config.ReviewChecks);
         Body.Children.Add(config);
-        Action("Save local check configuration", () =>
+        var save = Action("Save local check configuration", () =>
         {
-            var text = config.Text;
+            var checks = config.Snapshot();
             return Execute("Save check configuration", () =>
             {
-                var checks = JsonSerializer.Deserialize<List<ReviewCheckConfig>>(text, SgConfig.JsonOptions) ?? throw new SgException("Enter an array of checks.");
-                if (checks.Any(x => string.IsNullOrWhiteSpace(x.Executable))) throw new SgException("Every check needs an executable.");
-                root.Config.ReviewChecks = checks; root.Save();
+                var previous = root.Config.ReviewChecks;
+                root.Config.ReviewChecks = checks;
+                try { root.Save(); _checkDraft = null; }
+                catch { root.Config.ReviewChecks = previous; throw; }
             });
-        }, mutates: true, glyph: "\uE74E");
+        }, enabled: config.IsValid, mutates: true, glyph: "\uE74E");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(save, "SaveReviewChecks");
+        config.Changed += () => { save.IsEnabled = config.IsValid; _checkDraft = config.Draft(); };
         CollapseActions(advancedStart, "Configure local checks");
     }
 }

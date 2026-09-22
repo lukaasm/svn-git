@@ -42,6 +42,9 @@ function Find([string]$name, [switch]$Id) {
 function Invoke([string]$name, [switch]$Id) {
     (Wait-For { Find $name -Id:$Id }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
+function Set-Field([string]$id, [string]$value) {
+    (Wait-For { Find $id -Id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
+}
 function Expand($element) {
     $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
     $control = $element.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition)
@@ -91,6 +94,54 @@ try {
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'review.png')
     Expand $config
     $null = Wait-For { Find 'Save local check configuration' }
+    Start-UiScenario 'Editable check list preserves literal arguments and order'
+    $configPath = Join-Path $FixtureRoot '.sg/sg.json'
+    $originalConfig = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+    if ($originalConfig.reviewChecks.Count -gt 0) { throw 'Use a disposable fixture with no configured review checks.' }
+    Invoke 'AddReviewCheck' -Id
+    $null = Wait-For { $save = Find 'SaveReviewChecks' -Id; $save -and !$save.Current.IsEnabled }
+    Set-Field 'ReviewCheckName_0' 'Literal arguments'
+    Set-Field 'ReviewCheckExecutable_0' 'never-run-this-test-command.exe'
+    Invoke 'AddReviewArgument_0' -Id
+    Set-Field 'ReviewCheckArgument_0_0' 'folder with spaces'
+    Invoke 'AddReviewArgument_0' -Id
+    Set-Field 'ReviewCheckArgument_0_1' '"quoted value"'
+    Invoke 'AddReviewArgument_0' -Id
+    Invoke 'AddReviewCheck' -Id
+    Set-Field 'ReviewCheckName_1' 'First check'
+    Set-Field 'ReviewCheckExecutable_1' 'another-never-run-command.exe'
+    Invoke 'MoveReviewCheckUp_1' -Id
+    Invoke 'SaveReviewChecks' -Id
+    $null = Wait-For {
+        $saved = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+        $saved.reviewChecks.Count -eq 2 -and $saved.reviewChecks[0].name -eq 'First check' -and
+        $saved.reviewChecks[1].arguments.Count -eq 3 -and
+        $saved.reviewChecks[1].arguments[0] -eq 'folder with spaces' -and
+        $saved.reviewChecks[1].arguments[1] -eq '"quoted value"' -and $saved.reviewChecks[1].arguments[2] -eq ''
+    }
+    Expand (Wait-For {
+        $section = Find 'Configure local checks'
+        if ($section) {
+            $pattern = $section.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+            if ($pattern.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Collapsed) { return $section }
+        }
+    })
+    $null = Wait-For { Find 'ReviewCheckExecutable_1' -Id }
+    $ancestor = Find 'ReviewCheckExecutable_0' -Id
+    while ($ancestor) {
+        $scroll = $null
+        if ($ancestor.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable) {
+            $scroll.SetScrollPercent(-1, 50)
+            break
+        }
+        $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+    }
+    Start-Sleep -Milliseconds 500 # Allow the expansion animation to finish before capturing pixels.
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'check-editor.png')
+    Invoke 'RemoveReviewCheck_1' -Id
+    Invoke 'RemoveReviewCheck_0' -Id
+    Invoke 'SaveReviewChecks' -Id
+    $null = Wait-For { (Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json).reviewChecks.Count -eq 0 }
     Invoke 'NavigationViewBackButton' -Id
     $null = Wait-For { Find 'Check current coverage' }
     Invoke 'Open backup restore preview'
@@ -109,4 +160,11 @@ try {
     Fail-UiScenario $_ $window
     $_ | Out-String | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'probe-error.txt')
     exit 1
-} finally { if ($process -and !$process.HasExited) { Stop-Process -Id $process.Id } }
+} finally {
+    if ($process -and !$process.HasExited) { Stop-Process -Id $process.Id; $process.WaitForExit() }
+    if ($originalConfig) {
+        $current = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+        $current | Add-Member -NotePropertyName reviewChecks -NotePropertyValue @($originalConfig.reviewChecks) -Force
+        $current | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configPath -Encoding utf8
+    }
+}

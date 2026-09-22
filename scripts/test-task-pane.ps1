@@ -164,6 +164,12 @@ try {
     $null = Wait-For 'placeholder replaced' { !(By-Name ($name + ' · Preparing worktree')) }
     $null = Wait-For 'sync enabled after completion' { (By-Id 'SyncButton').Current.IsEnabled }
     if ((By-Id 'SyncButton').Current.HelpText -like '*Unavailable while*') { throw 'Completed task left a stale disabled reason.' }
+    $completed = Task-Buttons | Where-Object { $_.Current.Name -like '*Completed*' -and $_.Current.Name -like "*$name*" } | Select-Object -First 1
+    Invoke-Element $completed
+    $resultId = 'TaskResult_' + $completed.Current.AutomationId.Substring(5)
+    $resultAction = Wait-For 'completed worktree action' { By-Id $resultId }
+    if ($resultAction.Current.Name -ne 'Open folder' -or !$resultAction.Current.IsEnabled) { throw 'Completed worktree has no enabled folder action.' }
+    if ($resultAction.Current.HelpText -ne (Join-Path $rootPath $name)) { throw 'Folder action points to the wrong worktree.' }
     Save-Window 'completed'
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }

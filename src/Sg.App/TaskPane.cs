@@ -17,7 +17,8 @@ public sealed class TaskPane : UserControl
     readonly TextBlock _empty = new() { Text = "No tasks this session.", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
     readonly StackPanel _body = new() { Visibility = Visibility.Collapsed };
     readonly Button _toggle;
-    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar);
+    public NavHost? Navigation { get; set; }
+    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp);
 
     public TaskPane()
     {
@@ -99,8 +100,43 @@ public sealed class TaskPane : UserControl
             row.Bar.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
             row.Bar.IsIndeterminate = task.Active && task.Percent == null;
             row.Bar.Value = task.Percent ?? 0;
+            row.FollowUp.Visibility = !task.Active && task.FollowUp != null ? Visibility.Visible : Visibility.Collapsed;
+            if (task.FollowUp is { } link)
+            {
+                row.FollowUp.Content = link.Label;
+                var available = link.Kind == TaskTargetKind.Folder || SameRoot(task.Root, Session.Root?.RootPath);
+                row.FollowUp.IsEnabled = available;
+                var explanation = available ? link.Path : "Open this root first: " + task.Root;
+                ToolTipService.SetToolTip(row.FollowUp, explanation);
+                AutomationProperties.SetHelpText(row.FollowUp, explanation);
+            }
         }
     }
+    static bool SameRoot(string a, string? b) => string.Equals(a.TrimEnd('/', '\\'), b?.TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase);
+    void OpenResult(Guid id)
+    {
+        var task = Session.Tasks.Snapshot().FirstOrDefault(t => t.Id == id);
+        if (task == null || task.Active || task.FollowUp is not { } link) return;
+        if (link.Kind == TaskTargetKind.Folder)
+        {
+            if (Directory.Exists(link.Path)) Session.OpenInExplorer(link.Path);
+            else OutputWindow.Show("The result folder is no longer available: " + link.Path);
+            return;
+        }
+        if (!SameRoot(task.Root, Session.Root?.RootPath) || Navigation == null) return;
+        switch (link.Kind)
+        {
+            case TaskTargetKind.Replay when Directory.Exists(link.Path):
+                Navigation.Go(() => new ConflictPage(link.Path), "resolve:" + link.Path); break;
+            case TaskTargetKind.Update when Directory.Exists(link.Path):
+                Navigation.Go(() => new UpdateBranchPage(link.Path), "update-branch:" + link.Path); break;
+            case TaskTargetKind.Backup:
+                Navigation.Go(() => new BackupPage(), "backup"); break;
+            default:
+                Navigation.Go(() => new ActivityPage(), "activity"); break;
+        }
+    }
+
     static string Message(TaskSnapshot t) => t.StopRequested && t.Active
         ? (t.StopAtBoundary ? "Will stop after the current step. " : "Cancelling… ") + t.Detail : t.Detail;
     internal static string State(TaskSnapshot t) => t.State switch
@@ -116,9 +152,12 @@ public sealed class TaskPane : UserControl
         var cancel = new Button { Margin = new Thickness(0, 4, 12, 4), VerticalAlignment = VerticalAlignment.Top };
         AutomationProperties.SetAutomationId(cancel, "CancelTask_" + id);
         cancel.Click += (_, _) => Session.Tasks.Cancel(id);
+        var followUp = new Button { Visibility = Visibility.Collapsed };
+        AutomationProperties.SetAutomationId(followUp, "TaskResult_" + id);
+        followUp.Click += (_, _) => OpenResult(id);
         var bar = new ProgressBar { Height = 3 };
         var body = new StackPanel { Spacing = 8, Padding = new Thickness(12, 0, 12, 12), Visibility = Visibility.Collapsed };
-        body.Children.Add(detail); body.Children.Add(bar); body.Children.Add(output);
+        body.Children.Add(detail); body.Children.Add(followUp); body.Children.Add(bar); body.Children.Add(output);
         var toggle = new Button { Content = title, Padding = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Style = (Style)Application.Current.Resources["QuietButton"] };
         AutomationProperties.SetAutomationId(toggle, "Task_" + id);
@@ -129,7 +168,7 @@ public sealed class TaskPane : UserControl
         heading.Children.Add(toggle); Grid.SetColumn(cancel, 1); heading.Children.Add(cancel);
         var layout = new StackPanel(); layout.Children.Add(heading); layout.Children.Add(body);
         var card = new Border { Child = layout, BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] };
-        return new(card, toggle, title, detail, output, cancel, bar);
+        return new(card, toggle, title, detail, output, cancel, bar, followUp);
     }
 }
 

@@ -5,6 +5,23 @@ namespace Sg.Core.Tests;
 public class TaskQueueTests
 {
     [Fact]
+    public void Result_actions_use_typed_destinations_and_survive_late_updates()
+    {
+        var replay = TaskResults.FollowUp(new ImportResult { Waiting = true, Path = "imported" });
+        Assert.Equal(new TaskFollowUp(TaskTargetKind.Replay, "imported"), replay);
+        Assert.Equal(new TaskFollowUp(TaskTargetKind.Update, "feature"),
+            TaskResults.FollowUp(new OperationRecord { Phase = OperationPhase.NeedsReview, Path = "feature" }));
+        Assert.Equal(new TaskFollowUp(TaskTargetKind.Backup), TaskResults.FollowUp(new BackupResult { Error = "offline" }));
+        Assert.Null(TaskResults.FollowUp("unstructured output mentioning a path"));
+        var queue = new TaskQueue();
+        var task = queue.TryStart("import", "root")!;
+        task.Finish(TaskState.NeedsAttention, "paused", replay);
+        task.Progress("late callback", 100);
+        task.Finish(TaskState.Succeeded, "late completion", new(TaskTargetKind.Folder, "wrong"));
+        Assert.Equal(replay, Assert.Single(queue.Snapshot()).FollowUp);
+    }
+
+    [Fact]
     public void Reservation_is_atomic_and_released_only_after_completion()
     {
         var queue = new TaskQueue();

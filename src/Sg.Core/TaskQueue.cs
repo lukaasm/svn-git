@@ -1,11 +1,22 @@
 namespace Sg.Core;
 
+public enum TaskTargetKind { Folder, Replay, Update, Backup, Activity }
+public sealed record TaskFollowUp(TaskTargetKind Kind, string Path = "")
+{
+    public string Label => Kind switch
+    {
+        TaskTargetKind.Folder => "Open folder", TaskTargetKind.Replay => "Review replay",
+        TaskTargetKind.Update => "Review update", TaskTargetKind.Backup => "Review backup", _ => "Open Activity"
+    };
+}
+
 public enum TaskState { Waiting, Running, Succeeded, NeedsAttention, Failed, Cancelled }
 public sealed record PendingWorktree(string Checkout, string Branch, string Path);
 public sealed record TaskSnapshot(Guid Id, string Title, string Root, TaskState State, string Detail,
     double? Percent, DateTimeOffset Started, DateTimeOffset? Finished, bool StopRequested,
     bool StopAtBoundary, PendingWorktree? Worktree, string Log)
 {
+    public TaskFollowUp? FollowUp { get; init; }
     public bool Active => State is TaskState.Waiting or TaskState.Running;
 }
 
@@ -66,10 +77,10 @@ public sealed class OperationTask
     public void Progress(string detail, double? percent = null) => Change(s => s.Active ? s with { Detail = detail, Percent = percent } : s);
     public void Append(string line) => Change(s => s with { Log = Tail(s.Log + line + Environment.NewLine) });
     static string Tail(string text) => text.Length <= 24000 ? text : "[Earlier output omitted]\n" + text[^23000..];
-    public void Finish(TaskState state, string detail)
+    public void Finish(TaskState state, string detail, TaskFollowUp? followUp = null)
     {
         if (state is TaskState.Waiting or TaskState.Running) throw new ArgumentException("A result must be terminal.", nameof(state));
-        Change(s => s.Active ? s with { State = state, Detail = detail, Percent = null, Finished = DateTimeOffset.Now } : s);
+        Change(s => s.Active ? s with { State = state, Detail = detail, Percent = null, Finished = DateTimeOffset.Now, FollowUp = followUp } : s);
     }
     public void Cancel()
     {

@@ -156,7 +156,7 @@
                             <Button x:Name="RecoveryButton" Content="Review recovery" Click="Recovery_Click" />
                         </InfoBar.ActionButton>
                     </InfoBar>
-                    <local:TaskPane />
+                    <local:TaskPane x:Name="Tasks" />
                 </StackPanel>
             </Grid>
         </NavigationView>

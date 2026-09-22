@@ -67,6 +67,7 @@ public sealed partial class MainWindow : Window
         Overview = new CheckoutPage(this);
         Session.Log.Sink = Pane;
         Host.Window = this;
+        Tasks.Navigation = Host;
         Host.Changed += SyncHeader;
         Host.AttachShortcuts((FrameworkElement)Content, escapeCloses: false);
         _monitor = DispatcherQueue.CreateTimer();

@@ -193,7 +193,7 @@ public static class Runner
                     return work();
                 }));
                 var outcome = TaskResults.Describe(result);
-                task.Finish(outcome.State, outcome.Detail);
+                task.Finish(outcome.State, outcome.Detail, TaskResults.FollowUp(result));
                 pane.End(title + ": " + outcome.Detail.Split('\n')[0]);
                 return result;
             }

@@ -208,6 +208,18 @@ try {
     if ([IO.File]::ReadAllText((Join-Path $restored 'base.txt')) -ne "same change on both sides`n") { throw 'Backup restore missed the fresh snapshot.' }
     $null = Run 'git' @('-C', $restored, 'merge-base', '--is-ancestor', 'svn/checkout', 'HEAD')
     Write-Host 'PASS: backup restore merges the saved branch onto the fresh SVN snapshot.'
+    # The retained backup receipt must return to its page after navigating elsewhere.
+    (Find-Ui 'SettingsItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Invoke-Ui 'TaskQueueToggle'
+    $backupTask = Wait-For 'backup receipt' {
+        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)) |
+            Where-Object { $_.Current.AutomationId -like 'Task_*' -and $_.Current.Name -like '*Completed · backup ·*' } | Select-Object -First 1
+    }
+    $backupTask.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Invoke-Ui ('TaskResult_' + $backupTask.Current.AutomationId.Substring(5))
+    $null = Wait-For 'backup page reopened from receipt' { Find-Ui 'BackupNowButton' }
+    Write-Host 'PASS: retained task action reopens Backup after navigation.'
     Write-Output "All workflow UI Automation checks passed. Fixture retained at $fixture"
 }
 catch {

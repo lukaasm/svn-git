@@ -45,5 +45,20 @@ public static class TaskResults
         string s when s != "ok" => (TaskState.Succeeded, s),
         _ => (TaskState.Succeeded, "Completed. See task output for details.")
     };
+    public static TaskFollowUp? FollowUp(object? result) => result switch
+    {
+        ImportResult r => new(r.Waiting ? TaskTargetKind.Replay : TaskTargetKind.Folder, r.Path),
+        RestoreResult r => new(r.Waiting ? TaskTargetKind.Replay : TaskTargetKind.Folder, r.Path),
+        BranchResult r => new(TaskTargetKind.Folder, r.Path),
+        CheckoutResult r => new(TaskTargetKind.Folder, r.Checkout.Path),
+        OperationRecord r => new(r.Terminal ? TaskTargetKind.Folder : TaskTargetKind.Update, r.Path),
+        BackupResult => new(TaskTargetKind.Backup),
+        ResolveResult r when r.Backup != null => FollowUp(r.Backup),
+        ResolveResult r when r.Operation != null => FollowUp(r.Operation),
+        ResolveResult r when !r.Ok => new(TaskTargetKind.Activity),
+        RebaseResult r when !r.Ok => new(TaskTargetKind.Activity),
+        _ => null
+    };
+
     static string Note(string? text) => string.IsNullOrWhiteSpace(text) ? "" : "\n" + text.Trim();
 }

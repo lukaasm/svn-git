@@ -24,6 +24,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-ui-runner.ps1` checks worker exit codes, child-process cleanup, and failure reporting. The launcher uses Windows [CreateDesktop](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createdesktopw) and the process [startup desktop](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-startupinfow), with a job object for cleanup.
 
+`scripts/test-workflow-presentation.ps1 -FixtureRoot <workflow-fixture-root>` checks Activity and Coverage on a private desktop and captures both pages. Use a disposable fixture retained by the workflow suite, with its `source` branch, operation history, and local backup remote. It checks coverage without publishing or restoring a backup.
+
 The Debug app uses a separate instance key, settings, monitor data, crash log, update directory, and WebView profile per run. Release builds ignore the test-directory environment variable. Background runs skip the system-clipboard assertion because Windows desktops in the same window station share that resource; the direct task test still covers it. Notification registration is disabled for isolated runs.
 
 For direct Windows UI Automation testing on your visible desktop, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected. Add `-CheckRecovery` to verify startup discovery, recovery navigation, and notice removal after reconciliation.

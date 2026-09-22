@@ -31,9 +31,9 @@ public abstract class WorkflowPage : SgPage
     protected int BeginRead() => ++_generation;
     protected bool Current(int generation) => generation == _generation;
     protected void Text(string text, bool heading = false) => Body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = heading ? 20 : 14 });
-    protected Button Action(string label, Func<Task> action, bool primary = false, bool enabled = true, bool mutates = false)
+    protected Button Action(string label, Func<Task> action, bool primary = false, bool enabled = true, bool mutates = false, string glyph = "")
     {
-        var button = new Button { Content = label, IsEnabled = enabled };
+        var button = new IconButton { Text = label, Glyph = glyph, IsEnabled = enabled };
         if (primary) button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         button.Click += async (_, _) => { if (!_busy) await action(); };
         Body.Children.Add(mutates ? new TaskGate { Content = button } : button);
@@ -48,6 +48,43 @@ public abstract class WorkflowPage : SgPage
         finally { _busy = false; _scroll.IsEnabled = true; if (Host?.Current == this) await Reload(); }
     }
     protected Task Navigate(Func<SgPage> page, string key) { Go(page, key); return Task.CompletedTask; }
+    protected static StackPanel Label(string text, string glyph)
+    {
+        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        label.Children.Add(new FontIcon { Glyph = glyph, FontSize = 16 });
+        label.Children.Add(new TextBlock { Text = text });
+        return label;
+    }
+    protected void Link(string text, string glyph, Func<SgPage> page, string key)
+    {
+        var link = new HyperlinkButton { Content = Label(text, glyph), Padding = new Thickness(0, 4, 0, 4) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(link, text);
+        // Finish the link's invocation before replacing its visual tree with a page containing WebView.
+        link.Click += (_, _) => DispatcherQueue.TryEnqueue(() => Go(page, key));
+        Body.Children.Add(link);
+    }
+    protected void Status(string text, ChipSeverity severity, string glyph) =>
+        Body.Children.Add(new StatusChip { Text = text, Severity = severity, Glyph = glyph });
+    protected void Details(string title, IEnumerable<string> lines)
+    {
+        var expander = new Expander { Header = Label(title, "\uE8A5"), HorizontalAlignment = HorizontalAlignment.Stretch,
+            Content = new TextBlock { Text = string.Join("\n", lines), TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true } };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expander, title);
+        Body.Children.Add(expander);
+    }
+    protected void CollapseActions(int start, string title)
+    {
+        var content = new StackPanel { Spacing = 12 };
+        while (Body.Children.Count > start)
+        {
+            var child = Body.Children[start];
+            Body.Children.RemoveAt(start);
+            content.Children.Add(child);
+        }
+        var expander = new Expander { Header = Label(title, "\uE713"), Content = content, HorizontalAlignment = HorizontalAlignment.Stretch };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expander, title);
+        Body.Children.Add(expander);
+    }
     // Keep the persisted operation kind stable for older installations and recovery records.
     protected static string OperationTitle(OperationRecord record) => record.Kind == "Update from SVN" ? "Pull from SVN" : record.Kind;
 }
@@ -128,21 +165,6 @@ public sealed class UpdateBranchPage : WorkflowPage
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(refresh, "Refresh pull plan");
     }
 
-    static StackPanel Label(string text, string glyph)
-    {
-        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        label.Children.Add(new FontIcon { Glyph = glyph, FontSize = 16 });
-        label.Children.Add(new TextBlock { Text = text });
-        return label;
-    }
-    void Link(string text, string glyph, Func<SgPage> page, string key)
-    {
-        var link = new HyperlinkButton { Content = Label(text, glyph), Padding = new Thickness(0, 4, 0, 4) };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(link, text);
-        // Finish the link's invocation before replacing its visual tree with a page containing WebView.
-        link.Click += (_, _) => DispatcherQueue.TryEnqueue(() => Go(page, key));
-        Body.Children.Add(link);
-    }
     void Edits(string title, IReadOnlyCollection<string> files, string path)
     {
         Body.Children.Add(new StatusChip { Text = files.Count == 0 ? title + ": clean" : $"{title}: {files.Count} to preserve", Glyph = files.Count == 0 ? "\uE73E" : "\uE70F", Severity = files.Count == 0 ? ChipSeverity.Success : ChipSeverity.Attention });
@@ -166,27 +188,36 @@ public sealed class ActivityPage : WorkflowPage
         });
         if (data == null || !Current(generation)) return;
         var records = data.Records.OrderBy(r => r.Terminal).ThenByDescending(r => r.Updated).ToList();
-        Body.Children.Clear(); Text("Operation history for " + root.Config.Root);
+        Body.Children.Clear();
+        Status($"{records.Count(r => !r.Terminal) + data.Replays.Count} need attention · {records.Count(r => r.Terminal)} finished", ChipSeverity.Neutral, "\uE81C");
         foreach (var replay in data.Replays)
         {
             Text("Existing replay · " + replay.Branch, true);
-            Text(replay.Path + " · Paused before operation history was recorded");
-            Action("Review replay", () => Navigate(() => new ConflictPage(replay.Path), "resolve:" + replay.Path));
+            Status("Paused replay", ChipSeverity.Caution, "\uE7BA");
+            Details("Replay details", [replay.Path, "Paused before operation history was recorded"]);
+            Link("Review replay", "\uE90F", () => new ConflictPage(replay.Path), "resolve:" + replay.Path);
         }
         if (records.Count == 0 && data.Replays.Count == 0) Text("No recorded operations yet.");
         foreach (var record in records)
         {
             Text(OperationTitle(record) + " · " + record.Branch, true);
-            Text($"{record.Updated.LocalDateTime:g} · {record.PhaseLabel}\n{record.Detail}\n" + string.Join("\n", record.Steps));
-            if (!record.Terminal) Action(record.Action, () => Navigate(() => new UpdateBranchPage(record.Path), "update-branch:" + record.Path));
+            var severity = record.Phase == OperationPhase.Completed ? ChipSeverity.Success : record.Terminal ? ChipSeverity.Neutral : ChipSeverity.Caution;
+            Status(record.PhaseLabel, severity, record.Phase == OperationPhase.Completed ? "\uE73E" : record.Terminal ? "\uE81C" : "\uE7BA");
+            Text($"{record.Updated.LocalDateTime:g} · {record.Checkout}");
+            if (!string.IsNullOrWhiteSpace(record.Detail)) Text(record.Detail);
+            if (!record.Terminal) Link(record.Action, "\uE90F", () => new UpdateBranchPage(record.Path), "update-branch:" + record.Path);
+            if (Directory.Exists(record.Path)) Link("View branch history", "\uE81C", () => new LogPage(record.Path), "log:" + record.Path);
+            var detailsStart = Body.Children.Count;
+            Text(string.Join("\n", record.Steps.Concat(new[] { "Branch checkpoint: " + (record.Before.Length > 0 ? record.Before : "Not recorded"), record.Path })));
             if (record.Before.Length > 0) Action("Restore commits to a separate branch", () =>
             {
                 var name = record.Branch + "-recovered-" + Guid.NewGuid().ToString("N")[..8];
                 return Execute("Restore checkpoint", () => Operations.RestoreCheckpoint(root, record.Id, name),
                     new(record.Checkout, name, root.WorktreePathFor(name)));
-            }, mutates: true);
+            }, mutates: true, glyph: "\uE8A7");
+            CollapseActions(detailsStart, "Steps and checkpoint");
         }
-        Action("Refresh", Reload);
+        Action("Refresh", Reload, glyph: "\uE72C");
     }
 }
 
@@ -237,24 +268,40 @@ public sealed class CoveragePage : WorkflowPage
     protected override async Task Reload()
     {
         var generation = BeginRead(); Body.Children.Clear(); var root = Session.Require();
-        Text("Uploaded, remote refs checked, and restore tested are separate results. Ignored/shared files are outside coverage. A receipt is a point-in-time record.");
-        Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true, mutates: true);
+        Text("Check what the backup holds and whether restoration has been tested.");
+        Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true, mutates: true, glyph: "\uE72C");
+        Link("View branch history", "\uE81C", () => new LogPage(_path), "log:" + _path);
         if (_receipt != null)
         {
             var receipt = _receipt;
             Text($"{receipt.Branch} · checked {receipt.Checked.LocalDateTime:g}", true);
             var local = await Runner.Quiet(Pane, () => new[] { Backup.LocalReceiptStatus(root, _path, receipt) });
             if (!Current(generation)) return;
-            if (local != null) Text(local[0]);
-            foreach (var item in receipt.Coverage) Text($"{item.Kind}/{item.Name}: {item.State} · {item.Commits} commits · last upload {item.Uploaded?.LocalDateTime.ToString("g") ?? "not recorded"}\nPaths in this category (exclusions below):\n" + string.Join("\n", item.Files) + "\n" + string.Join("\n", item.Excluded.Select(x => "Excluded: " + x)));
-            Text(receipt.RestoreTested == null ? "Restore not verified" : $"Restore tested {receipt.RestoreTested.Value.LocalDateTime:g}, base {receipt.TestedSnapshot}");
+            if (local != null) Body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Informational, Message = local[0] });
+            if (receipt.Coverage.Count == 0) Status("No covered items in this receipt", ChipSeverity.Caution, "\uE7BA");
+            foreach (var item in receipt.Coverage)
+            {
+                Text($"{item.Kind} · {item.Name}", true);
+                var verified = item.State == "Remote refs checked";
+                var failed = item.State is "failed" or "rejected";
+                Status(string.IsNullOrWhiteSpace(item.State) ? "Not verified" : item.State,
+                    verified ? ChipSeverity.Success : failed ? ChipSeverity.Critical : ChipSeverity.Caution,
+                    verified ? "\uE73E" : "\uE7BA");
+                Text($"{item.Commits} commits · Last upload: {item.Uploaded?.LocalDateTime.ToString("g") ?? "not recorded"}");
+                if (item.Files.Count > 0) Details($"Included files ({item.Files.Count})", item.Files);
+                if (item.Excluded.Count > 0) Details($"Outside coverage ({item.Excluded.Count})", item.Excluded);
+            }
+            Status(receipt.RestoreTested == null ? "Restore not verified" : $"Restore tested {receipt.RestoreTested.Value.LocalDateTime:g}",
+                receipt.RestoreTested == null ? ChipSeverity.Caution : ChipSeverity.Success, receipt.RestoreTested == null ? "\uE7BA" : "\uE73E");
+            var advancedStart = Body.Children.Count;
             if (receipt.RestorePath != null) Text("Rehearsal retained at " + receipt.RestorePath);
+            if (receipt.TestedSnapshot != null) Text("Tested snapshot: " + receipt.TestedSnapshot);
             Action("Test restore in a separate branch", () =>
             {
                 var name = receipt.Branch + "-restore-test-" + Guid.NewGuid().ToString("N")[..8];
                 return Execute("Test backup restore", () => _receipt = Backup.TestRestore(root, receipt, name),
                     new(receipt.Checkout, name, root.WorktreePathFor(name)));
-            }, mutates: true);
+            }, mutates: true, glyph: "\uE8A7");
             var note = new TextBox { Header = "Handoff note (text only)", Text = receipt.Note, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
             Body.Children.Add(note);
             Action("Save handoff receipt", async () =>
@@ -265,7 +312,8 @@ public sealed class CoveragePage : WorkflowPage
                     receipt.Note = note.Text;
                     await Execute("Save handoff", () => Backup.WriteReceipt(receipt, file));
                 }
-            }, mutates: true);
+            }, mutates: true, glyph: "\uE74E");
+            CollapseActions(advancedStart, "Restore testing and handoff");
         }
         Action("Preview handoff receipt", async () =>
         {
@@ -273,8 +321,10 @@ public sealed class CoveragePage : WorkflowPage
             if (file == null) return;
             await Execute("Read handoff", () => _receipt = Backup.ReadReceipt(file));
             if (_receipt != null) await Execute("Check handoff refs", () => { foreach (var issue in Backup.ValidateReceipt(root, _receipt)) root.Log.Warn(issue); });
-        }, mutates: true);
-        Action("Open backup restore preview", () => Navigate(() => new BackupPage(), "backup"));
+        }, mutates: true, glyph: "\uE8E5");
+        Details("Coverage limits", ["Upload history, remote-ref checks, and restore tests are separate results.", "Ignored and shared files are outside backup coverage. A receipt records a point in time; check again after making changes."]);
+        Link("Open backup restore preview", "\uE74E", () => new BackupPage(), "backup");
+        Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
     }
 }
 

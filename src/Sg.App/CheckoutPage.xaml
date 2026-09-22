@@ -349,7 +349,7 @@
                                         </controls:SettingsCard>
                                         <controls:SettingsCard Header="Backup coverage" Description="Check coverage, test restoration, and create a handoff receipt.">
                                             <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE74E;" /></controls:SettingsCard.HeaderIcon>
-                                            <local:IconButton MinWidth="124" Text="Coverage" Glyph="&#xE74E;" Tag="{x:Bind}" Click="Coverage_Click" />
+                                            <local:IconButton MinWidth="124" Text="Coverage" Glyph="&#xE74E;" Tag="{x:Bind}" Click="Coverage_Click" AutomationProperties.AutomationId="BackupCoverageAction" />
                                         </controls:SettingsCard>
                                     <!-- Whether this worktree goes with the backup at all. On the card rather than in Settings: the
                                          choice is about one worktree, and the chip that says "excluded" is on this same card. -->

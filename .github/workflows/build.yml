@@ -31,7 +31,8 @@ jobs:
       - name: Install Subversion
         shell: pwsh
         run: |
-          choco install svn --no-progress --yes
+          choco install sliksvn --version=1.14.5 --no-progress --yes
+          if ($LASTEXITCODE -notin 0, 3010) { throw "Subversion installation failed ($LASTEXITCODE)" }
           # Chocolatey only fixes PATH for its own shell. Find the bin folder and hand it to the later steps.
           foreach ($dir in "${env:ProgramFiles(x86)}\Subversion\bin", "$env:ProgramFiles\Subversion\bin", "$env:ProgramFiles\SlikSvn\bin") {
             if (Test-Path (Join-Path $dir 'svnadmin.exe')) { $env:PATH = "$dir;$env:PATH" }

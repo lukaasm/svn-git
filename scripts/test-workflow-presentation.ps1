@@ -1,4 +1,4 @@
-# Tests Activity and backup coverage on a private desktop. Use a disposable workflow fixture with a source branch and a local backup remote.
+# Tests workflow presentation on a private desktop. Use a disposable workflow fixture with a source branch and a local backup remote.
 param([Parameter(Mandatory)][string]$FixtureRoot, [switch]$Worker, [string]$ArtifactDirectory)
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -11,7 +11,7 @@ if (!$Worker) {
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
         while (!$desktop.Wait(200)) { if ([DateTime]::UtcNow -ge $deadline) { throw 'Presentation test timed out.' } }
         if ($desktop.ExitCode -ne 0) { throw "Presentation test failed. See $ArtifactDirectory/probe-error.txt" }
-        Write-Output "PASS: Activity and Coverage presentation. Artifacts: $ArtifactDirectory"
+        Write-Output "PASS: Activity, Coverage, Review, and Storage presentation. Artifacts: $ArtifactDirectory"
     } finally { $desktop.Dispose() }
     return
 }
@@ -84,8 +84,25 @@ try {
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'coverage.png')
     Expand $advanced
     $null = Wait-For { Find 'Test restore in a separate branch' }
+    Start-UiScenario 'Review readiness and collapsed configuration'
+    Invoke 'Review readiness'
+    $null = Wait-For { Find 'Run local checks' }
+    $config = Wait-For { Find 'Configure local checks' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'review.png')
+    Expand $config
+    $null = Wait-For { Find 'Save local check configuration' }
+    Invoke 'NavigationViewBackButton' -Id
+    $null = Wait-For { Find 'Check current coverage' }
     Invoke 'Open backup restore preview'
     $null = Wait-For { Find 'BackupNowButton' -Id }
+    Start-UiScenario 'Storage previews and recovery navigation'
+    (Wait-For { Find 'StorageItem' -Id }).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $archive = Wait-For { Find 'Archive options · source' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'storage.png')
+    Expand $archive
+    $null = Wait-For { Find 'Archive and remove this worktree' }
+    Invoke 'View recovery checkpoints'
+    $null = Wait-For { Find 'Steps and checkpoint' }
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
 } catch {

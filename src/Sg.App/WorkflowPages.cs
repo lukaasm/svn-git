@@ -233,19 +233,36 @@ public sealed class ReviewPage : WorkflowPage
         var records = await Runner.Quiet(Pane, () => new[] { Review.Read(root, _path) });
         var record = records?.FirstOrDefault();
         if (!Current(generation)) return;
-        Body.Children.Clear(); Text(status[0], true);
-        Text("Readiness covers the complete branch through its recorded HEAD. Publishing to SVN is a separate action. Checks execute only when you click Run local checks.");
+        Body.Children.Clear();
+        var severity = status[0] switch
+        {
+            "Ready for this version" => ChipSeverity.Success,
+            "Checks failed" => ChipSeverity.Critical,
+            "Not reviewed" => ChipSeverity.Neutral,
+            _ => ChipSeverity.Caution
+        };
+        Status(status[0], severity, severity == ChipSeverity.Success ? "\uE73E" : severity == ChipSeverity.Neutral ? "\uE8A5" : "\uE7BA");
+        Text("Review this branch version, then mark it ready. Publishing to SVN is a separate action.");
+        Link("Review branch diff", "\uE8A5", () => new PushPage(_path), "push:" + _path);
+        Link("Review uncommitted edits", "\uE70F", () => new CommitPage(_path), "commit:" + _path);
         if (record != null)
         {
-            Text($"HEAD {record.Head}\nSnapshot {record.Snapshot}\nFiles in the reviewed commit range:\n" + string.Join("\n", record.Files));
-            foreach (var check in record.Checks) Text($"{check.Name}: exit {check.ExitCode}, {check.Seconds:F1}s\n{check.Command}\n{check.Output}");
+            Text($"Last checked {record.Checked.LocalDateTime:g}");
+            if (status[0] == "Changed since review") Text("These results describe an older version. Run checks again for the current files and configuration.");
+            Details($"Reviewed version · {record.Files.Count} files", new[] { "HEAD: " + record.Head, "Snapshot: " + record.Snapshot }.Concat(record.Files));
+            foreach (var check in record.Checks)
+            {
+                Status($"{check.Name}: {(check.ExitCode == 0 ? "Passed" : "Failed")} · {check.Seconds:F1}s",
+                    check.ExitCode == 0 ? ChipSeverity.Success : ChipSeverity.Critical, check.ExitCode == 0 ? "\uE73E" : "\uE7BA");
+                Details("Check output · " + check.Name, ["Exit code: " + check.ExitCode, check.Command, check.Output]);
+            }
         }
-        Action("Review branch diff", () => Navigate(() => new PushPage(_path), "push:" + _path));
-        Action("Review uncommitted edits", () => Navigate(() => new CommitPage(_path), "commit:" + _path));
-        Action("Run local checks", () => Execute("Review checks", () => Review.RunChecks(root, _path)), true, mutates: true);
-        Action("Mark this version ready", () => Execute("Mark reviewed", () => Review.MarkReady(root, _path)), enabled: status[0] == "Checks complete; review required", mutates: true);
+        if (root.Config.ReviewChecks.Count == 0) Text("No local checks configured. Run local checks records this version for manual review.");
+        Action("Run local checks", () => Execute("Review checks", () => Review.RunChecks(root, _path)), true, mutates: true, glyph: "\uE768");
+        Action("Mark this version ready", () => Execute("Mark reviewed", () => Review.MarkReady(root, _path)), enabled: status[0] == "Checks complete; review required", mutates: true, glyph: "\uE73E");
+        var advancedStart = Body.Children.Count;
         Text("Local check configuration (JSON array: name, executable, arguments). Commands run in this branch's folder.");
-        var config = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 500, MinHeight = 100, Text = JsonSerializer.Serialize(root.Config.ReviewChecks, SgConfig.JsonOptions) };
+        var config = new TextBox { Header = "Checks (JSON)", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, HorizontalAlignment = HorizontalAlignment.Stretch, Text = JsonSerializer.Serialize(root.Config.ReviewChecks, SgConfig.JsonOptions) };
         Body.Children.Add(config);
         Action("Save local check configuration", () =>
         {
@@ -256,7 +273,8 @@ public sealed class ReviewPage : WorkflowPage
                 if (checks.Any(x => string.IsNullOrWhiteSpace(x.Executable))) throw new SgException("Every check needs an executable.");
                 root.Config.ReviewChecks = checks; root.Save();
             });
-        }, mutates: true);
+        }, mutates: true, glyph: "\uE74E");
+        CollapseActions(advancedStart, "Configure local checks");
     }
 }
 
@@ -271,6 +289,7 @@ public sealed class CoveragePage : WorkflowPage
         Text("Check what the backup holds and whether restoration has been tested.");
         Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true, mutates: true, glyph: "\uE72C");
         Link("View branch history", "\uE81C", () => new LogPage(_path), "log:" + _path);
+        Link("Review readiness", "\uE73E", () => new ReviewPage(_path), "review:" + _path);
         if (_receipt != null)
         {
             var receipt = _receipt;
@@ -337,29 +356,37 @@ public sealed class StoragePage : WorkflowPage
         var plans = await Runner.Quiet(Pane, () => Storage.List(root));
         if (plans == null || !Current(generation)) return;
         Body.Children.Clear();
-        Text("Logical sizes exclude links. Reclaimable space is unknown because shared blocks may remain in use. Archive retains a local commit checkpoint; it is not an off-machine backup.");
+        Text($"{plans.Count} worktrees · {plans.Count(p => p.Ready)} can be archived");
+        Details("How storage is measured", ["Logical sizes exclude links. Physical space recovered is unknown because shared blocks may remain in use.", "Archive retains a local commit checkpoint; it is not an off-machine backup."]);
+        Link("View retained shelves", "\uE7B8", () => new ShelfPage(), "shelves");
+        Link("View recovery checkpoints", "\uE81C", () => new ActivityPage(), "activity");
+        if (plans.Count == 0) Status("No worktrees to archive", ChipSeverity.Neutral, "\uEDA2");
         foreach (var plan in plans)
         {
-            Text(plan.Branch, true); Text($"{plan.Path}\nLogical size: {plan.LogicalBytes:N0} bytes · Reclaimable: unknown");
+            Text(plan.Branch, true);
+            Status(plan.Ready ? "Can be archived" : $"Protected · {plan.Blockers.Count} reasons", plan.Ready ? ChipSeverity.Neutral : ChipSeverity.Caution, plan.Ready ? "\uE7B8" : "\uE7BA");
+            Text($"Logical size: {plan.LogicalBytes:N0} bytes · Space recovered: unknown");
+            Link("View branch history", "\uE81C", () => new LogPage(plan.Path), "log:" + plan.Path);
+            var archiveStart = Body.Children.Count;
+            Text("Remove exactly " + plan.Path + " and preserve commit " + plan.Head + " as an Activity checkpoint.");
             foreach (var blocker in plan.Blockers) Text(blocker);
-            Action("Preview archive removal", () =>
-            {
-                Text("Remove exactly " + plan.Path + " and preserve commit " + plan.Head + " as an Activity checkpoint.", true);
-                Action("Archive and remove this worktree", () => Execute("Archive branch", () => Storage.Archive(root, plan)), true, plan.Ready, mutates: true);
-                return Task.CompletedTask;
-            }, enabled: plan.Ready);
+            Action("Archive and remove this worktree", () => Execute("Archive branch", () => Storage.Archive(root, plan)), enabled: plan.Ready, mutates: true, glyph: "\uE74D");
+            CollapseActions(archiveStart, "Archive options · " + plan.Branch);
         }
         var temporary = await Runner.Quiet(Pane, () => Storage.TemporaryData(root));
         if (!Current(generation)) return;
         if (temporary != null)
             foreach (var item in temporary)
             {
-                Text($"Temporary data: {item.Path}\n{item.LogicalBytes:N0} logical bytes; reclaimable unknown");
+                Text("Temporary data · " + Path.GetFileName(item.Path), true);
+                Status(item.Blockers.Count == 0 ? "Can be cleaned" : "Retained for safety", item.Blockers.Count == 0 ? ChipSeverity.Neutral : ChipSeverity.Caution, item.Blockers.Count == 0 ? "\uEDA2" : "\uE7BA");
+                Text($"{item.LogicalBytes:N0} logical bytes · Space recovered: unknown");
+                var cleanupStart = Body.Children.Count;
+                Text(item.Path);
                 foreach (var blocker in item.Blockers) Text(blocker);
-                Action("Remove this temporary directory", () => Execute("Remove temporary data", () => Storage.CleanTemporaryData(root, item)), enabled: item.Blockers.Count == 0, mutates: true);
+                Action("Remove this temporary directory", () => Execute("Remove temporary data", () => Storage.CleanTemporaryData(root, item)), enabled: item.Blockers.Count == 0, mutates: true, glyph: "\uE74D");
+                CollapseActions(cleanupStart, "Cleanup options · " + Path.GetFileName(item.Path));
             }
-        Action("View retained shelves", () => Navigate(() => new ShelfPage(), "shelves"));
-        Action("View recovery checkpoints", () => Navigate(() => new ActivityPage(), "activity"));
-        Action("Refresh", Reload);
+        Action("Refresh", Reload, glyph: "\uE72C");
     }
 }

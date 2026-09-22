@@ -35,10 +35,28 @@ function Wait-For([string]$description, [scriptblock]$read) {
     } while ((Get-Date) -lt $deadline)
     throw "Timed out: $description"
 }
-function Find-Ui([string]$value, [switch]$Name, [switch]$Invokable) {
+function Find-Ui([string]$value, [switch]$Name, [switch]$Invokable, [switch]$IncludeOffscreen) {
     $property = if ($Name) { [System.Windows.Automation.AutomationElement]::NameProperty } else { [System.Windows.Automation.AutomationElement]::AutomationIdProperty }
-    $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new($property, $value)) |
-        Where-Object { ($Invokable -or !$_.Current.IsOffscreen) -and (!$Invokable -or $_.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty)) } | Select-Object -First 1
+    $found = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new($property, $value)) |
+        Where-Object { ($IncludeOffscreen -or $Invokable -or !$_.Current.IsOffscreen) -and (!$Invokable -or $_.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty)) } | Select-Object -First 1
+    if ($found) { return $found }
+    # WebView's provider can truncate FindAll before the native footer. Walk native controls
+    # without entering the embedded browser; all workflow actions belong to the XAML host.
+    function Find-Native($parent) {
+        $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+        $child = $walker.GetFirstChild($parent)
+        while ($child) {
+            if ($child.GetCurrentPropertyValue($property) -eq $value -and
+                ($IncludeOffscreen -or $Invokable -or !$child.Current.IsOffscreen) -and
+                (!$Invokable -or $child.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty))) { return $child }
+            if ($child.Current.AutomationId -ne 'Web') {
+                $match = Find-Native $child
+                if ($match) { return $match }
+            }
+            $child = $walker.GetNextSibling($child)
+        }
+    }
+    Find-Native $script:window
 }
 function Invoke-Ui([string]$value, [switch]$Name) {
     $element = Wait-For "enabled $value" { $b = Find-Ui $value -Name:$Name -Invokable; if ($b -and $b.Current.IsEnabled) { $b } }
@@ -71,13 +89,13 @@ function Assert-Blocked([string]$buttonId, [string]$explanation) {
 function Cancel-QueuedForm([string]$buttonId, [string]$labelId, [string]$retryLabel, [string[]]$fields, [int]$finishedCount) {
     $savedName = (Find-Ui 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
     $enabled = @{}
-    foreach ($field in $fields) { $enabled[$field] = (Find-Ui $field).Current.IsEnabled }
+    foreach ($field in $fields) { $enabled[$field] = (Find-Ui $field -IncludeOffscreen).Current.IsEnabled }
     $formLock = [IO.File]::Open((Join-Path $root '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     try {
         Invoke-Ui $buttonId
         Invoke-Ui 'PrimaryButton'
         foreach ($field in $fields) {
-            $null = Wait-For "locked form field $field" { $element = Find-Ui $field; $element -and !$element.Current.IsEnabled -and $element.Current.HelpText -like 'Inputs are locked*Tasks*' }
+            $null = Wait-For "locked form field $field" { $element = Find-Ui $field -IncludeOffscreen; $element -and !$element.Current.IsEnabled -and $element.Current.HelpText -like 'Inputs are locked*Tasks*' }
         }
         Invoke-Ui 'TaskQueueToggle'
         Invoke-Ui 'Cancel task' -Name
@@ -87,7 +105,7 @@ function Cancel-QueuedForm([string]$buttonId, [string]$labelId, [string]$retryLa
             $button -and $button.Current.IsEnabled -and (Find-Ui $labelId).Current.Name -eq $retryLabel -and $button.Current.Name -eq $retryLabel
         }
         foreach ($field in $fields) {
-            if ((Find-Ui $field).Current.IsEnabled -ne $enabled[$field]) { throw "Input availability changed after cancellation: $field" }
+            if ((Find-Ui $field -IncludeOffscreen).Current.IsEnabled -ne $enabled[$field]) { throw "Input availability changed after cancellation: $field" }
         }
         if ((Find-Ui 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne $savedName) { throw 'Cancelled form lost its submitted name.' }
         Invoke-Ui 'TaskQueueToggle'
@@ -99,6 +117,12 @@ function Cancel-QueuedForm([string]$buttonId, [string]$labelId, [string]$retryLa
         Set-Ui 'NameBox' $savedName
         $null = Wait-For 'original destination remains retryable' { (Find-Ui $buttonId).Current.Name -eq $retryLabel }
     } finally { $formLock.Dispose() }
+}
+function Assert-DestinationAction([string]$label, [string]$path) {
+    $null = Wait-For "destination action: $label" {
+        $action = Find-Ui 'ExistingDestinationAction'
+        $action -and $action.Current.IsEnabled -and $action.Current.Name -eq $label -and $action.Current.HelpText -eq $path
+    }
 }
 function Stop-App {
     if ($script:process -and !$script:process.HasExited) { Stop-Process -Id $script:process.Id; $script:process.WaitForExit() }
@@ -130,6 +154,7 @@ try {
     # Keep scheduled backups from racing the operation this test deliberately holds at a lock.
     $testSettings = if ($previous) { $previous | ConvertTo-Json -Depth 20 | ConvertFrom-Json } else { [pscustomobject]@{} }
     $testSettings | Add-Member -NotePropertyName BackupMinutes -NotePropertyValue 0 -Force
+    $testSettings | Add-Member -NotePropertyName RecentRoots -NotePropertyValue @($previous.RecentRoots | Where-Object { $_ }) -Force
     $null = New-Item -ItemType Directory -Path (Split-Path $settingsPath) -Force
     $testSettings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
     $null = New-Item -ItemType Directory -Path $root
@@ -147,11 +172,20 @@ try {
     Commit-File 'source' 'feature.txt' "imported feature`n"
     $export = Join-Path $root 'source.sgexport'
     $null = Sg @('export', (Join-Path $root 'source'), '--out', $export)
+    $sourceMoved = Join-Path $root 'source-moved'
+    $store = (Run 'git' @('-C', (Join-Path $root 'source'), 'rev-parse', '--path-format=absolute', '--git-common-dir')).Trim()
+    $null = Run 'git' @('--git-dir', $store, 'worktree', 'move', (Join-Path $root 'source'), $sourceMoved)
+    $null = Run 'git' @('-C', $sourceMoved, 'branch', 'unattached', 'HEAD')
 
     # Import through the actual preview and confirmation UI, then verify its materialized files.
     Start-App 'import' $export
+    $null = Wait-For 'checkout precedes import branch name' { (Find-Ui 'IntoBox').Current.BoundingRectangle.Left -lt (Find-Ui 'NameBox').Current.BoundingRectangle.Left }
     Set-Ui 'NameBox' 'source'
     Assert-Blocked 'ImportButton' '*already a branch*'
+    Assert-DestinationAction 'Open folder' $sourceMoved
+    Set-Ui 'NameBox' 'unattached'
+    Assert-Blocked 'ImportButton' '*already a branch*'
+    if (Find-Ui 'ExistingDestinationAction') { throw 'Branch without a worktree offers a guessed folder.' }
     Set-Ui 'NameBox' 'pending-import'
     Set-Ui 'NameBox' ''
     Assert-Blocked 'ImportButton' '*Give the branch a name*'
@@ -160,6 +194,7 @@ try {
     $null = New-Item -ItemType Directory -Path (Join-Path $root 'occupied')
     Set-Ui 'NameBox' 'occupied'
     Assert-Blocked 'ImportButton' '*destination folder already exists*'
+    Assert-DestinationAction 'Open folder' (Join-Path $root 'occupied')
     Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'imported'
     # The preview stays valid, but execution must report a missing source and retain a retryable form.
@@ -223,7 +258,7 @@ try {
 
     # Back up via GUI to a local bare repository, checking content rather than just a success label.
     Start-App 'backup' $root
-    Invoke-Ui 'Back up now' -Name
+    Invoke-Ui 'BackupNowButton'
     Wait-Receipt
     # Backups rewrite history, so verify the tree content rather than comparing commit IDs.
     $remoteFeature = Run 'git' @('--git-dir', $backup, 'show', 'refs/heads/imported:feature.txt')
@@ -243,8 +278,10 @@ try {
         }
     }
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $null = Wait-For 'checkout precedes restore branch name' { (Find-Ui 'IntoBox').Current.BoundingRectangle.Left -lt (Find-Ui 'NameBox').Current.BoundingRectangle.Left }
     Set-Ui 'NameBox' 'imported'
     Assert-Blocked 'RestoreButton' '*already a branch*'
+    Assert-DestinationAction 'Open folder' (Join-Path $root 'imported')
     $force = Wait-For 'replace existing option' { Find-Ui 'ForceBox' }
     $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     $null = Wait-For 'replacement explains recovery' {
@@ -319,6 +356,19 @@ try {
         $subtitle = Find-Ui 'PART_SubtitleText'
         $subtitle -and $subtitle.Current.Name.Contains((Join-Path $root 'paused-import'))
     }
+    Invoke-Ui 'PART_BackButton'
+    $null = Wait-For 'import preview finishes reloading after back' {
+        $field = Find-Ui 'NameBox'
+        $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'source'
+    }
+    Set-Ui 'NameBox' 'paused-import'
+    Assert-Blocked 'ImportButton' '*already a branch*'
+    Assert-DestinationAction 'Review replay' (Join-Path $root 'paused-import')
+    Invoke-Ui 'ExistingDestinationAction'
+    $null = Wait-For 'destination action opens the original replay' {
+        $subtitle = Find-Ui 'PART_SubtitleText'
+        $subtitle -and $subtitle.Current.Name.Contains((Join-Path $root 'paused-import'))
+    }
     Invoke-Ui 'SkipButton'
     Invoke-Ui 'PrimaryButton'
     Wait-Receipt 2
@@ -343,7 +393,7 @@ finally {
         $current = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
         if ($current.LastRoot -eq $root) {
             $current.LastRoot = $previous.LastRoot
-            $current.RecentRoots = if ($previous) { $previous.RecentRoots } else { @() }
+            $current.RecentRoots = @(if ($previous) { $previous.RecentRoots })
         }
         if ($current.BackupMinutes -eq 0) {
             $current.BackupMinutes = if ($previous -and $null -ne $previous.BackupMinutes) { $previous.BackupMinutes } else { 15 }

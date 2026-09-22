@@ -157,24 +157,7 @@ public sealed class TaskPane : UserControl
     {
         var task = Session.Tasks.Snapshot().FirstOrDefault(t => t.Id == id);
         if (task == null || task.Active || task.FollowUp is not { } link) return;
-        if (link.Kind == TaskTargetKind.Folder)
-        {
-            if (Directory.Exists(link.Path)) Session.OpenInExplorer(link.Path);
-            else OutputWindow.Show("The result folder is no longer available: " + link.Path);
-            return;
-        }
-        if (!SameRoot(task.Root, Session.Root?.RootPath) || Navigation == null) return;
-        switch (link.Kind)
-        {
-            case TaskTargetKind.Replay when Directory.Exists(link.Path):
-                Navigation.Go(() => new ConflictPage(link.Path), "resolve:" + link.Path); break;
-            case TaskTargetKind.Update when Directory.Exists(link.Path):
-                Navigation.Go(() => new UpdateBranchPage(link.Path), "update-branch:" + link.Path); break;
-            case TaskTargetKind.Backup:
-                Navigation.Go(() => new BackupPage(), "backup"); break;
-            default:
-                Navigation.Go(() => new ActivityPage(), "activity"); break;
-        }
+        TaskNavigation.Open(task.Root, link, Navigation);
     }
 
     void CopyDetails(Guid id, TextBlock feedback)

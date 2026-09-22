@@ -59,6 +59,7 @@ public sealed partial class BackupPage : SgPage
     async Task LoadAsync()
     {
         _targetValidation.Invalidate();
+        ExistingDestination.Update(null, null);
         _picked = null;
         RestoreButton.IsEnabled = false;
         var root = Session.Require();
@@ -184,11 +185,13 @@ public sealed partial class BackupPage : SgPage
         var entry = _picked;
         var name = NameBox.Text.Trim();
         var root = Session.Root;
+        ExistingDestination.Update(null, null);
         RestoreButton.IsEnabled = false;
         if (name.Length > 0 && root != null && _picked != null)
             ExplainTarget("Checking branch name and destination…");
         var check = await _targetValidation.CheckAsync(_picked == null ? null : root, name);
         if (check == null) return;
+        ExistingDestination.Update(root, check.Existing);
         var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
         RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
@@ -258,6 +261,7 @@ public sealed partial class BackupPage : SgPage
         if (!confirmed) return;
 
         _targetValidation.Invalidate();
+        ExistingDestination.Update(null, null);
         ResultBar.IsOpen = false;
         var res = await _form.Run(request, submitted => Runner.Run(Pane, "restore " + submitted.Name,
             () => Backup.Restore(root, submitted.Source, submitted.Name, submitted.Checkout, submitted.WithEdits, submitted.Replace),

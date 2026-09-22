@@ -3,7 +3,7 @@ using Sg.Core;
 namespace Sg.App;
 
 /// <summary>Read-only form validation. Core operations still recheck the destination when executed.</summary>
-internal sealed record BranchTarget(bool Taken, string? Error)
+internal sealed record BranchTarget(bool Taken, string? Error, TaskFollowUp? Existing = null)
 {
     public static BranchTarget Check(SgRoot root, string name)
     {
@@ -13,8 +13,17 @@ internal sealed record BranchTarget(bool Taken, string? Error)
             var taken = root.Git.RefSha("refs/heads/" + name) != null;
             var path = root.WorktreePathFor(name);
             if (!taken && (Directory.Exists(path) || File.Exists(path)))
-                return new(false, "The destination folder already exists. Choose another branch name or move that folder first: " + path);
-            return new(taken, null);
+                return new(false, "The destination folder already exists. Choose another branch name or move that folder first: " + path,
+                    new(TaskTargetKind.Folder, Directory.Exists(path) ? path : Path.GetDirectoryName(path)!));
+            if (!taken) return new(false, null);
+            var tree = root.Git.WorktreeList().FirstOrDefault(w => !w.Bare && (w.Branch == name
+                || w.Branch == null && Directory.Exists(w.Path) && root.Git.RebaseHeadName(w.Path) == name));
+            var operation = Operations.List(root).FirstOrDefault(o => !o.Terminal && o.Branch == name);
+            var existing = tree?.Path ?? operation?.Path;
+            if (existing != null && Directory.Exists(existing))
+                return new(true, null, new(Conflicts.HasPending(root.Git, existing) ? TaskTargetKind.Replay
+                    : operation != null ? TaskTargetKind.Update : TaskTargetKind.Folder, existing));
+            return new(true, null, operation == null ? null : new(TaskTargetKind.Activity));
         }
         catch (SgException e)
         {

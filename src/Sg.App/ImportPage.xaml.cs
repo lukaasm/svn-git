@@ -65,6 +65,7 @@ public sealed partial class ImportPage : SgPage
     async Task LoadAsync()
     {
         _targetValidation.Invalidate();
+        ExistingDestination.Update(null, null);
         _meta = null;
         ImportButton.IsEnabled = false;
         var root = Session.Require();
@@ -153,11 +154,13 @@ public sealed partial class ImportPage : SgPage
         if (_form == null || _form.Running) return;
         var name = NameBox.Text.Trim();
         var root = Session.Root;
+        ExistingDestination.Update(null, null);
         ImportButton.IsEnabled = false;
         if (name.Length > 0 && root != null && _meta != null)
             ExplainTarget("Checking branch name and destination…");
         var check = await _targetValidation.CheckAsync(_meta == null ? null : root, name);
         if (check == null) return;
+        ExistingDestination.Update(root, check.Existing);
         var taken = check.Taken;
         ImportButton.IsEnabled = _meta != null && name.Length > 0 && Into != null && !taken && check.Error == null;
         var retry = Into is { } checkout && _form.IsRetry(new ImportRequest(_file, name, checkout.Name));
@@ -218,6 +221,7 @@ public sealed partial class ImportPage : SgPage
             return;
 
         _targetValidation.Invalidate();
+        ExistingDestination.Update(null, null);
         ResultBar.IsOpen = false;
         var res = await _form.Run(request, submitted => Runner.Run(Pane, "import " + submitted.Name,
             () => Export.Import(root, submitted.File, submitted.Name, submitted.Checkout),

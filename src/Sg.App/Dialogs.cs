@@ -106,7 +106,7 @@ public static class Dialogs
         await d.ShowAsync();
     }
 
-    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null)
+    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null, Action<TaskFollowUp>? navigate = null)
     {
         var name = new TextBox { Header = "Branch name", PlaceholderText = "feature-x", Text = draft?.Name ?? "" };
         var from = new ComboBox { Header = "From checkout", ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -148,6 +148,9 @@ public static class Dialogs
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 420 };
         AutomationProperties.SetAutomationId(summary, "NewWorktreeSummary");
         panel.Children.Add(summary);
+        TaskFollowUp? destination = null;
+        var existing = new DestinationAction { Requested = target => { destination = target; d.Hide(); } };
+        panel.Children.Add(existing);
         void Explain(string message)
         {
             summary.Text = message;
@@ -155,11 +158,13 @@ public static class Dialogs
         }
         async void SyncCreate()
         {
+            existing.Update(null, null);
             d.IsPrimaryButtonEnabled = false;
             var branch = name.Text.Trim();
             if (branch.Length > 0) Explain("Checking branch name and destination…");
             var check = await validation.CheckAsync(root, branch);
             if (check == null) return;
+            existing.Update(root, check.Existing);
             var checkout = from.SelectedItem as string;
             d.IsPrimaryButtonEnabled = branch.Length > 0 && checkout != null && !check.Taken && check.Error == null;
             Explain(branch.Length == 0 ? "Give the branch a name."
@@ -173,6 +178,11 @@ public static class Dialogs
         ContentDialogResult result;
         try { result = await d.ShowAsync(); }
         finally { validation.Invalidate(); }
+        if (destination != null)
+        {
+            if (ReferenceEquals(root, Session.Root)) navigate?.Invoke(destination);
+            return null;
+        }
         if (result != ContentDialogResult.Primary) return null;
         if (name.Text.Trim().Length == 0 || from.SelectedItem is not string coName) return null;
         var list = without.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();

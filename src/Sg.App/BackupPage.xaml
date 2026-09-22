@@ -134,14 +134,14 @@
         <!-- The restore form, under the same 1000 wide column as the list it acts on: the name and the checkout on
              one line, what comes with the branch on the line under. The name box had a star column with a cap and
              left alignment, so it shrank to its text and grew as tall as the two check boxes beside it. -->
-        <Grid x:Name="RestoreRow" Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,260,Auto,240,*" RowDefinitions="Auto,Auto"
+        <Grid x:Name="RestoreRow" Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,240,Auto,260,*" RowDefinitions="Auto,Auto"
               ColumnSpacing="10" RowSpacing="6" Margin="0,4,0,0">
-            <TextBlock Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-            <TextBox x:Name="NameBox" Grid.Column="1" VerticalAlignment="Center" TextChanged="Name_TextChanged"
-                     ToolTipService.ToolTip="The name the branch gets here. It starts as the name it has in the backup, which is free to be something else." />
-            <TextBlock Grid.Column="2" Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
-            <ComboBox x:Name="IntoBox" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
+            <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+            <ComboBox x:Name="IntoBox" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
                       ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the backup names." />
+            <TextBlock Grid.Column="2" Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
+            <TextBox x:Name="NameBox" Grid.Column="3" VerticalAlignment="Center" TextChanged="Name_TextChanged"
+                     ToolTipService.ToolTip="The name the branch gets here. It starts as the name it has in the backup, which is free to be something else." />
             <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="24">
                 <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
                           ToolTipService.ToolTip="The changes that were not committed when the backup was made come back too, through the shelf: written into the worktree when they merge, left on the shelf when one does not." />
@@ -160,7 +160,10 @@
                                   ToolTipService.ToolTip="Delete from the backup what is not here any more: branches removed, shelves dropped. Asks first, with the list." />
             </local:TaskGate>
             <Button Grid.Column="2" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
-            <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" Margin="8,0" />
+            <StackPanel Grid.Column="3" Spacing="4" VerticalAlignment="Center" Margin="8,0">
+                <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
+                <local:DestinationAction x:Name="ExistingDestination" />
+            </StackPanel>
             <local:TaskGate Grid.Column="4">
                 <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
                         AutomationProperties.Name="{Binding Text, ElementName=RestoreLabel}"

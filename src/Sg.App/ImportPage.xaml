@@ -83,13 +83,13 @@
         </ScrollViewer>
 
         <!-- The same form as Backup's restore, under the same 1000 wide column as the list above it. -->
-        <Grid Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,260,Auto,240,*" ColumnSpacing="10" Margin="0,4,0,0">
-            <TextBlock Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-            <TextBox x:Name="NameBox" Grid.Column="1" VerticalAlignment="Center" TextChanged="Name_TextChanged"
-                     ToolTipService.ToolTip="The name the branch gets here. It starts as the name it had, which is free to be something else." />
-            <TextBlock Grid.Column="2" Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
-            <ComboBox x:Name="IntoBox" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
+        <Grid Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,240,Auto,260,*" ColumnSpacing="10" Margin="0,4,0,0">
+            <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+            <ComboBox x:Name="IntoBox" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
                       ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the export names." />
+            <TextBlock Grid.Column="2" Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
+            <TextBox x:Name="NameBox" Grid.Column="3" VerticalAlignment="Center" TextChanged="Name_TextChanged"
+                     ToolTipService.ToolTip="The name the branch gets here. It starts as the name it had, which is free to be something else." />
         </Grid>
 
         <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
@@ -100,7 +100,10 @@
             <local:IconButton Grid.Column="2" x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resume import" Visibility="Collapsed"
                               Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
                               ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
-            <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="3" Spacing="4" VerticalAlignment="Center">
+                <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
+                <local:DestinationAction x:Name="ExistingDestination" />
+            </StackPanel>
             <local:TaskGate Grid.Column="4">
                 <Button x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
                         AutomationProperties.Name="{Binding Text, ElementName=ImportLabel}"

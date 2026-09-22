@@ -121,6 +121,7 @@ try {
     # Keep scheduled backups from racing the operation this test deliberately holds at a lock.
     $testSettings = if ($previousSettings) { $previousSettings | ConvertTo-Json -Depth 20 | ConvertFrom-Json } else { [pscustomobject]@{} }
     $testSettings | Add-Member -NotePropertyName BackupMinutes -NotePropertyValue 0 -Force
+    $testSettings | Add-Member -NotePropertyName RecentRoots -NotePropertyValue @($previousSettings.RecentRoots | Where-Object { $_ }) -Force
     $null = New-Item -ItemType Directory -Path (Split-Path $settingsPath) -Force
     $testSettings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
     if ($CheckRecovery) {
@@ -230,14 +231,33 @@ try {
     $null = Wait-For 'finished filter retains both receipts' { (By-Id 'TaskFilterSummary').Current.Name -eq '2 of 2 tasks' }
     Select-TaskFilter 0
     $null = Wait-For 'expanded result survives filtering' { $b = By-Id $resultId; $b -and !$b.Current.IsOffscreen }
-    Invoke-Element (By-Id 'NewWorktreeButton')
+    Invoke-Element (Wait-For 'new worktree action' { By-Id 'NewWorktreeButton' })
     $branchInput = Wait-For 'branch name for duplicate check' { By-Name 'Branch name' }
     $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
     $null = Wait-For 'existing branch blocked before creation' {
         $button = By-Id 'PrimaryButton'
         $button -and !$button.Current.IsEnabled -and $branchInput.Current.HelpText -like '*already a branch*'
     }
-    Invoke-Element (By-Name 'Cancel')
+    $existing = Wait-For 'new worktree existing destination action' { By-Id 'ExistingDestinationAction' }
+    if ($existing.Current.Name -ne 'Open folder' -or $existing.Current.HelpText -ne (Join-Path $rootPath $name)) { throw 'New worktree points to the wrong existing destination.' }
+    $destinationRecoveryId = [Guid]::NewGuid().ToString('N')
+    $recoveryFolder = Join-Path $rootPath '.sg/operations'
+    $null = New-Item -ItemType Directory -Path $recoveryFolder -Force
+    $recoveryFile = Join-Path $recoveryFolder ($destinationRecoveryId + '.json')
+    @{ id = $destinationRecoveryId; kind = 'Destination recovery'; branch = $name;
+       checkout = $config.checkouts[0].name; path = (Join-Path $rootPath $name);
+       phase = 'needsReview'; detail = 'Saved edits for destination navigation.' } |
+        ConvertTo-Json | Set-Content -LiteralPath $recoveryFile -Encoding utf8
+    $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name + '-other')
+    $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
+    Invoke-Element (Wait-For 'destination recovery action' {
+        $action = By-Id 'ExistingDestinationAction'; if ($action -and $action.Current.Name -eq 'Review update') { $action }
+    })
+    $null = Wait-For 'dialog closes and recovery opens' { By-Name 'Saved edits for destination navigation.' }
+    Remove-Item -LiteralPath $recoveryFile
+    $recoveryFile = $null
+    Invoke-Element (By-Id 'NavigationViewBackButton')
+    $null = Wait-For 'back on overview after destination recovery' { By-Id 'SyncButton' }
     Save-Window 'completed'
     Invoke-Element (By-Id 'ClearFinishedTasks')
     $null = Wait-For 'clear finished updates list and summary' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 0 tasks' }
@@ -263,7 +283,7 @@ finally {
         $current = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
         if ($current.LastRoot -eq $rootPath) {
             $current.LastRoot = $previousSettings.LastRoot
-            $current.RecentRoots = if ($previousSettings) { $previousSettings.RecentRoots } else { @() }
+            $current.RecentRoots = @(if ($previousSettings) { $previousSettings.RecentRoots })
         }
         if ($current.BackupMinutes -eq 0) {
             $current.BackupMinutes = if ($previousSettings -and $null -ne $previousSettings.BackupMinutes) { $previousSettings.BackupMinutes } else { 15 }

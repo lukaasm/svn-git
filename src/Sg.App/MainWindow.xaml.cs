@@ -1136,7 +1136,7 @@ public sealed partial class MainWindow : Window
         if (Session.Root == null || _branchForm.Running) return;
         var root = Session.Root;
         var draft = _branchForm.RetryAvailable && ReferenceEquals(root, _branchRequestRoot) ? _branchForm.Submitted : null;
-        var input = await Dialogs.NewBranch(this, root, preselect, draft);
+        var input = await Dialogs.NewBranch(this, root, preselect, draft, target => TaskNavigation.Open(root.RootPath, target, Host));
         if (input == null) return;
         _branchRequestRoot = root;
         var r = await _branchForm.Run(input, submitted => Reports.Run(Overview.Report, Pane, "new branch " + submitted.Name,

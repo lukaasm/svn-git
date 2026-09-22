@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Sg.Core;
@@ -142,13 +143,36 @@ public static class Dialogs
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
         };
-        // Create used to be live with the name box empty: pressing it closed the dialog and made nothing,
-        // with no branch, no error and no way to tell that anything had gone wrong.
-        void SyncCreate() => d.IsPrimaryButtonEnabled = name.Text.Trim().Length > 0 && from.SelectedItem is string;
+        var validation = new BranchTargetValidation();
+        var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 420 };
+        AutomationProperties.SetAutomationId(summary, "NewWorktreeSummary");
+        panel.Children.Add(summary);
+        void Explain(string message)
+        {
+            summary.Text = message;
+            AutomationProperties.SetHelpText(name, message);
+        }
+        async void SyncCreate()
+        {
+            d.IsPrimaryButtonEnabled = false;
+            var branch = name.Text.Trim();
+            if (branch.Length > 0) Explain("Checking branch name and destination…");
+            var check = await validation.CheckAsync(root, branch);
+            if (check == null) return;
+            var checkout = from.SelectedItem as string;
+            d.IsPrimaryButtonEnabled = branch.Length > 0 && checkout != null && !check.Taken && check.Error == null;
+            Explain(branch.Length == 0 ? "Give the branch a name."
+                : checkout == null ? "Pick the checkout to build it on."
+                : check.Error ?? (check.Taken ? $"{branch} is already a branch here. Give it another name."
+                    : $"{branch} will be made on {checkout}, and its worktree with it."));
+        }
         name.TextChanged += (_, _) => SyncCreate();
         from.SelectionChanged += (_, _) => SyncCreate();
         SyncCreate();
-        if (await d.ShowAsync() != ContentDialogResult.Primary) return null;
+        ContentDialogResult result;
+        try { result = await d.ShowAsync(); }
+        finally { validation.Invalidate(); }
+        if (result != ContentDialogResult.Primary) return null;
         if (name.Text.Trim().Length == 0 || from.SelectedItem is not string coName) return null;
         var list = without.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
         return new NewBranchInput(name.Text.Trim(), root.Checkout(coName), minimal.IsChecked == true, list, shared.Mode);

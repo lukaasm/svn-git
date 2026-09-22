@@ -44,10 +44,25 @@ function Invoke-Element($element) {
 function Select-Element($element) {
     $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
 }
-function Start-Worktree([string]$name) {
+function Start-Worktree([string]$name, [switch]$CheckValidation) {
     Invoke-Element (Wait-For 'enabled new worktree action' { $b = By-Name 'New worktree'; if ($b -and $b.Current.IsEnabled -and !$b.Current.IsOffscreen) { $b } })
-    $input = Wait-For 'branch name' { By-Name 'Branch name' }
-    $input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
+    $branchInput = Wait-For 'branch name' { By-Name 'Branch name' }
+    if ($CheckValidation) {
+        foreach ($case in @(
+            @{ Name = ''; Help = '*Give the branch a name*' },
+            @{ Name = 'bad..name'; Help = '*valid Git branch name*' },
+            @{ Name = $config.checkouts[0].name; Help = '*destination folder already exists*' }
+        )) {
+            $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($case.Name)
+            $null = Wait-For 'new worktree validation' {
+                $button = By-Id 'PrimaryButton'
+                $summary = By-Id 'NewWorktreeSummary'
+                $button -and !$button.Current.IsEnabled -and $summary.Current.Name -like $case.Help -and $branchInput.Current.HelpText -like $case.Help
+            }
+        }
+        $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('invalid name')
+    }
+    $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
     $create = Wait-For 'enabled create button' { $b = By-Id 'PrimaryButton'; if ($b -and $b.Current.IsEnabled) { $b } }
     Invoke-Element $create
 }
@@ -131,7 +146,7 @@ try {
     Save-Window 'overview'
     $heldLock = [IO.File]::Open((Join-Path $rootPath '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     $name = 'task-ui-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
-    Start-Worktree $name
+    Start-Worktree $name -CheckValidation
     $null = Wait-For 'immediate worktree placeholder' { By-Name ($name + ' · Preparing worktree') }
     $null = Wait-For 'conflicting sync disabled' { !(By-Id 'SyncButton').Current.IsEnabled }
     $null = Wait-For 'disabled sync explains the blocking task' { (By-Id 'SyncButton').Current.HelpText -like "*$name*cancel*Tasks*" }
@@ -202,6 +217,14 @@ try {
     $null = Wait-For 'finished filter retains both receipts' { (By-Id 'TaskFilterSummary').Current.Name -eq '2 of 2 tasks' }
     Select-TaskFilter 0
     $null = Wait-For 'expanded result survives filtering' { $b = By-Id $resultId; $b -and !$b.Current.IsOffscreen }
+    Invoke-Element (By-Id 'NewWorktreeButton')
+    $branchInput = Wait-For 'branch name for duplicate check' { By-Name 'Branch name' }
+    $branchInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name)
+    $null = Wait-For 'existing branch blocked before creation' {
+        $button = By-Id 'PrimaryButton'
+        $button -and !$button.Current.IsEnabled -and $branchInput.Current.HelpText -like '*already a branch*'
+    }
+    Invoke-Element (By-Name 'Cancel')
     Save-Window 'completed'
     Invoke-Element (By-Id 'ClearFinishedTasks')
     $null = Wait-For 'clear finished updates list and summary' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 0 tasks' }

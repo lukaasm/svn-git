@@ -17,7 +17,7 @@ internal sealed class SearchableOutput : UserControl
     readonly List<int> _matches = new();
     int _current = -1;
 
-    public SearchableOutput(string output)
+    public SearchableOutput(string output, string automationId, string accessibleName)
     {
         _output = new TextBox {
             IsReadOnly = true, AcceptsReturn = true, Text = output, TextWrapping = TextWrapping.NoWrap,
@@ -32,8 +32,8 @@ internal sealed class SearchableOutput : UserControl
         AutomationProperties.SetAutomationId(_next, "OutputNextMatch");
         AutomationProperties.SetAutomationId(_status, "OutputMatchStatus");
         AutomationProperties.SetLiveSetting(_status, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-        AutomationProperties.SetName(_output, "Recorded check output");
-        AutomationProperties.SetAutomationId(_output, "ReviewCheckOutputText");
+        AutomationProperties.SetName(_output, accessibleName);
+        AutomationProperties.SetAutomationId(_output, automationId);
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         toolbar.Children.Add(new FontIcon { Glyph = "\uE721", FontSize = 16 });
         toolbar.Children.Add(_query);

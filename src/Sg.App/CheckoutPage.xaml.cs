@@ -93,8 +93,6 @@ public sealed partial class CheckoutPage : SgPage
     {
         if (!returning) return;
         _ = _owner.RefreshAsync();
-        // A commit page, a shelve, an import: something may have changed a branch, and the backup follows.
-        _owner.BackupSoon();
     }
 
     /// <summary>The bar along the top runs while the state is read.</summary>
@@ -580,7 +578,6 @@ public sealed partial class CheckoutPage : SgPage
         var what = row.DirtyFiles == 0 ? $"the uncommitted changes in {row.Branch}" : $"the {row.DirtyFiles} change(s) in {row.Branch}";
         var r = await ShelfActions.SaveAsync(this, Pane, row.Path, null, what, "worktree changes", OpReport);
         if (r == null) return;
-        _owner.BackupSoon();
         await _owner.RefreshAsync();
     }
 
@@ -650,7 +647,6 @@ public sealed partial class CheckoutPage : SgPage
             if (r == null) { await _owner.RefreshAsync(); return; }
             Pane.Append(TaskResults.Describe(r).Detail);
             if (r.Waiting) { OpenResolver(row); return; }
-            _owner.BackupSoon();
             await _owner.RefreshAsync();
         });
     }

@@ -14,7 +14,9 @@ Task updates arrive on state changes instead of a polling delay. Collapsed or id
 Import and restore keep a snapshot of the submitted source, destination, and options. Their inputs are locked while work runs; navigation and Tasks remain available. Failed or cancelled attempts keep the form values and offer Retry once destination validation passes again. Worktree creation keeps its submitted options for **Review and retry** in the current window, including after navigating away; retry always rechecks the destination and never overwrites partial work automatically. Existing destinations offer **Open folder**, **Review replay**, or a saved-operation action when available; links use the registered worktree path, including moved worktrees. Import and backup restore place the checkout selector before the branch name.
 
 
-Unfinished updates and paused replays are rediscovered when a root opens. A recovery notice links to the saved step or replay review; Activity puts unfinished operations first and retains their checkpoints. Commands are never automatically repeated on startup.
+Unfinished updates and paused replays are rediscovered when a root opens. A recovery notice links to the saved step or replay review; Activity shows a dated timeline with status colors, completed steps, and retained checkpoints. Restoring a checkpoint first lists the new branch, destination, and commit in a confirmation dialog. Commands are never automatically repeated on startup.
+
+Finished tasks offer **View output**, with the same literal search, match navigation, and Ctrl+F shortcut as review-check output. The view keeps the task's original repository and status, including when no output was captured. Running tasks keep live output in the task pane.
 
 For background Windows UI Automation testing, build the Debug app and CLI, then run `pwsh -File scripts/test-ui.ps1`. The runner creates a private Windows desktop for both suites, without switching away from your working desktop. Test windows stay there; the runner does not inject mouse or keyboard input. No VM or extra Windows account is needed. It requires a logged-in Windows session and PowerShell 7; it is not a headless/service runner.
 
@@ -40,7 +42,7 @@ Pull previews use labeled status colors for revisions and saved edits, with link
 
 **Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
 
-**Storage** previews conservative worktree archives and manual temporary-data cleanup. Ignored and linked content blocks archive; commit checkpoints are recoverable through Activity. Reclaimable physical space is shown as unknown.
+**Storage** previews conservative worktree archives and manual temporary-data cleanup. Loading and error states retain useful content, navigation, and retry actions. Ignored and linked content blocks archive; commit checkpoints are recoverable through Activity. Archive and cleanup confirmations list what will be changed. Reclaimable physical space is shown as unknown. `scripts/test-storage-feedback.ps1 -FixtureRoot <disposable-root>` verifies loading under a held repository lock and recovery from a read error on a private desktop.
 
 ```powershell
 sg branch-update             # preview this branch's update
@@ -449,7 +451,7 @@ exist. Finish later leaves the operation available on the branch card. Manual pa
 resolution of the remaining series are under More.
 
 In the app: Settings has the URL, the prefix, whether uncommitted changes go, and "Back up every N minutes" (15 by
-default). The app also backs up a few seconds after a commit, a shelve or a rebase made in it. Every worktree card
+default). Automatic backups run only at that interval; commits, shelves, rebases, and navigation do not trigger extra runs. Zero disables automatic backups. Manual backup remains available. Every worktree card
 says "backed up 3 min ago", "2 commits not backed up", "backup failed" with the reason, or "backing up...", and
 its Backup row has Exclude: the worktree stays out of every backup, the chip says "excluded from the backup", and
 Include puts it back. **Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item

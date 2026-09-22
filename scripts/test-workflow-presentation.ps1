@@ -72,6 +72,14 @@ try {
     (Wait-For { Find 'ActivityItem' -Id }).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     Expand (Wait-For { Find 'Steps and checkpoint' })
     $null = Wait-For { Find 'View branch history' }
+    $beforeRecovery = @(Get-ChildItem -LiteralPath $FixtureRoot -Directory -Filter '*-recovered-*').Count
+    Invoke 'Restore commits to a separate branch'
+    $null = Wait-For { Find 'Restore checkpoint to a new branch?' }
+    $dialogText = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        Where-Object { $_.Current.Name -like 'This will:*Create branch*Create its worktree*Restore the recorded commits*' } | Select-Object -First 1
+    if (!$dialogText) { throw 'Recovery confirmation must explain its branch, destination, and checkpoint.' }
+    Invoke 'CloseButton' -Id
+    if (@(Get-ChildItem -LiteralPath $FixtureRoot -Directory -Filter '*-recovered-*').Count -ne $beforeRecovery) { throw 'Cancelling recovery created a worktree.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'activity.png')
     Invoke 'NavigationViewBackButton' -Id
     $branch = Wait-For { Find 'source' }

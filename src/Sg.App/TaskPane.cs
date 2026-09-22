@@ -17,11 +17,12 @@ public sealed class TaskPane : UserControl
     readonly TextBlock _empty = new() { Text = "No tasks this session.", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
     readonly StackPanel _body = new() { Visibility = Visibility.Collapsed };
     readonly Button _toggle;
+    readonly FontIcon _chevron = new() { Glyph = "\uE70D", FontSize = 12 };
     readonly ComboBox _filter = new() { MinWidth = 170, SelectedIndex = 0 };
     readonly TextBlock _viewSummary = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _clear;
     public NavHost? Navigation { get; set; }
-    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp)
+    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp, Button ViewOutput)
     {
         public TaskSnapshot? LastTask;
         public string? Root;
@@ -35,8 +36,7 @@ public sealed class TaskPane : UserControl
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.Children.Add(_summary);
-        var chevron = new FontIcon { Glyph = "\uE70D", FontSize = 12 };
-        Grid.SetColumn(chevron, 1); header.Children.Add(chevron);
+        Grid.SetColumn(_chevron, 1); header.Children.Add(_chevron);
         _toggle = new Button
         {
             Content = header, Padding = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -47,7 +47,7 @@ public sealed class TaskPane : UserControl
         _toggle.Click += (_, _) =>
         {
             _body.Visibility = _body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            chevron.Glyph = _body.Visibility == Visibility.Visible ? "\uE70E" : "\uE70D";
+            _chevron.Glyph = _body.Visibility == Visibility.Visible ? "\uE70E" : "\uE70D";
             Refresh();
         };
         var toolbar = new Grid { Padding = new Thickness(12, 0, 12, 8), ColumnSpacing = 12 };
@@ -147,7 +147,10 @@ public sealed class TaskPane : UserControl
             row.Root = Session.Root?.RootPath;
             var detail = Message(task) + "\n" + task.Root;
             if (row.Detail.Text != detail) row.Detail.Text = detail;
-            if (row.Output.Text != task.Log) row.Output.Text = task.Log;
+            var liveOutput = task.Active ? task.Log : "";
+            if (row.Output.Text != liveOutput) row.Output.Text = liveOutput;
+            row.Output.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
+            row.ViewOutput.Visibility = task.Active ? Visibility.Collapsed : Visibility.Visible;
             row.Cancel.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
             row.Cancel.IsEnabled = !task.StopRequested;
             row.Cancel.Content = task.StopRequested ? "Stop requested" : task.StopAtBoundary ? "Stop after current step" : "Cancel task";
@@ -182,6 +185,20 @@ public sealed class TaskPane : UserControl
         var task = Session.Tasks.Snapshot().FirstOrDefault(t => t.Id == id);
         if (task == null || task.Active || task.FollowUp is not { } link) return;
         TaskNavigation.Open(task.Root, link, Navigation);
+    }
+
+    void OpenOutput(Guid id)
+    {
+        var task = Session.Tasks.Snapshot().FirstOrDefault(t => t.Id == id);
+        if (task == null || task.Active || Navigation == null) return;
+        // Keep the finished receipt tied to its original repository, even after history is cleared.
+        var navigation = Navigation;
+        DispatcherQueue.TryEnqueue(() => {
+            _body.Visibility = Visibility.Collapsed;
+            _chevron.Glyph = "\uE70D";
+            Refresh();
+            navigation.Go(() => new TaskOutputPage(task), "task-output:" + task.Id);
+        });
     }
 
     void CopyDetails(Guid id, TextBlock feedback)
@@ -221,9 +238,12 @@ public sealed class TaskPane : UserControl
         var followUp = new Button { Visibility = Visibility.Collapsed };
         AutomationProperties.SetAutomationId(followUp, "TaskResult_" + id);
         followUp.Click += (_, _) => OpenResult(id);
+        var viewOutput = new IconButton { Text = "View output", Glyph = "\uE8A5", Visibility = Visibility.Collapsed };
+        AutomationProperties.SetAutomationId(viewOutput, "TaskOutput_" + id);
+        viewOutput.Click += (_, _) => OpenOutput(id);
         var bar = new ProgressBar { Height = 3 };
         var body = new StackPanel { Spacing = 8, Padding = new Thickness(12, 0, 12, 12), Visibility = Visibility.Collapsed };
-        var copy = new Button { Content = "Copy task details" };
+        var copy = new IconButton { Text = "Copy task details", Glyph = "\uE8C8" };
         AutomationProperties.SetAutomationId(copy, "CopyTask_" + id);
         const string copyHelp = "Copy the current status, timestamps, repository path, result, and retained output.";
         AutomationProperties.SetHelpText(copy, copyHelp);
@@ -233,7 +253,7 @@ public sealed class TaskPane : UserControl
         AutomationProperties.SetLiveSetting(feedback, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         copy.Click += (_, _) => CopyDetails(id, feedback);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        actions.Children.Add(followUp); actions.Children.Add(copy);
+        actions.Children.Add(followUp); actions.Children.Add(viewOutput); actions.Children.Add(copy);
         body.Children.Add(detail); body.Children.Add(actions); body.Children.Add(feedback); body.Children.Add(bar); body.Children.Add(output);
         var toggle = new Button { Content = title, Padding = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Style = (Style)Application.Current.Resources["QuietButton"] };
@@ -245,7 +265,7 @@ public sealed class TaskPane : UserControl
         heading.Children.Add(toggle); Grid.SetColumn(cancel, 1); heading.Children.Add(cancel);
         var layout = new StackPanel(); layout.Children.Add(heading); layout.Children.Add(body);
         var card = new Border { Child = layout, BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] };
-        return new(card, toggle, title, detail, output, cancel, bar, followUp);
+        return new(card, toggle, title, detail, output, cancel, bar, followUp, viewOutput);
     }
 }
 

@@ -185,6 +185,14 @@ try {
             throw 'Copied task report is missing its status, context, or result.'
         }
     } else { Write-Host 'SKIP: system clipboard check (shared with the working desktop).' }
+    Invoke-Element (By-Id ('TaskOutput_' + $cancelled.Current.AutomationId.Substring(5)))
+    $cancelledOutput = Wait-For 'cancelled task retains its wait log' { By-Id 'TaskOutputText' }
+    $cancelledValue = $cancelledOutput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current
+    if (!$cancelledValue.IsReadOnly -or $cancelledValue.Value -notlike '*waiting for*') { throw 'Cancelled task lost its repository wait output.' }
+    if ((By-Id 'TaskOutputRepository').Current.Name -ne $rootPath) { throw 'Task output lost its original repository.' }
+    Invoke-Element (By-Id 'NavigationViewBackButton')
+    $null = Wait-For 'back to settings after reading task output' { By-Id 'MinLength' }
+    Invoke-Element (By-Id 'TaskQueueToggle')
     Invoke-Element $cancelled
     $null = Wait-For 'repository settings enabled again' { (By-Id 'MinLength').Current.IsEnabled }
     if (Test-Path -LiteralPath (Join-Path $rootPath $name)) { throw 'Cancelled waiting task created a folder.' }
@@ -208,6 +216,21 @@ try {
     $resultAction = Wait-For 'completed worktree action' { By-Id $resultId }
     if ($resultAction.Current.Name -ne 'Open folder' -or !$resultAction.Current.IsEnabled) { throw 'Completed worktree has no enabled folder action.' }
     if ($resultAction.Current.HelpText -ne (Join-Path $rootPath $name)) { throw 'Folder action points to the wrong worktree.' }
+    Start-UiScenario 'Finished task output uses shared search'
+    Invoke-Element (By-Id ('TaskOutput_' + $completed.Current.AutomationId.Substring(5)))
+    $output = Wait-For 'retained task output' { By-Id 'TaskOutputText' }
+    $value = $output.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current
+    if (!$value.IsReadOnly -or [string]::IsNullOrWhiteSpace($value.Value)) { throw 'Completed worktree output is missing or editable.' }
+    if ((By-Id 'TaskOutputRepository').Current.Name -ne $rootPath) { throw 'Finished task output points to another repository.' }
+    $query = [regex]::Match($value.Value, '[a-zA-Z]{3,}').Value
+    (By-Id 'OutputSearch').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($query)
+    $null = Wait-For 'task output match count' { (By-Id 'OutputMatchStatus').Current.Name -like 'Match 1 of *' }
+    $selected = $output.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).GetSelection()[0].GetText(-1)
+    if ($selected -ine $query) { throw 'Task log search did not select the match.' }
+    if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'task-output.png') }
+    Invoke-Element (By-Id 'NavigationViewBackButton')
+    $null = Wait-For 'back from task output' { By-Id 'SyncButton' }
+    Invoke-Element (By-Id 'TaskQueueToggle')
     Select-TaskFilter 1
     $null = Wait-For 'active filter becomes empty after completion' { (By-Id 'TaskFilterSummary').Current.Name -eq '0 of 2 tasks' }
     if (Task-Buttons | Where-Object { !$_.Current.IsOffscreen }) { throw 'Active filter shows finished results.' }
@@ -286,6 +309,31 @@ try {
     Invoke-Element (By-Id 'NavigationViewBackButton')
     $null = Wait-For 'overview returns after advanced navigation' { By-Id 'SyncButton' }
     if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'worktree-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
+    Start-UiScenario 'Only the backup interval triggers automatic backups'
+    Select-Element (By-Id 'SettingsItem')
+    $minutes = Wait-For 'backup interval setting' { By-Id 'BackupMinutes' }
+    $minutes.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(1)
+    $null = Wait-For 'backup interval saved' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 1 }
+    Invoke-Element (By-Id 'NavigationViewBackButton')
+    $null = Wait-For 'overview after setting interval' { By-Id 'SyncButton' }
+    $intervalStarted = [DateTime]::UtcNow
+    while ([DateTime]::UtcNow -lt $intervalStarted.AddSeconds(15)) {
+        if (Task-Buttons | Where-Object { $_.Current.Name -like '*Scheduled backup*' }) { throw 'Navigation triggered a backup before the interval.' }
+        Start-Sleep -Milliseconds 500
+    }
+    $deadline = $intervalStarted.AddSeconds(90)
+    do {
+        $backups = @(Task-Buttons | Where-Object { $_.Current.Name -like '*Scheduled backup*' })
+        if ($backups.Count -gt 0) { break }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($backups.Count -ne 1) { throw 'Expected one scheduled backup at the configured interval.' }
+    if ([DateTime]::UtcNow -lt $intervalStarted.AddSeconds(55)) { throw 'Automatic backup ran before its interval.' }
+    $null = Wait-For 'scheduled backup finishes' { Task-Buttons | Where-Object { $_.Current.Name -like '*Completed*Scheduled backup*' } }
+    Select-Element (By-Id 'SettingsItem')
+    (Wait-For 'backup interval setting again' { By-Id 'BackupMinutes' }).GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(0)
+    $null = Wait-For 'automatic backups disabled' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 0 }
+    Invoke-Element (By-Id 'NavigationViewBackButton')
     Complete-UiScenario
     Write-Output 'PASS: placeholder, collision gating, navigation, independent controls, cancellation, retained results, completion.'
 }

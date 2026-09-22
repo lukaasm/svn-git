@@ -63,7 +63,7 @@ internal sealed class ReviewCheckOutputPage : WorkflowPage
     {
         _record = record;
         _check = record.Checks[index];
-        _output = new SearchableOutput(_check.Output);
+        _output = new SearchableOutput(_check.Output, "ReviewCheckOutputText", "Recorded check output");
         Subtitle = ReviewCheckResults.DisplayName(_check, index);
         Shortcuts.Add(this, Windows.System.VirtualKey.F, Windows.System.VirtualKeyModifiers.Control, _output.FocusSearch);
     }

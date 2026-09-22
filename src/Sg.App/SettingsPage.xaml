@@ -87,7 +87,7 @@
                     </local:TaskGate>
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Back up every N minutes"
-                                       Description="The app sends what changed on this schedule, and a few seconds after a commit, a shelve or a rebase made here. 0 turns the timer off; Backup on the checkout still sends on demand.">
+                                       Description="Automatic backups run only at this interval. Commits, shelves, rebases, and navigation do not trigger extra backups. 0 disables automatic backups; Backup on the checkout still sends on demand.">
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE823;" />
                     </controls:SettingsCard.HeaderIcon>

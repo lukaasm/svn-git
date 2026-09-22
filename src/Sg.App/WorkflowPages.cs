@@ -64,6 +64,20 @@ public abstract class WorkflowPage : SgPage
     }
     protected void Status(string text, ChipSeverity severity, string glyph) =>
         Body.Children.Add(new StatusChip { Text = text, Severity = severity, Glyph = glyph });
+    protected InfoBar ReadNotice(string message, string id)
+    {
+        var notice = new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Informational, Message = message };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(notice, id);
+        Body.Children.Add(notice);
+        return notice;
+    }
+    protected void ReadFailed(InfoBar notice, string message)
+    {
+        notice.Severity = InfoBarSeverity.Error;
+        notice.Message = message;
+        Action("Retry", Reload, glyph: "\uE72C");
+        Action("View error log", () => { OutputWindow.Show(); return Task.CompletedTask; }, glyph: "\uE8A5");
+    }
     protected void Details(string title, IEnumerable<string> lines)
     {
         var expander = new Expander { Header = Label(title, "\uE8A5"), HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -179,26 +193,37 @@ public sealed class ActivityPage : WorkflowPage
     protected override async Task Reload()
     {
         var generation = BeginRead(); var root = Session.Require();
+        Body.Children.Clear();
+        var loading = ReadNotice("Loading recorded operations and recovery checkpoints…", "ActivityLoading");
         var data = await Runner.Quiet(Pane, () =>
         {
             var records = Operations.List(root);
             var replays = root.Git.WorktreeList().Where(w => !w.Bare && Directory.Exists(w.Path) && Conflicts.HasPending(root.Git, w.Path) && records.All(r => r.Terminal || r.Path != w.Path)).ToList();
             return new { Records = records, Replays = replays };
         });
-        if (data == null || !Current(generation)) return;
-        var records = data.Records.OrderBy(r => r.Terminal).ThenByDescending(r => r.Updated).ToList();
+        if (!Current(generation)) return;
+        if (data == null) { ReadFailed(loading, "Could not read the activity timeline. Retry or open the error log for details."); return; }
+        var records = data.Records.OrderByDescending(r => r.Updated).ToList();
         Body.Children.Clear();
         Status($"{records.Count(r => !r.Terminal) + data.Replays.Count} need attention · {records.Count(r => r.Terminal)} finished", ChipSeverity.Neutral, "\uE81C");
         foreach (var replay in data.Replays)
         {
+            var entryStart = Body.Children.Count;
             Text("Existing replay · " + replay.Branch, true);
             Status("Paused replay", ChipSeverity.Caution, "\uE7BA");
             Details("Replay details", [replay.Path, "Paused before operation history was recorded"]);
             Link("Review replay", "\uE90F", () => new ConflictPage(replay.Path), "resolve:" + replay.Path);
+            TimelineEntry(entryStart, "PausedReplay");
         }
         if (records.Count == 0 && data.Replays.Count == 0) Text("No recorded operations yet.");
+        DateTime? day = null;
         foreach (var record in records)
         {
+            if (day != record.Updated.LocalDateTime.Date) {
+                day = record.Updated.LocalDateTime.Date;
+                Text(day.Value.ToString("D"), true);
+            }
+            var entryStart = Body.Children.Count;
             Text(OperationTitle(record) + " · " + record.Branch, true);
             var severity = record.Phase == OperationPhase.Completed ? ChipSeverity.Success : record.Terminal ? ChipSeverity.Neutral : ChipSeverity.Caution;
             Status(record.PhaseLabel, severity, record.Phase == OperationPhase.Completed ? "\uE73E" : record.Terminal ? "\uE81C" : "\uE7BA");
@@ -207,16 +232,39 @@ public sealed class ActivityPage : WorkflowPage
             if (!record.Terminal) Link(record.Action, "\uE90F", () => new UpdateBranchPage(record.Path), "update-branch:" + record.Path);
             if (Directory.Exists(record.Path)) Link("View branch history", "\uE81C", () => new LogPage(record.Path), "log:" + record.Path);
             var detailsStart = Body.Children.Count;
-            Text(string.Join("\n", record.Steps.Concat(new[] { "Branch checkpoint: " + (record.Before.Length > 0 ? record.Before : "Not recorded"), record.Path })));
-            if (record.Before.Length > 0) Action("Restore commits to a separate branch", () =>
+            foreach (var step in record.Steps) Body.Children.Add(Label(step, "\uE73E"));
+            if (record.Steps.Count == 0) Text("No completed steps recorded.");
+            Text("Branch checkpoint: " + (record.Before.Length > 0 ? record.Before : "Not recorded"));
+            Text(record.Path);
+            if (record.Before.Length > 0) Action("Restore commits to a separate branch", async () =>
             {
                 var name = record.Branch + "-recovered-" + Guid.NewGuid().ToString("N")[..8];
-                return Execute("Restore checkpoint", () => Operations.RestoreCheckpoint(root, record.Id, name),
+                if (!await Dialogs.Confirm(this, "Restore checkpoint to a new branch?",
+                    $"This will:\n• Create branch {name}.\n• Create its worktree at {root.WorktreePathFor(name)}.\n• Restore the recorded commits at {record.Before}.\n\nYour current branch, working files, and shelves stay in place. SVN and remote backups are unchanged.", "Create recovery branch")) return;
+                await Execute("Restore checkpoint", () => Operations.RestoreCheckpoint(root, record.Id, name),
                     new(record.Checkout, name, root.WorktreePathFor(name)));
             }, mutates: true, glyph: "\uE8A7");
             CollapseActions(detailsStart, "Steps and checkpoint");
+            TimelineEntry(entryStart, "ActivityEntry_" + record.Id);
         }
         Action("Refresh", Reload, glyph: "\uE72C");
+    }
+
+    void TimelineEntry(int start, string id)
+    {
+        var content = new StackPanel { Spacing = 8 };
+        while (Body.Children.Count > start) {
+            var child = Body.Children[start]; Body.Children.RemoveAt(start); content.Children.Add(child);
+        }
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new() { Width = new GridLength(20) });
+        row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        row.Children.Add(new Border { Width = 2, Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] });
+        row.Children.Add(new FontIcon { Glyph = "\uE915", FontSize = 14, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 16, 0, 0) });
+        var card = new Border { Padding = new Thickness(16), CornerRadius = new CornerRadius(4),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], Child = content };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(card, id);
+        Grid.SetColumn(card, 1); row.Children.Add(card); Body.Children.Add(row);
     }
 }
 
@@ -351,10 +399,18 @@ public sealed class StoragePage : WorkflowPage
     protected override async Task Reload()
     {
         var generation = BeginRead(); var root = Session.Require();
-        var plans = await Runner.Quiet(Pane, () => Storage.List(root));
-        if (plans == null || !Current(generation)) return;
         Body.Children.Clear();
-        Text($"{plans.Count} worktrees · {plans.Count(p => p.Ready)} can be archived");
+        Text("Review worktree sizes, archive eligibility, and retained temporary data.");
+        Link("View retained shelves", "\uE7B8", () => new ShelfPage(), "shelves");
+        Link("View recovery checkpoints", "\uE81C", () => new ActivityPage(), "activity");
+        var loading = ReadNotice("Scanning worktrees and measuring files. Large folders or another repository operation can take time. You can keep browsing.", "StorageLoading");
+        var plans = await Runner.Quiet(Pane, () => Storage.List(root));
+        if (!Current(generation)) return;
+        if (plans == null) { ReadFailed(loading, "Could not read storage information. Retry the scan or open the error log for details."); return; }
+        Body.Children.Clear();
+        var summary = new TextBlock { Text = $"{plans.Count} worktrees · {plans.Count(p => p.Ready)} can be archived" };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(summary, "StorageSummary");
+        Body.Children.Add(summary);
         Details("How storage is measured", ["Logical sizes exclude links. Physical space recovered is unknown because shared blocks may remain in use.", "Archive retains a local commit checkpoint; it is not an off-machine backup."]);
         Link("View retained shelves", "\uE7B8", () => new ShelfPage(), "shelves");
         Link("View recovery checkpoints", "\uE81C", () => new ActivityPage(), "activity");
@@ -368,11 +424,18 @@ public sealed class StoragePage : WorkflowPage
             var archiveStart = Body.Children.Count;
             Text("Remove exactly " + plan.Path + " and preserve commit " + plan.Head + " as an Activity checkpoint.");
             foreach (var blocker in plan.Blockers) Text(blocker);
-            Action("Archive and remove this worktree", () => Execute("Archive branch", () => Storage.Archive(root, plan)), enabled: plan.Ready, mutates: true, glyph: "\uE74D");
+            Action("Archive and remove this worktree", async () => {
+                if (await Dialogs.Confirm(this, "Archive this worktree?", $"This will:\n• Preserve commit {plan.Head} as an Activity checkpoint.\n• Remove branch {plan.Branch} and its worktree at {plan.Path}.\n• Recheck eligibility before removal.\n\nThe checkpoint stays on this machine; no backup is published.", "Archive worktree"))
+                    await Execute("Archive branch", () => Storage.Archive(root, plan));
+            }, enabled: plan.Ready, mutates: true, glyph: "\uE74D");
             CollapseActions(archiveStart, "Archive options · " + plan.Branch);
         }
+        var temporaryNotice = ReadNotice("Checking retained temporary data…", "StorageTemporaryLoading");
         var temporary = await Runner.Quiet(Pane, () => Storage.TemporaryData(root));
         if (!Current(generation)) return;
+        if (temporary == null) { ReadFailed(temporaryNotice, "Worktrees were loaded, but temporary data could not be read."); return; }
+        Body.Children.Remove(temporaryNotice);
+        if (temporary.Count == 0) Text("No retained temporary directories.");
         if (temporary != null)
             foreach (var item in temporary)
             {
@@ -382,7 +445,10 @@ public sealed class StoragePage : WorkflowPage
                 var cleanupStart = Body.Children.Count;
                 Text(item.Path);
                 foreach (var blocker in item.Blockers) Text(blocker);
-                Action("Remove this temporary directory", () => Execute("Remove temporary data", () => Storage.CleanTemporaryData(root, item)), enabled: item.Blockers.Count == 0, mutates: true, glyph: "\uE74D");
+                Action("Remove this temporary directory", async () => {
+                    if (await Dialogs.Confirm(this, "Remove temporary data?", $"This will:\n• Recheck that these files are unchanged and eligible for cleanup.\n• Delete {item.Path}.\n• Record the cleanup in Activity.\n\nLogical size: {item.LogicalBytes:N0} bytes. Physical space recovered is unknown.", "Remove directory"))
+                        await Execute("Remove temporary data", () => Storage.CleanTemporaryData(root, item));
+                }, enabled: item.Blockers.Count == 0, mutates: true, glyph: "\uE74D");
                 CollapseActions(cleanupStart, "Cleanup options · " + Path.GetFileName(item.Path));
             }
         Action("Refresh", Reload, glyph: "\uE72C");

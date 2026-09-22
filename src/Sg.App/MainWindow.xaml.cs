@@ -44,8 +44,6 @@ public sealed partial class MainWindow : Window
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _monitor;
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _updates;
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _backup;
-    /// <summary>One backup a few seconds after the last of a run of changes, rather than one per change.</summary>
-    readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _backupSoon;
     readonly UiRefresh _taskRefresh;
     bool _backingUp;
     /// <summary>Names a backup conflict or a newer-remote was already toasted for: a lasting state is said once, not every timer tick.</summary>
@@ -81,10 +79,6 @@ public sealed partial class MainWindow : Window
         _backup = DispatcherQueue.CreateTimer();
         _backup.Tick += (_, _) => _ = BackupTickAsync();
         ArmBackup();
-        _backupSoon = DispatcherQueue.CreateTimer();
-        _backupSoon.Interval = TimeSpan.FromSeconds(8);
-        _backupSoon.IsRepeating = false;
-        _backupSoon.Tick += (_, _) => _ = BackupAsync(quiet: true);
         Nav.Loaded += (_, _) => DispatcherQueue.TryEnqueue(EnglishChrome);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = RefreshAllAsync());
         Shortcuts.Add(this, VirtualKey.K, VirtualKeyModifiers.Control, () => _ = QuickJump.ShowAsync(this, JumpEntries()));
@@ -93,7 +87,7 @@ public sealed partial class MainWindow : Window
         // Opening or closing the pane swaps which of the two unread markers is on show.
         Nav.PaneOpened += (_, _) => UpdateMonitorBadge();
         Nav.PaneClosed += (_, _) => UpdateMonitorBadge();
-        Closed += (_, _) => { _monitor.Stop(); _updates.Stop(); _backup.Stop(); _backupSoon.Stop(); MonitorService.Changed -= UpdateMonitorBadge; Session.Tasks.Changed -= TasksChanged; };
+        Closed += (_, _) => { _monitor.Stop(); _updates.Stop(); _backup.Stop(); MonitorService.Changed -= UpdateMonitorBadge; Session.Tasks.Changed -= TasksChanged; };
         UpdateMonitorBadge();
         Updates.Sweep();
         ShowOverview((CheckoutRow?)null);
@@ -297,18 +291,6 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// A backup a few seconds from now, for the moments a branch just changed: coming back from a commit
-    /// page, a shelve, a rebase. Several in a row become one. Nothing when the timer is off: that is the
-    /// setting for "only when I press it".
-    /// </summary>
-    internal void BackupSoon()
-    {
-        if (Session.Root == null || !Backup.Configured(Session.Root) || Session.Settings.BackupMinutes <= 0) return;
-        _backupSoon.Stop();
-        _backupSoon.Start();
-    }
-
-    /// <summary>
     /// Every branch, the uncommitted changes and the shelves, to the backup repository. Quiet is the
     /// timer: a line in the log when something went, a toast when something was refused. Loud is a
     /// button: the strip shows the run.
@@ -382,7 +364,6 @@ public sealed partial class MainWindow : Window
         {
             Pane.Append(TaskResults.Describe(r).Detail);
             if (r.Waiting) Host.Go(() => new ConflictPage(r.Path) { Checkout = r.Checkout, Branch = r.Branch }, "resolve:" + r.Path);
-            BackupSoon();
         }
         await RefreshAsync();
     }

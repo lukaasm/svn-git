@@ -350,8 +350,6 @@ public sealed partial class BackupPage : SgPage
         ResultBar.Message = outcome.Detail;
         SetResumeAction(r);
         ResultBar.IsOpen = true;
-        // The report still reads "behind" until the next backup says otherwise, and the timer sends one soon.
-        if (Host?.Window is MainWindow main) main.BackupSoon();
         await LoadAsync();
     }
 

@@ -24,6 +24,7 @@ public sealed class SgConfig
     /// Code the way Resolver.DefaultCommand says.
     /// </summary>
     public string? ResolveCommand { get; set; }
+    public List<ReviewCheckConfig> ReviewChecks { get; set; } = new();
     public List<CheckoutConfig> Checkouts { get; set; } = new();
     /// <summary>Where the branches, the uncommitted changes and the shelves are copied to, as thin histories. Null when nowhere.</summary>
     public BackupConfig? Backup { get; set; }

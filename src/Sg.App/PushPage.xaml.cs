@@ -9,6 +9,7 @@ namespace Sg.App;
 /// <summary>Review what leaves the machine, then push. One SVN commit per working copy.</summary>
 public sealed partial class PushPage : SgPage
 {
+    void ReviewReadiness_Click(object sender, RoutedEventArgs e) => Go(() => new ReviewPage(_worktree), "review:" + _worktree);
     readonly string _worktree;
     readonly ListFilter _filter;
     bool _canPush;
@@ -89,8 +90,10 @@ public sealed partial class PushPage : SgPage
         // Into a local, and published only once it is known to be both current and real. Assigned straight
         // into the field, a read that failed emptied it under a screen still showing a full preview, and an
         // older read that landed late left the field describing something the screen no longer showed.
-        var read = await Runner.Quiet(Pane, () => Push.Preview(root, _worktree, scope));
+        var bundle = await Runner.Quiet(Pane, () => new { Preview = Push.Preview(root, _worktree, scope), Readiness = Review.Status(root, _worktree) });
+        var read = bundle?.Preview;
         if (gen != _generation) return;
+        ReadinessButton.Content = "Full branch readiness: " + (bundle?.Readiness ?? "unavailable");
         CommitsSkeleton.Hide();
         FilesSkeleton.Hide();
         if (read == null)

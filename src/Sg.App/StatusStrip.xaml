@@ -13,7 +13,7 @@
                 ToolTipService.ToolTip="Stop this operation. The running git or svn command is ended; nothing half written is left behind.">
             <StackPanel Orientation="Horizontal" Spacing="6">
                 <FontIcon Glyph="&#xE711;" FontSize="12" />
-                <TextBlock Text="Cancel" />
+                <TextBlock x:Name="CancelText" Text="Cancel" />
             </StackPanel>
         </Button>
         <ProgressBar x:Name="Bar" Grid.Row="1" Grid.ColumnSpan="2" Visibility="Collapsed" Margin="0,6,0,0" />

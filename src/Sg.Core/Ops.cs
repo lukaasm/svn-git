@@ -82,7 +82,8 @@ public sealed class WorktreeStatus
 
     /// <summary>Something is half done in this worktree, whichever of the two it is.</summary>
     public bool BackupFinalizing;
-    public bool RebaseInProgress => Stopped != Replay.None || BackupFinalizing;
+    public bool OperationPending;
+    public bool RebaseInProgress => Stopped != Replay.None || BackupFinalizing || OperationPending;
 
     public int Conflicts;
     public bool Dirty;
@@ -973,7 +974,7 @@ public static class Ops
 
     // ---- rebase ----
 
-    public static RebaseResult Rebase(SgRoot root, string worktree, bool abortOnConflict = false)
+    public static RebaseResult Rebase(SgRoot root, string worktree, bool abortOnConflict = false, bool refreshShared = true)
     {
         using var operation = root.Lock();
         var git = root.Git;
@@ -993,7 +994,7 @@ public static class Ops
         {
             res.Ok = true;
             res.Ahead = git.CountCommits(snapRef, "refs/heads/" + branch);
-            res.Refreshed = RefreshShared(root, co, worktree, branch);
+            if (refreshShared) res.Refreshed = RefreshShared(root, co, worktree, branch);
             return res;
         }
         if (git.RebaseInProgress(worktree))
@@ -1016,6 +1017,7 @@ public static class Ops
         if (wt == null && git.RefSha("refs/heads/" + branch) == null) throw new SgException("no such branch: " + branch);
         if (wt != null)
         {
+            if (Operations.Pending(root, wt.Path) != null) throw new SgException("An unfinished operation protects this worktree. Finish or close it in Activity first.");
             if (Directory.Exists(wt.Path))
             {
                 if (!force && !git.IsClean(wt.Path))
@@ -1113,6 +1115,7 @@ public static class Ops
         var backupRemote = git.BranchConfig(Backup.RemoteKey);
         foreach (var ws in res.Worktrees)
         {
+            ws.OperationPending = Operations.Pending(root, ws.Path) != null;
             ws.Shelves = shelves.Count(s => !s.IsCheckout && s.Branch.Equals(ws.Branch, StringComparison.OrdinalIgnoreCase));
             ws.BackupFailed = backupFailed.GetValueOrDefault(ws.Branch);
             ws.BackupRemote = backupRemote.GetValueOrDefault(ws.Branch);

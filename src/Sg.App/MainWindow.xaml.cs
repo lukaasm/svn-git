@@ -154,6 +154,7 @@ public sealed partial class MainWindow : Window
         Nav.IsBackEnabled = Host.CanGoBack;
         ForwardButton.Visibility = Host.CanGoForward ? Visibility.Visible : Visibility.Collapsed;
         RefreshButton.Visibility = Session.Root != null ? Visibility.Visible : Visibility.Collapsed;
+        ActivityItem.IsEnabled = StorageItem.IsEnabled = Session.Root != null;
 
         // The pane highlights the checkout the page is about, the monitor, or the settings.
         var key = Host.CurrentKey ?? "";
@@ -161,6 +162,8 @@ public sealed partial class MainWindow : Window
         {
             "settings" => Nav.SettingsItem,
             "monitor" => MonitorItem,
+            "activity" => ActivityItem,
+            "storage" => StorageItem,
             _ when page?.Checkout != null => Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (i.Tag as CheckoutRow)?.Name == page.Checkout),
             _ => null,
         };
@@ -591,6 +594,8 @@ public sealed partial class MainWindow : Window
         var root = Session.Root;
         _status = await Runner.Quiet(Pane, () => Ops.Status(root, checkSvn: false));
         if (_status == null || generation != _generation) return;
+        var attention = _status.Worktrees.Count(x => x.OperationPending || x.RebaseInProgress);
+        ActivityItem.Content = attention > 0 ? $"Activity ({attention})" : "Activity";
 
         var wanted = _current?.Name
                      ?? (_startPath != null ? root.CheckoutContaining(_startPath)?.Name : null)
@@ -726,6 +731,8 @@ public sealed partial class MainWindow : Window
     {
         if (_restoringSelection || _syncingPane) return;
         if (args.IsSettingsSelected) { ShowSettings(); return; }
+        if (Session.Root != null && ReferenceEquals(args.SelectedItem, ActivityItem)) { Host.Go(() => new ActivityPage(), "activity"); return; }
+        if (Session.Root != null && ReferenceEquals(args.SelectedItem, StorageItem)) { Host.Go(() => new StoragePage(), "storage"); return; }
         if (ReferenceEquals(args.SelectedItem, MonitorItem)) { ShowMonitor(null); return; }
         if ((args.SelectedItem as NavigationViewItem)?.Tag is not CheckoutRow row) return;
         _current = row;
@@ -749,7 +756,7 @@ public sealed partial class MainWindow : Window
                 var wt = Session.WorktreeAt(path);
                 if (wt != null)
                 {
-                    if (!Conflicts.HasPending(root.Git, wt.Path)) await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, wt.Path));
+                    if (!Conflicts.HasPending(root.Git, wt.Path)) Host.Go(() => new UpdateBranchPage(wt.Path), "update-branch:" + wt.Path);
                     if (Conflicts.HasPending(root.Git, wt.Path)) Host.Go(() => new ConflictPage(wt.Path), "resolve:" + wt.Path);
                 }
                 else Pane.Append(path + " is not inside a worktree");

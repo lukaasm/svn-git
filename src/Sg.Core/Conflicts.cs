@@ -10,6 +10,8 @@ public sealed class ConflictState
     public string Branch = "";
     public string Checkout = "";
     public string? BackupName;
+    public List<string> Explanations = new();
+    public List<string> ResolutionReviewFiles = new();
 
     /// <summary>What stopped. None means the worktree is in a normal state and there is nothing to finish.</summary>
     public Replay Kind;
@@ -68,6 +70,7 @@ public sealed class ForcedApply
 public sealed class ResolveResult
 {
     public RestoreResult? Backup;
+    public OperationRecord? Operation;
     public Replay Kind;
     public string Branch = "";
     public string Checkout = "";
@@ -149,6 +152,14 @@ public static class Conflicts
             Of = at.Of,
             Stopped = at.Subject,
         };
+        foreach (var entry in git.StatusEntries(worktree, untracked: true).Where(x => state.Conflicted.Contains(x.Path)))
+        {
+            var code = entry.X + entry.Y;
+            var reason = code switch { "DU" => "deleted on the current base; changed by the replayed commit", "UD" => "changed on the current base; deleted by the replayed commit", "AA" => "added independently on both sides", "UU" => "both sides changed this file", _ => "Git could not combine the two versions (" + code + ")" };
+            state.Explanations.Add(entry.Path + ": " + reason);
+        }
+        if (state.InProgress)
+            state.ResolutionReviewFiles = git.Out(worktree, "diff", "--cached", "--name-only").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
         state.Stuck = state.Kind != Replay.None && state.Conflicted.Count == 0 && git.NothingStaged(worktree);
         // Only then, and only because a stuck step is the one place the worktree's own changes are the
         // thing to look at: everywhere else they are noise, and a replay leaves the worktree clean.
@@ -372,11 +383,12 @@ public static class Conflicts
 
         r.EnsureOk();
         res.Backup = Backup.FinishReplay(root, worktree);
+        res.Operation = Operations.AfterReplay(root, worktree);
         res.Ok = true;
         res.Ahead = git.CountCommits(root.SnapshotRef(co), "refs/heads/" + branch);
         // Only a rebase moves the branch onto a newer snapshot, so only a rebase leaves the shared
         // folders behind. An import lands on the snapshot its worktree was already built against.
-        if (kind == Replay.Rebase) res.Refreshed = Ops.RefreshShared(root, co, worktree, branch);
+        if (kind == Replay.Rebase && res.Operation?.Kind != "Update from SVN") res.Refreshed = Ops.RefreshShared(root, co, worktree, branch);
         return res;
     }
 }

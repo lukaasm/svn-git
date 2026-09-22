@@ -1,5 +1,12 @@
 # UI polish backlog
 
+## 2026-09-17 workflow delivery
+
+Added guided branch updates, Activity, version-bound review, backup receipts/rehearsals, and conservative Storage actions; see `FEATURE-PROPOSAL.md` for exact boundaries. Guided updates support Ctrl+Enter and a stop-after-current-step action. `DiffView.ShowFileAsync` now rejects older requests even when the same row remains selected. Resolver patch reads also guard their page generation, and staged resolutions have an explicit review action.
+
+The historical audit below is retained as a backlog, not a statement that every older item has been implemented. Interactive QA of the new native pages remains unverified because Computer Use app approval timed out.
+
+
 What the 2026-09-08 audit found and this pass did not fix. 329 agents read every page and every
 shared widget, then a second agent tried to refute each finding; 124 survived. All 43 marked high
 were fixed, bar the two named at the end. These are the 81 that are left.

@@ -37,6 +37,7 @@ static class Cli
                 "sync" => Sync(a, log),
                 "branch" => Branch(a, log),
                 "rebase" => Rebase(a, log),
+                "branch-update" or "activity" or "review" or "storage" or "handoff" => Workflow(a, log),
                 "resolve" => ResolveCmd(a, log),
                 "push" => PushCmd(a, log),
                 "rm" => Rm(a, log),
@@ -65,6 +66,63 @@ static class Cli
         }
     }
 
+    static int Workflow(Args a, ILog log)
+    {
+        var root = FindRoot(a, log);
+        var action = a.Pos.FirstOrDefault() ?? "status";
+        var path = Environment.CurrentDirectory;
+        switch (a.Command)
+        {
+            case "branch-update":
+                var plan = Operations.Plan(root, path);
+                if (a.Has("--yes"))
+                {
+                    var updated = Operations.Run(root, plan); Json(updated);
+                    return updated.Phase == OperationPhase.Completed ? 0 : 10;
+                }
+                Json(plan);
+                break;
+            case "activity":
+                if (action == "resume") Json(Operations.Resume(root, a.Arg(1, "operation id")));
+                else if (action == "close") Json(Operations.FinishReview(root, a.Arg(1, "operation id")));
+                else if (action == "recover") Console.WriteLine(Operations.RestoreCheckpoint(root, a.Arg(1, "operation id")));
+                else Json(Operations.List(root));
+                break;
+            case "review":
+                if (action == "run")
+                {
+                    var reviewed = Review.RunChecks(root, path); Json(reviewed);
+                    return reviewed.Checks.Any(x => x.ExitCode != 0) ? 10 : 0;
+                }
+                else if (action == "ready") Json(Review.MarkReady(root, path));
+                else Json(new { Status = Review.Status(root, path), Record = Review.Read(root, path) });
+                break;
+            case "storage":
+                if (action == "archive")
+                {
+                    var archive = Storage.Plan(root, a.Arg(1, "branch"));
+                    if (a.Has("--yes")) Console.WriteLine(Storage.Archive(root, archive)); else Json(archive);
+                }
+                else Json(Storage.List(root));
+                break;
+            case "handoff":
+                if (action == "preview")
+                {
+                    var receipt = Backup.ReadReceipt(a.Arg(1, "receipt file"));
+                    Json(new { Receipt = receipt, Issues = Backup.ValidateReceipt(root, receipt) });
+                }
+                else if (action == "test") Json(Backup.TestRestore(root, Backup.ReadReceipt(a.Arg(1, "receipt file"))));
+                else
+                {
+                    var receipt = Backup.Coverage(root, path);
+                    if (a.Get("-o", "--out") is { } file) Backup.WriteReceipt(receipt, file);
+                    Json(receipt);
+                }
+                break;
+        }
+        return 0;
+    }
+
     static void Help()
     {
         Console.WriteLine("""
@@ -79,6 +137,12 @@ static class Cli
             sg sync [<checkout>] [--ignores]          svn update, new snapshot, move svn/<checkout>
             sg branch <name> [--from <checkout>]      new branch and worktree from svn/<checkout>
                  [--without p]... [--minimal] [--shared junction|clone|copy]
+            sg branch-update [--yes]                 preview/save edits, sync SVN, replay, recover edits
+            sg activity [resume|close|recover <id>]  durable operations and separate recovery branches
+            sg review [status|run|ready]              version-bound checks and readiness; configure reviewChecks in .sg/sg.json
+            sg storage [archive <branch> [--yes]]    conservative archive preview; retained commits appear in Activity
+            sg handoff [coverage [-o file]|preview <file>|test <file>]
+                                                      check backup refs; test restores into a separate branch
             sg rebase                                 rebase this worktree's branch on the latest snapshot
             sg resolve [status]                       what stopped here - a rebase or an import - and what is in conflict
             sg resolve ours|theirs [<path>...]        keep one whole version, of the named files or of every conflict

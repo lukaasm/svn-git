@@ -6,7 +6,10 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Above both states: a push that just went through empties the page, and its result must outlive that. -->
-        <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+        <StackPanel Grid.Row="0" Spacing="6">
+            <Button x:Name="ReadinessButton" Content="Review readiness for this version" Click="ReviewReadiness_Click" />
+            <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+        </StackPanel>
 
         <!-- A branch that equals its snapshot has no commits to list, no files, no message worth writing:
              the page is the one sentence, and the two buttons that still mean something. -->

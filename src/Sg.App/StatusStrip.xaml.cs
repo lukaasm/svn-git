@@ -15,6 +15,13 @@ public sealed partial class StatusStrip : UserControl
         InitializeComponent();
     }
 
+    public void StopAtBoundary(bool enabled) => Ui(() =>
+    {
+        CancelText.Text = enabled ? "Stop after current step" : "Cancel";
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CancelButton, CancelText.Text);
+        ToolTipService.SetToolTip(CancelButton, enabled ? "Finish the current durable step, then pause. Resume in Activity." : "Request cancellation of the running command.");
+    });
+
     void Ui(Action action)
     {
         if (DispatcherQueue.HasThreadAccess) action();
@@ -74,7 +81,7 @@ public sealed partial class StatusStrip : UserControl
     void Cancel_Click(object sender, RoutedEventArgs e)
     {
         CancelButton.IsEnabled = false;
-        StatusText.Text = "cancelling...";
+        StatusText.Text = CancelText.Text == "Cancel" ? "cancelling..." : "Will stop after the current step...";
         try { _cancel?.Cancel(); }
         catch (ObjectDisposedException) { /* it already finished */ }
     }

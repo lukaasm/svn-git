@@ -151,6 +151,7 @@ public sealed partial class DiffView : UserControl
     /// <summary>The window is reading the two sides. The bar under the header runs until Show arrives.</summary>
     public void BeginLoading(string? title = null)
     {
+        ++_fileRequest;
         if (title != null) TitleText.Text = title;
         _clock.Restart();
         SetLoading(true);
@@ -168,6 +169,7 @@ public sealed partial class DiffView : UserControl
     /// </summary>
     public void Show(string original, string modified, string language, string unifiedFallback, string? title = null, bool editable = false)
     {
+        ++_fileRequest;
         TitleText.Text = title ?? "";
         _textView = false;
         _editable = editable;
@@ -186,15 +188,17 @@ public sealed partial class DiffView : UserControl
     public readonly record struct Reads(Func<string> Original, Func<string> Modified, Func<string>? Unified = null);
 
     /// <summary>The same as below, with the reads run in parallel.</summary>
+    int _fileRequest;
     public async Task<Sides?> ShowFileAsync(string path, string title, Reads reads,
         Func<bool> stillWanted, bool editable = false, string binaryNote = "binary file: ")
     {
         BeginLoading(title);
+        var request = ++_fileRequest;
         var original = Task.Run(reads.Original);
         var modified = Task.Run(reads.Modified);
         var unified = reads.Unified == null ? Task.FromResult("") : Task.Run(reads.Unified);
         await Task.WhenAll(original, modified, unified);
-        if (!stillWanted()) return null;
+        if (request != _fileRequest || !stillWanted()) return null;
         var sides = new Sides(original.Result, modified.Result, unified.Result);
         if (Session.LooksBinary(sides.Original) || Session.LooksBinary(sides.Modified))
         {
@@ -215,8 +219,9 @@ public sealed partial class DiffView : UserControl
         Func<bool> stillWanted, bool editable = false, string binaryNote = "binary file: ")
     {
         BeginLoading(title);
+        var request = ++_fileRequest;
         var sides = await Task.Run(read);
-        if (!stillWanted()) return null;
+        if (request != _fileRequest || !stillWanted()) return null;
         if (Session.LooksBinary(sides.Original) || Session.LooksBinary(sides.Modified))
         {
             ShowText(binaryNote + path, title);
@@ -228,6 +233,7 @@ public sealed partial class DiffView : UserControl
 
     public void ShowText(string text, string? title = null)
     {
+        ++_fileRequest;
         TitleText.Text = title ?? "";
         _textView = true;
         _editable = false;

@@ -25,7 +25,12 @@ public static class Program
     {
         try
         {
+#if DEBUG
+            // A local development build must not redirect into the installed release being used for real work.
+            var main = AppInstance.FindOrRegisterForKey("sg-ui-debug-main");
+#else
             var main = AppInstance.FindOrRegisterForKey("sg-ui-main");
+#endif
             if (main.IsCurrent) return true;
             var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
             Task.Run(() => main.RedirectActivationToAsync(activation).AsTask()).Wait(TimeSpan.FromSeconds(10));

@@ -520,6 +520,7 @@ public static class Export
             // The whole series in one call. git splits it into a folder of its own before it applies
             // the first one, so the temp files below can go while the run is still stopped part way
             // through, and carrying on picks the rest of them up from there.
+            Operations.TrackReplay(root, "Import export file", made.Path, "Source: " + Path.GetFileName(file));
             var r = git.ApplyMailbox(made.Path, patches);
             res.Applied = git.CountCommits(root.SnapshotRef(co), "refs/heads/" + name);
             if (git.ReplayInProgress(made.Path) == Replay.Import)
@@ -534,6 +535,7 @@ public static class Export
                 return res;
             }
             r.EnsureOk();
+            Operations.AfterReplay(root, made.Path);
             return res;
         }
         finally { Sweep(temp); }

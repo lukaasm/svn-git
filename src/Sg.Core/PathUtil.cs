@@ -84,6 +84,10 @@ public static class PathUtil
         return Rel(r);
     }
 
-    public static bool IsReparsePoint(string dir) =>
-        Directory.Exists(dir) && new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.ReparsePoint);
+    public static bool IsReparsePoint(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
 }

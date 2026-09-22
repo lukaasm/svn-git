@@ -169,6 +169,7 @@ public sealed partial class CheckoutPage : SgPage
                 Missing = w.Missing,
                 Stopped = w.Stopped,
                 BackupFinalizing = w.BackupFinalizing,
+                OperationPending = w.OperationPending,
                 Conflicts = w.Conflicts,
                 Ahead = w.Ahead,
                 BaseRevision = co.Revision,
@@ -563,7 +564,7 @@ public sealed partial class CheckoutPage : SgPage
         Go(() => new PushPage(row.Path) { Checkout = row.Base, Branch = row.Branch }, "push:" + row.Path);
 
     void OpenResolver(WorktreeRow row) =>
-        Go(() => new ConflictPage(row.Path) { Checkout = row.Base, Branch = row.Branch }, "resolve:" + row.Path);
+        Go(() => row.OperationPending && row.Stopped == Replay.None && !row.BackupFinalizing ? (SgPage)new UpdateBranchPage(row.Path) : new ConflictPage(row.Path) { Checkout = row.Base, Branch = row.Branch }, "resolve:" + row.Path);
 
     void Commit_Click(object sender, RoutedEventArgs e)
     {
@@ -747,27 +748,19 @@ public sealed partial class CheckoutPage : SgPage
         GoThen(() => new ImportPage(file) { Checkout = _current?.Name }, "import:" + file, () => _ = _owner.RefreshAsync());
     }
 
-    async Task RebaseAsync(WorktreeRow row)
+    Task RebaseAsync(WorktreeRow row)
     {
-        var root = Session.Require();
-        var r = await Reports.Run(OpReport, Pane, "rebase " + row.Branch, () => Ops.Rebase(root, row.Path), (card, x) => card.Show(
-            x.Ok ? ChipSeverity.Success : ChipSeverity.Caution, x.Ok ? "" : "",
-            x.Ok ? $"{x.Branch} is on the latest svn/{x.Checkout}, {x.Ahead} commit(s) ahead" : $"The rebase of {x.Branch} stopped on conflicts",
-            x.Ok ? (x.Refreshed.Count > 0 ? "Shared folders refreshed from the checkout: " + string.Join(", ", x.Refreshed) : "")
-                 : "The resolver is open: pick a version for each file, then carry on. The branch stays half moved until then."));
-        if (r == null) { await _owner.RefreshAsync(); return; }
-        if (r.Ok)
-        {
-            _owner.BackupSoon();
-            Pane.Append($"{r.Branch} is on the latest svn/{r.Checkout}, {r.Ahead} commit(s) ahead");
-            if (r.Refreshed.Count > 0) Pane.Append("shared folders refreshed from the checkout: " + string.Join(", ", r.Refreshed));
-        }
-        else
-        {
-            Pane.Append("it stopped on conflicts, opening the resolver");
-            OpenResolver(row);
-            return;   // the page refreshes when the resolver is left
-        }
-        await _owner.RefreshAsync();
+        GoThen(() => new UpdateBranchPage(row.Path), "update-branch:" + row.Path, () => _ = _owner.RefreshAsync());
+        return Task.CompletedTask;
+    }
+    void Review_Click(object sender, RoutedEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row != null) Go(() => new ReviewPage(row.Path), "review:" + row.Path);
+    }
+    void Coverage_Click(object sender, RoutedEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row != null) Go(() => new CoveragePage(row.Path), "coverage:" + row.Path);
     }
 }

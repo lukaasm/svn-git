@@ -277,7 +277,9 @@
                                             <FontIcon Glyph="&#xE7B8;" />
                                         </controls:SettingsCard.HeaderIcon>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Log" Description="The commits on the branch and the snapshots under it, with files and diffs."
+                                    <controls:SettingsCard Header="Review readiness" Description="Review a specific branch version and run local checks." IsClickEnabled="True" Tag="{x:Bind}" Click="Review_Click" />
+                                      <controls:SettingsCard Header="Backup coverage" Description="Check included work, test restoration, and create a handoff receipt." IsClickEnabled="True" Tag="{x:Bind}" Click="Coverage_Click" />
+                                      <controls:SettingsCard Header="Log" Description="The commits on the branch and the snapshots under it, with files and diffs."
                                                            IsClickEnabled="True" Tag="{x:Bind}" Click="Log_Click">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE81C;" />
@@ -294,12 +296,12 @@
                                          else: six left edges down one column, each a few pixels off the last. The
                                          width is the widest word here with room around it, and MinWidth rather than
                                          Width so a longer label or a larger font still fits rather than being cut. -->
-                                    <controls:SettingsCard Header="Rebase" Description="Put the branch on top of the latest snapshot. A conflict opens the resolver."
+                                    <controls:SettingsCard Header="Update from SVN" Description="Save local edits, sync SVN, replay commits, and recover edits."
                                                            Visibility="{x:Bind RebaseVisibility, Mode=OneWay}">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE8AB;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Rebase" Tag="{x:Bind}" Click="Rebase_Click" />
+                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Update from SVN" Tag="{x:Bind}" Click="Rebase_Click" />
                                     </controls:SettingsCard>
                                     <!-- Only while the last backup found the remote holding something this machine does not: the
                                          row is the way to take it, where the reader is, instead of a toast that points at another page. -->

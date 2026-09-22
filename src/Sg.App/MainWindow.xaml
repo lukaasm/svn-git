@@ -80,6 +80,8 @@
 
             <!-- Footer items sit directly above the Settings entry. -->
             <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="ActivityItem" Content="Activity" />
+                <NavigationViewItem x:Name="StorageItem" Content="Storage" />
                 <NavigationViewItem x:Name="MonitorItem"
                                     AutomationProperties.Name="Project monitor"
                                     ToolTipService.ToolTip="Project monitor: watch any SVN URLs in categories, get a toast on new commits, and preview them.">

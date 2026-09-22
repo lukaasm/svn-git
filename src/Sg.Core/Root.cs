@@ -188,16 +188,7 @@ public sealed class SgRoot
     public string NewStoreTempDir()
     {
         var tmp = Path.Combine(StorePath, "tmp");
-        // What a killed run left behind. This folder is inside the user's store, so nothing may pile up
-        // in it: an hour is long enough that no run still using one is swept out from under itself.
-        try
-        {
-            if (Directory.Exists(tmp))
-                foreach (var old in Directory.EnumerateDirectories(tmp))
-                    if (Directory.GetLastWriteTimeUtc(old) < DateTime.UtcNow.AddHours(-1)) SweepTempDir(old);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* litter is not worth failing over */ }
-
+        // Interrupted data is inspected and removed explicitly from Storage. Age alone does not establish ownership.
         var d = Path.Combine(tmp, Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(d);
         return d;

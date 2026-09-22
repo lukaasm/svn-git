@@ -239,7 +239,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public Replay Stopped { get; set; }
 
     public bool BackupFinalizing { get; set; }
-    public bool RebaseInProgress => Stopped != Replay.None || BackupFinalizing;
+    public bool OperationPending { get; set; }
+    public bool RebaseInProgress => Stopped != Replay.None || BackupFinalizing || OperationPending;
 
     /// <summary>"rebase" or "import", for the sentences that have to name it. Empty when nothing stopped.</summary>
     public string StoppedVerb => Sg.Core.Conflicts.Verb(Stopped);
@@ -380,6 +381,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         Missing = n.Missing;
         Stopped = n.Stopped;
         BackupFinalizing = n.BackupFinalizing;
+        OperationPending = n.OperationPending;
         Conflicts = n.Conflicts;
         Ahead = n.Ahead;
         BaseRevision = n.BaseRevision;
@@ -411,7 +413,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     public bool SameAs(WorktreeRow o) =>
         Branch == o.Branch && Path == o.Path && Base == o.Base && Detail == o.Detail
         && Dirty == o.Dirty && DirtyFiles == o.DirtyFiles && Behind == o.Behind && Pending == o.Pending && Missing == o.Missing
-        && BackupFinalizing == o.BackupFinalizing && Stopped == o.Stopped && Conflicts == o.Conflicts && Ahead == o.Ahead
+        && OperationPending == o.OperationPending && BackupFinalizing == o.BackupFinalizing && Stopped == o.Stopped && Conflicts == o.Conflicts && Ahead == o.Ahead
         && BaseRevision == o.BaseRevision && Shelves == o.Shelves
         && NotBackedUp == o.NotBackedUp && BackedUp == o.BackedUp && BackupOn == o.BackupOn
         && BackupFailed == o.BackupFailed && BackupRemote == o.BackupRemote && BackupExcluded == o.BackupExcluded;
@@ -437,6 +439,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// </summary>
     public string NextAction =>
         Missing ? "The folder is gone. Remove the branch, or put the folder back."
+        : OperationPending ? "An update is unfinished. Resume it or review its saved edits."
         : BackupFinalizing ? "The commits are applied. Resume to recover saved local edits."
         : RebaseInProgress ? (Conflicts == 0
             ? $"The {StoppedVerb} is paused with no files in conflict. Resume to review the next step."
@@ -444,7 +447,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
             ? $"The {StoppedVerb} stopped on 1 file. Resolve it to continue."
             : $"The {StoppedVerb} stopped on {Conflicts} files. Resolve them to continue.")
         : Pending ? "A push stopped half way. Fix the cause and push again."
-        : Dirty && Behind > 0 ? $"Commit or shelve the {DirtyFilesText}, then rebase onto the newer snapshot."
+        : Dirty && Behind > 0 ? $"Update from SVN will save and recover the {DirtyFilesText}."
         : Dirty ? $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} not committed. Commit them, or discard them."
         : Behind > 0 ? (Behind == 1
             ? "1 snapshot behind. Rebase onto the current SVN snapshot."
@@ -480,7 +483,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         1 => WorktreeAction.Remove,
         2 => WorktreeAction.Resolve,
         3 or 7 => WorktreeAction.Push,
-        4 or 5 => WorktreeAction.Commit,
+        4 => WorktreeAction.Rebase,
+        5 => WorktreeAction.Commit,
         6 => WorktreeAction.Rebase,
         _ => WorktreeAction.Log,
     };
@@ -491,7 +495,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         WorktreeAction.Resolve => Conflicts > 0 ? $"Resolve {Conflicts} file(s)" : "Resume operation",
         WorktreeAction.Push => "Push to SVN",
         WorktreeAction.Commit => "Commit",
-        WorktreeAction.Rebase => "Rebase",
+        WorktreeAction.Rebase => "Update from SVN",
         _ => "Log",
     };
 

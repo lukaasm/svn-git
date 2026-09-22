@@ -59,6 +59,9 @@ public sealed partial class ConflictPage : SgPage
         FilesSkeleton.Hide();
         if (state == null || gen != _generation) return;
         _state = state;
+        ReviewResultButton.Visibility = state.ResolutionReviewFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        Explanation.Text = string.Join("\n", state.Explanations);
+        if (state.ResolutionReviewFiles.Count > 0) Explanation.Text += "\nStaged results to review (including any manual, remembered, or agent edits): " + string.Join(", ", state.ResolutionReviewFiles) + ". No conflict markers does not prove correctness.";
         Checkout ??= state.Checkout;
         Branch ??= state.Branch;
         Subtitle = state.BackupName != null ? $"{state.BackupName} from backup → {state.Branch}   {_worktree}" : state.Kind == Replay.Import
@@ -413,6 +416,18 @@ public sealed partial class ConflictPage : SgPage
         await AfterStep(r, verb);
     }, restoreEnabled: false);
 
+    async void ReviewResult_Click(object sender, RoutedEventArgs e)
+    {
+        var root = Session.Require();
+        var generation = _generation;
+        var diff = await Runner.Quiet(Pane, () => root.Git.Out(_worktree, "diff", "--cached", "--no-ext-diff"));
+        if (diff == null || generation != _generation) return;
+        NoConflicts.Visibility = Filled.Visibility = Visibility.Collapsed;
+        PatchPreview.Visibility = Visibility.Visible;
+        PatchPreview.ShowText(diff, "Staged result — review before continuing");
+        InspectButton.Text = "Back to resolution";
+    }
+
     async void Inspect_Click(object sender, RoutedEventArgs e)
     {
         if (PatchPreview.Visibility == Visibility.Visible)
@@ -422,10 +437,11 @@ public sealed partial class ConflictPage : SgPage
             ShowEmpty(_filter.Count == 0);
             return;
         }
+        var generation = _generation;
         var patch = await Runner.Quiet(Pane, () => _state.Kind == Replay.Import
             ? Session.Require().Git.Ok(_worktree, "am", "--show-current-patch=diff").StdOut
             : Session.Require().Git.Ok(_worktree, "show", "--format=fuller", "--no-ext-diff", "REBASE_HEAD").StdOut);
-        if (patch == null) return;
+        if (patch == null || generation != _generation) return;
         NoConflicts.Visibility = Filled.Visibility = Visibility.Collapsed;
         PatchPreview.Visibility = Visibility.Visible;
         PatchPreview.ShowText(patch, "current patch");
@@ -488,6 +504,11 @@ public sealed partial class ConflictPage : SgPage
     async Task AfterStep(ResolveResult? r, string verb)
     {
         if (r == null) { await LoadAsync(); return; }
+        if (r.Operation is { Terminal: false })
+        {
+            Go(() => new UpdateBranchPage(_worktree), "update-branch:" + _worktree);
+            return;
+        }
         if (r.Ok)
         {
             StateBar.Severity = InfoBarSeverity.Success;

@@ -927,7 +927,7 @@ public static partial class Backup
     /// at, one at a time, keeping the ones that went in when one stops. The uncommitted changes come
     /// back through the shelf, and the branch's shelves are made again against the restored tip.
     /// </summary>
-    public static RestoreResult Restore(SgRoot root, string name, string? asBranch = null, string? intoCheckout = null, bool wip = false, bool force = false)
+    public static RestoreResult Restore(SgRoot root, string name, string? asBranch = null, string? intoCheckout = null, bool wip = false, bool force = false, IReadOnlyDictionary<string, string>? expectedRefs = null, bool rehearsal = false)
     {
         var cfg = Require(root);
         var git = root.Git;
@@ -938,6 +938,8 @@ public static partial class Backup
         var hasBranch = remote.ContainsKey(branchRef);
         var hasWip = remote.ContainsKey(wipRef);
         var hasEdits = remote.ContainsKey(editsRef);
+        if (expectedRefs != null && (hasWip != expectedRefs.ContainsKey(wipRef) || !hasBranch))
+            throw new SgException("Backup coverage changed. Refresh the receipt before restoring.");
         if (!hasBranch && !hasEdits) throw new SgException($"the backup holds nothing named {name}. sg backup list says what is there.");
         var res = new RestoreResult { Name = name };
         using var _ = root.Lock();
@@ -962,6 +964,15 @@ public static partial class Backup
         specs.AddRange(shelfRefs.Select(r => "+" + r + ":" + FetchedRef("shelf", Owned(cfg, r)!.Value.Name)));
         git.FetchRefs(cfg.Url, specs);
 
+        if (expectedRefs != null)
+            foreach (var pair in expectedRefs)
+            {
+                var owned = Owned(cfg, pair.Key) ?? throw new SgException("Receipt has an unrecognized ref.");
+                if (git.RefSha(FetchedRef(owned.Kind, owned.Name)) != pair.Value)
+                    throw new SgException("Backup changed during fetch. Refresh coverage before restoring.");
+                if (git.Out(null, "rev-list", "--objects", "--missing=print", pair.Value).Split('\n').Any(x => x.StartsWith('?')))
+                    throw new SgException("Recorded backup objects are incomplete.");
+            }
         var thinTip = git.RefSha(FetchedRef("branch", name))!;
         var chain = Thin.Chain(git, thinTip);
         if (chain.Count == 0 || chain[0].Kind != ThinKind.Marker) throw new SgException($"{name} on the remote is not an sg backup: it does not start with a marker.");
@@ -975,6 +986,8 @@ public static partial class Backup
         if (git.RefSha("refs/heads/" + target) != null)
         {
             if (!force) throw new SgException($"branch exists here: {target}. Restore it under another name with --name, or force to write over it.");
+            if (Operations.List(root).Any(x => !x.Terminal && x.Branch == target))
+                throw new SgException("An unfinished operation protects this branch. Finish or close it in Activity before replacing it.");
             // Keep the entire original worktree, including ignored and untracked files.
             // A failed replacement must leave an accessible recovery branch.
             var recovery = target + "-before-restore-" + Guid.NewGuid().ToString("N")[..8];
@@ -1009,7 +1022,7 @@ public static partial class Backup
         // and the commits are here. Pointing at them is exact; a replay would only be a copy.
         var markerSource = chain[0].Source;
         var lastSource = changes.Count > 0 ? changes[^1].Source : markerSource;
-        var relink = markerSource != null && lastSource != null && git.HasCommit(markerSource) && git.HasCommit(lastSource)
+        var relink = !rehearsal && markerSource != null && lastSource != null && git.HasCommit(markerSource) && git.HasCommit(lastSource)
                      && changes.All(c => c.Source != null && git.HasCommit(c.Source))
                      && git.IsAncestor(markerSource, lastSource) && git.IsAncestor(snapshot, lastSource) ;
 
@@ -1064,7 +1077,7 @@ public static partial class Backup
         {
             var id = Owned(cfg, r)!.Value.Name;
             var sha = git.RefSha(FetchedRef("shelf", id));
-            if (sha == null || here(id)) continue;
+            if (sha == null || (!rehearsal && here(id))) continue;
             var s = Shelf.Parse(id, sha, git.Body(sha));
             if (s.IsCheckout || !s.Branch.Equals(name, StringComparison.Ordinal)) continue;
             var under = git.ParentOf(sha);
@@ -1073,6 +1086,7 @@ public static partial class Backup
             var info = Shelf.Adopt(root, m.Tree, git.Body(sha), made.Path, tip, into, target);
             res.Shelves.Add(info.Id + (m.Clean ? "" : " (with conflict markers)"));
         }
+        Operations.Receipt(root, "Restore from backup", made.Path, ["Source branch: " + name, "Applied commits: " + res.Applied, res.WipWhy ?? (res.WipWritten ? "Local edits recovered" : "See shelves for preserved edits" )]);
         return res;
 
         bool here(string id) => git.RefSha(Shelf.RefPrefix + id) != null;

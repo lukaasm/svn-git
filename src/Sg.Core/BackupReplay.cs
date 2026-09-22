@@ -64,6 +64,7 @@ public static partial class Backup
             // Keep the original objects even if a background fetch replaces the fetched backup refs.
             git.UpdateRef("refs/sg/replay/" + pending.Token + "/branch", changes[^1].Sha);
             if (wip != null) git.UpdateRef("refs/sg/replay/" + pending.Token + "/wip", wip);
+            Operations.TrackReplay(root, "Get changes from backup", result.Path, "Incoming backup: " + result.Name);
             var run = git.ApplyMailbox(result.Path, patches);
             result.Applied = git.CountCommits(start, git.HeadSha(result.Path));
             result.Waiting = git.ReplayInProgress(result.Path) != Replay.None;
@@ -78,6 +79,7 @@ public static partial class Backup
             result.Stopped = null;
             result.Conflicted.Clear();
             ClearReplay(git, result.Path);
+            Operations.AfterReplay(root, result.Path);
         }
         finally
         {

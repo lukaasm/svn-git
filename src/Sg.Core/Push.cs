@@ -263,8 +263,10 @@ public static class Push
                 log.Info($"committing {g.Entries.Count} change(s) in {label} ({g.ReposRoot})" + (own.ContainsKey(g.Wc) ? ", under its own message" : ""));
                 try
                 {
+                    Operations.Receipt(root, "SVN publication started", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Outcome unknown until a revision receipt follows. Do not retry based solely on this record."], required: true);
                     Apply(root, co, g, b.Through, own.TryGetValue(g.Wc, out var mine) ? mine : b.Message);
                     g.State = "committed";
+                    Operations.Receipt(root, "SVN revision published", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Repository: " + g.ReposRoot, "Revision: " + g.Revision]);
                     log.Info($"  {label}: r{g.Revision}");
                 }
                 catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException)
@@ -313,6 +315,7 @@ public static class Push
             git.ResetHard(worktree, sha);
             result.BranchState = "pending commit " + sha[..10] + " holds what did not go";
         }
+        Operations.Receipt(root, "Push to SVN", worktree, result.Batches.SelectMany(x => x.Groups).Select(g => g.Wc + ": " + g.State + (g.Revision == null ? "" : " r" + g.Revision)).Append(result.BranchState));
         return result;
     }
 

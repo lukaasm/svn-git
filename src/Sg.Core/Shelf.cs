@@ -152,15 +152,15 @@ public static class Shelf
     /// changed there; a folder in it means everything under that folder. The folder can be a checkout or
     /// a branch worktree, and which one it is decides how the changes are read and how they go back.
     /// </summary>
-    public static ShelfSaveResult Save(SgRoot root, string folder, IEnumerable<string>? paths, string title)
+    public static ShelfSaveResult Save(SgRoot root, string folder, IEnumerable<string>? paths, string title, Action<ShelfInfo>? beforeCleanup = null)
     {
         folder = Path.GetFullPath(folder);
         var co = root.CheckoutContaining(folder);
         using var _ = root.Lock();
-        return co != null ? FromCheckout(root, co, paths, title) : FromWorktree(root, folder, paths, title);
+        return co != null ? FromCheckout(root, co, paths, title, beforeCleanup) : FromWorktree(root, folder, paths, title, beforeCleanup);
     }
 
-    static ShelfSaveResult FromCheckout(SgRoot root, CheckoutConfig co, IEnumerable<string>? paths, string title)
+    static ShelfSaveResult FromCheckout(SgRoot root, CheckoutConfig co, IEnumerable<string>? paths, string title, Action<ShelfInfo>? beforeCleanup = null)
     {
         var git = root.Git;
         var picked = Under(Ops.CheckoutChanges(root, co), paths, c => c.Path);
@@ -198,6 +198,7 @@ public static class Shelf
         info.Id = FreeId(root, info.Title);
         info.Sha = Build(root, co.Path, info);
         git.UpdateRef(info.RefName, info.Sha);
+        beforeCleanup?.Invoke(info);
 
         // The checkout goes back to what SVN has. Revert un-schedules an add and leaves the file behind,
         // so the files SVN never had are the ones that have to go by hand.
@@ -212,7 +213,7 @@ public static class Shelf
         return new ShelfSaveResult(info, props);
     }
 
-    static ShelfSaveResult FromWorktree(SgRoot root, string folder, IEnumerable<string>? paths, string title)
+    static ShelfSaveResult FromWorktree(SgRoot root, string folder, IEnumerable<string>? paths, string title, Action<ShelfInfo>? beforeCleanup = null)
     {
         var git = root.Git;
         var worktree = git.Toplevel(folder);
@@ -243,6 +244,7 @@ public static class Shelf
         info.Id = FreeId(root, info.Title);
         info.Sha = Build(root, worktree, info);
         git.UpdateRef(info.RefName, info.Sha);
+        beforeCleanup?.Invoke(info);
 
         git.RestoreFromHead(worktree, picked.Where(e => e.Tracked).SelectMany(BothPaths));
         foreach (var e in picked.Where(e => e.Untracked)) Delete(PathUtil.Join(worktree, e.Path));
@@ -509,7 +511,7 @@ public static class Shelf
         foreach (var p in merge) MergeOne(root, info, p, was, want, result);
 
         Register(root, info, result);
-        result.Kept = keep || result.Conflicted.Count > 0;
+        result.Kept = keep || result.Conflicted.Count > 0 || Operations.ProtectsShelf(root, id);
         if (!result.Kept) git.DeleteRef(info.RefName);
         root.Log.Info($"put {result.Written.Count + result.Deleted.Count} file(s) back into {info.Path}");
         return result;
@@ -589,6 +591,7 @@ public static class Shelf
     public static void Drop(SgRoot root, string id)
     {
         using var operation = root.Lock();
+        if (Operations.ProtectsShelf(root, id)) throw new SgException("This shelf belongs to a pending operation. Finish or close that operation first.");
         var info = Read(root, id);
         root.Git.DeleteRef(info.RefName);
         root.Log.Info("dropped shelf " + info.Id);

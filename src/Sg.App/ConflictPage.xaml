@@ -10,7 +10,10 @@
         <local:EmptyState x:Name="NoConflicts" Grid.Row="0" Visibility="Collapsed" Glyph="&#xE73E;" Title="Nothing in conflict" />
 
         <Grid x:Name="Filled" Grid.Row="0" RowDefinitions="Auto,*,Auto">
-            <InfoBar x:Name="StateBar" Grid.Row="0" Severity="Warning" IsClosable="False" IsOpen="True" />
+            <StackPanel Grid.Row="0" Spacing="6">
+                <InfoBar x:Name="StateBar" Severity="Warning" IsClosable="False" IsOpen="True" />
+                <TextBlock x:Name="Explanation" TextWrapping="Wrap" />
+            </StackPanel>
 
             <Grid x:Name="Body" Grid.Row="1" Padding="0,8">
                 <Grid.ColumnDefinitions>
@@ -70,6 +73,7 @@
 
             <StackPanel x:Name="Actions" Grid.Row="1" Orientation="Horizontal" Spacing="8">
                 <local:IconButton x:Name="ReviewEditsButton" Glyph="&#xE8A5;" Text="Review local edits" Visibility="Collapsed" Click="ReviewEdits_Click" />
+                <local:IconButton x:Name="ReviewResultButton" Glyph="&#xE8A5;" Text="Review staged result" Click="ReviewResult_Click" />
                 <local:IconButton x:Name="InspectButton" Glyph="&#xE8A5;" Text="View current patch" Click="Inspect_Click" />
                 <local:IconButton x:Name="ContinueButton" Glyph="&#xE768;" Text="Continue"
                     Style="{StaticResource AccentButtonStyle}" Click="Continue_Click"

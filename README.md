@@ -3,6 +3,38 @@
 Git branches and worktrees over SVN checkouts. SVN stays the master.
 The design is in [DESIGN.md](DESIGN.md). This is milestone 1: the core library and the CLI.
 
+## Guided workflows
+
+Branch cards offer **Update from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
+
+**Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
+
+**Storage** previews conservative worktree archives and manual temporary-data cleanup. Ignored and linked content blocks archive; commit checkpoints are recoverable through Activity. Reclaimable physical space is shown as unknown.
+
+```powershell
+sg branch-update             # preview this branch's update
+sg branch-update --yes       # execute; exit 10 means attention is required
+sg activity                  # list durable records
+sg activity resume <id>      # continue from a safe boundary
+sg activity recover <id>     # recover commits into a separate branch
+sg review run                # run locally configured reviewChecks; exit 10 on failed checks
+sg review ready              # acknowledge review of the checked version
+sg handoff coverage -o feature.handoff.json
+sg handoff preview feature.handoff.json
+sg handoff test feature.handoff.json
+sg storage archive feature   # preview; --yes performs an eligible archive
+```
+
+Check commands are configured in `.sg/sg.json` (or the Review readiness page):
+
+```json
+"reviewChecks": [
+  { "name": "Tests", "executable": "dotnet", "arguments": ["test"] }
+]
+```
+
+An empty check list is allowed, but marking ready still requires an explicit review action. These workflows never publish to SVN automatically. See [the approved feature design and implementation boundaries](FEATURE-PROPOSAL.md).
+
 ## Build
 
 ```powershell

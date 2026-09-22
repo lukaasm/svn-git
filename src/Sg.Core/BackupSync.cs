@@ -319,7 +319,11 @@ public static partial class Backup
                 PullChanges(root, cfg, res, git.RefSha(FetchedRef("wip", name))!, worktree, co, name, PushedRef("wip", name));
             // What the remote had over this machine is here now, or as much of it as merged: the card stops
             // offering the pull, and the next backup says where the two stand.
-            if (res.Ok) git.ConfigUnset(KeyRemote(name));
+            if (res.Ok)
+            {
+                git.ConfigUnset(KeyRemote(name));
+                Operations.Receipt(root, "Get changes from backup", worktree, ["Incoming branch: " + name, "Applied commits: " + res.Applied, res.WipWhy ?? "Review local edits and saved shelves."]);
+            }
             return res;
         }
 

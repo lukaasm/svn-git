@@ -38,10 +38,30 @@ using System;
 using System.Runtime.InteropServices;
 public static class UiReportCapture {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
 }
 '@
     }
-    $bounds = $window.Current.BoundingRectangle
+    # WinUI can expose its XAML provider root with no HWND, or a child HWND which PrintWindow cannot paint.
+    # Resolve the native frame, and verify ownership before capturing any pixels.
+    $ownerId = $window.Current.ProcessId
+    $candidate = $window
+    $handle = [IntPtr]::Zero
+    while ($candidate -and $candidate.Current.ProcessId -eq $ownerId) {
+        $handle = [IntPtr]$candidate.Current.NativeWindowHandle
+        if ($handle -ne [IntPtr]::Zero) { break }
+        $candidate = [System.Windows.Automation.TreeWalker]::RawViewWalker.GetParent($candidate)
+    }
+    if ($handle -eq [IntPtr]::Zero) {
+        $owner = [Diagnostics.Process]::GetProcessById($ownerId)
+        try { $owner.Refresh(); $handle = $owner.MainWindowHandle } finally { $owner.Dispose() }
+    }
+    $handle = [UiReportCapture]::GetAncestor($handle, 2) # GA_ROOT: the frame of this test window.
+    [uint32]$nativeOwner = 0
+    $null = [UiReportCapture]::GetWindowThreadProcessId($handle, [ref]$nativeOwner)
+    if ($handle -eq [IntPtr]::Zero -or $nativeOwner -ne $ownerId) { throw 'The test window has no owned native frame to capture.' }
+    $bounds = [System.Windows.Automation.AutomationElement]::FromHandle($handle).Current.BoundingRectangle
     if ([double]::IsInfinity($bounds.Width) -or [double]::IsInfinity($bounds.Height) -or $bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'The test window has no drawable bounds.' }
     $null = New-Item -ItemType Directory -Path (Split-Path $path) -Force
     $bitmap = [Drawing.Bitmap]::new([int]$bounds.Width, [int]$bounds.Height)
@@ -50,7 +70,7 @@ public static class UiReportCapture {
         try {
             $dc = $graphics.GetHdc()
             try {
-                if (![UiReportCapture]::PrintWindow([IntPtr]$window.Current.NativeWindowHandle, $dc, 2)) { throw 'Windows could not capture the test window.' }
+                if (![UiReportCapture]::PrintWindow($handle, $dc, 2)) { throw "Windows could not capture the test window (handle $handle)." }
             } finally { $graphics.ReleaseHdc($dc) }
         } finally { $graphics.Dispose() }
         $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)

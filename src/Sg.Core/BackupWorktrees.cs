@@ -1,9 +1,15 @@
 namespace Sg.Core;
 
+/// <summary>A cheap comparison of committed tips only; saved edits and shelves are not compared.</summary>
+public enum BackupCommitStatus { NotCompared, Saved, LocalDiffers }
+
 /// <summary>A worktree's local folder and remote branch, joined by name without reading remote histories.</summary>
 public sealed record BackupWorktree(string Name, string? Path, string? Checkout, bool Excluded, BackupReference? Remote)
 {
     public bool CanBackUp => Path != null && !Excluded;
+    public BackupCommitStatus CommitStatus { get; init; }
+    public DateTimeOffset? LastConfirmed { get; init; }
+    public bool NeedsAttention => CanBackUp && CommitStatus != BackupCommitStatus.Saved;
 }
 
 /// <summary>Exact remote versions shown in a prune confirmation. Execution never adds new candidates.</summary>
@@ -27,9 +33,26 @@ public static partial class Backup
         var local = root.Git.WorktreeList().Where(w => !w.Bare && w.Branch != null && bases.ContainsKey(w.Branch))
             .GroupBy(w => w.Branch!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         var remote = catalog.Items.Where(i => i.Kind == "branch").ToDictionary(i => i.Name, StringComparer.Ordinal);
+        // Read all tip metadata in one process. Browsing must not scan files or fetch each saved history.
+        var tips = root.Git.RefIndex("refs/heads/", PushedPrefix + "heads/");
+        var confirmed = root.Git.BranchConfig("sgBackedUp");
         return local.Keys.Union(remote.Keys, StringComparer.Ordinal).Order(StringComparer.OrdinalIgnoreCase).Select(name =>
-            new BackupWorktree(name, local.TryGetValue(name, out var w) && Directory.Exists(w.Path) ? w.Path : null,
-                bases.GetValueOrDefault(name), IsExcluded(root.Config.Backup, name), remote.GetValueOrDefault(name))).ToArray();
+        {
+            var row = new BackupWorktree(name, local.TryGetValue(name, out var w) && Directory.Exists(w.Path) ? w.Path : null,
+                bases.GetValueOrDefault(name), IsExcluded(root.Config.Backup, name), remote.GetValueOrDefault(name));
+            var pushed = tips.GetValueOrDefault(PushedRef("branch", name));
+            // A changed remote may be equivalent after a replay. Do not guess which side is newer.
+            // Timestamps from another destination are not evidence about this advertised version.
+            if (row.Remote == null || pushed == null || row.Remote.Sha != pushed.Sha) return row;
+            var source = Thin.Parse(pushed.Sha, pushed.Message, new Author("", "", "")).Source;
+            var head = tips.GetValueOrDefault("refs/heads/" + name);
+            return row with
+            {
+                LastConfirmed = BackedUpAt(confirmed.GetValueOrDefault(name)),
+                CommitStatus = row.Path == null || head == null || source == null ? BackupCommitStatus.NotCompared
+                    : source == head.Sha ? BackupCommitStatus.Saved : BackupCommitStatus.LocalDiffers,
+            };
+        }).ToArray();
     }
 
     static bool IsPresent(Local here, string kind, string name) => kind switch

@@ -38,16 +38,44 @@ function Wait-For([string]$description, [scriptblock]$read, [int]$seconds = 20) 
 }
 function Invoke-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Select-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() }
-function Set-Field([string]$id, [string]$value) { (Find $id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
+function Set-Field([string]$id, [string]$value) { (Wait-For "$id input" { Find $id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Entries {
     @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.AndCondition]::new(
             [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Steps and checkpoint'),
             [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true))))
 }
+function Backup-Cards {
+    @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        Where-Object { $_.Current.AutomationId -like 'BackupWorktree_*' })
+}
+function Filter-Backups([string]$label) {
+    (Find 'BackupFilter').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    $option = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $label),
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty, $true)))
+    Select-Element $option
+}
+function Update-FixtureRefs([string[]]$commands) {
+    # Git's text protocol requires LF; the Windows PowerShell native pipeline adds CRLF.
+    $start = [Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($arg in @('-C', $localRemote, 'update-ref', '--stdin')) { $start.ArgumentList.Add($arg) }
+    $start.UseShellExecute = $false; $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true; $start.RedirectStandardError = $true; $start.RedirectStandardOutput = $true
+    $git = [Diagnostics.Process]::Start($start)
+    try {
+        $errorRead = $git.StandardError.ReadToEndAsync(); $outputRead = $git.StandardOutput.ReadToEndAsync()
+        $git.StandardInput.Write(($commands -join "`n") + "`n"); $git.StandardInput.Close()
+        $git.WaitForExit()
+        $errorText = $errorRead.GetAwaiter().GetResult(); $null = $outputRead.GetAwaiter().GetResult()
+        if ($git.ExitCode -ne 0) { throw "Fixture ref update failed: $errorText" }
+    } finally { $git.Dispose() }
+}
 $process = $null; $window = $null; $created = [Collections.Generic.List[string]]::new()
 $originalConfig = $null; $listener = $null; $client = $null
 $previewRef = $null; $localRemote = $null
+$backupNames = [Collections.Generic.List[string]]::new()
 Initialize-UiReport $ArtifactDirectory 'Browsing'
 try {
     $fixtureConfig = Get-Content -Raw -LiteralPath (Join-Path $FixtureRoot '.sg/sg.json') | ConvertFrom-Json
@@ -62,6 +90,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the disposable preview ref.' }
     $records = @(Get-ChildItem -LiteralPath (Join-Path $SourceRoot '.sg/operations') -Filter '*.json' | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json })
     if (!$records.Count) { throw 'Source needs saved activity.' }
+    $backupPrefix = 'zz-browse-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    for ($i = 0; $i -lt 180; $i++) {
+        # Keep recognizable real names, but only alias disposable fixture commits. Never fetch source histories.
+        $label = [regex]::Replace([string]$records[$i % $records.Count].branch, '[^a-zA-Z0-9_-]', '-')
+        if ($label.Length -gt 120) { $label = $label.Substring(0, 120) }
+        $backupNames.Add(('{0}-{1:d3}-{2}' -f $backupPrefix, $i, $label))
+    }
+    Update-FixtureRefs @($backupNames | ForEach-Object { "create refs/heads/$_ $tip" })
     for ($i = 0; $i -lt 240; $i++) {
         $sample = $records[$i % $records.Count]
         $id = [Guid]::NewGuid().ToString('N')
@@ -139,10 +175,36 @@ try {
     Invoke-Element (Find 'ActivityRefresh')
     $null = Wait-For 'refresh keeps the history filter' { (Entries).Count -eq 1 -and (Find 'ActivityResults').Current.Name -like '*1 of 1*' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'activity-filter.png')
-    Start-UiScenario 'Backup search keeps restore selection explicit'
+    Start-UiScenario 'Large backup catalogs render in batches and retain their filter and loaded cards'
     Invoke-Element (Find 'NavigationViewBackButton')
+    $watch.Restart()
     Invoke-Element (Wait-For 'backup action' { Find 'BackupButton' })
     $null = Wait-For 'backup entries loaded' { $field = Find 'BackupSearch'; if ($field -and !$field.Current.IsOffscreen) { $field } }
+    $null = Wait-For 'bounded first backup page' { (Backup-Cards).Count -eq 20 }
+    @{ backupMilliseconds = $watch.ElapsedMilliseconds; renderedCards = (Backup-Cards).Count; replayedBackups = $backupNames.Count } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'backup-timings.json')
+    Invoke-Element (Find 'MoreWorktrees')
+    $null = Wait-For 'second backup page appended' { (Backup-Cards).Count -eq 40 }
+    Set-Field 'BackupSearch' $backupNames[179]
+    $null = Wait-For 'backup search includes the final catalog item' { (Backup-Cards).Count -eq 1 -and (Find ('BackupWorktree_' + $backupNames[179])) }
+    Set-Field 'BackupSearch' $backupPrefix
+    $null = Wait-For 'large name search resets the page size' { (Backup-Cards).Count -eq 20 }
+    Filter-Backups 'Local only'
+    $null = Wait-For 'remote copies excluded by local filter' { (Find 'BackupMatches').Current.Name -like 'No matching*' }
+    Filter-Backups 'Remote only'
+    $null = Wait-For 'remote filter restores matching cards' { (Backup-Cards).Count -eq 20 }
+    Invoke-Element (Find 'MoreWorktrees')
+    $null = Wait-For 'remote filter second page' { (Backup-Cards).Count -eq 40 }
+    Select-Element (Find 'SettingsItem')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'backup loaded count retained on return' { (Backup-Cards).Count -eq 40 }
+    $selection = (Find 'BackupFilter').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+    if ($selection[0].Current.Name -ne 'Remote only') { throw 'Backup status filter was lost on return.' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-large-catalog.png')
+    Filter-Backups 'All worktrees'
+    $null = Wait-For 'all-worktrees filter resets the batch' { (Backup-Cards).Count -eq 20 }
+
+    Start-UiScenario 'Backup search keeps restore selection explicit'
     Set-Field 'BackupSearch' 'no-backup-matches-this-search'
     $null = Wait-For 'backup search empty state' { (Find 'BackupMatches').Current.Name -like 'No matching*' }
     if ((Find 'NameBox') -and !(Find 'NameBox').Current.IsOffscreen) { throw 'Search left a hidden restore target actionable.' }
@@ -238,5 +300,6 @@ try {
     if ($listener) { $listener.Stop() }
     if ($originalConfig) { [IO.File]::WriteAllText((Join-Path $FixtureRoot '.sg/sg.json'), $originalConfig) }
     if ($previewRef) { & git -C $localRemote update-ref -d $previewRef }
+    if ($backupNames.Count) { Update-FixtureRefs @($backupNames | ForEach-Object { "delete refs/heads/$_" }) }
     foreach ($path in $created) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path } }
 }

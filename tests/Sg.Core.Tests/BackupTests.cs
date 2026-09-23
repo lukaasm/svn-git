@@ -155,6 +155,48 @@ public sealed class BackupTests : IDisposable
     }
 
     [Fact]
+    public void Worktree_status_compares_committed_tips_without_claiming_files_are_saved()
+    {
+        f.Setup();
+        var path = MakeBranch("feature-status");
+        Backup.Set(f.Root, Remote());
+        BackupWorktree Read() => Backup.Worktrees(f.Root, Backup.Browse(f.Root)).Single();
+        Assert.True(Read().NeedsAttention);
+        Assert.Null(Read().LastConfirmed);
+        Assert.True(Backup.Run(f.Root).Ok);
+        var saved = Read();
+        Assert.Equal(BackupCommitStatus.Saved, saved.CommitStatus);
+        Assert.NotNull(saved.LastConfirmed);
+        Assert.False(saved.NeedsAttention);
+
+        // Browsing compares commits only: it must not scan working files to claim a complete backup.
+        Fixture.Put(path, "draft.txt", "still only on disk\n");
+        Assert.Equal(BackupCommitStatus.Saved, Read().CommitStatus);
+        f.Root.Git.Ok(path, "add", "draft.txt");
+        f.Root.Git.Ok(path, "commit", "-q", "-m", "local change");
+        var changed = Read();
+        Assert.Equal(BackupCommitStatus.LocalDiffers, changed.CommitStatus);
+        Assert.Equal(saved.LastConfirmed, changed.LastConfirmed);
+        Assert.True(changed.NeedsAttention);
+        Backup.Exclude(f.Root, "feature-status");
+        Assert.False(Read().NeedsAttention);
+        Backup.Exclude(f.Root, "feature-status", exclude: false);
+
+        var tip = RemoteGit("rev-parse", "refs/heads/feature-status").Trim();
+        RemoteGit("update-ref", "refs/heads/feature-status", tip + "^");
+        var otherVersion = Read();
+        Assert.Equal(BackupCommitStatus.NotCompared, otherVersion.CommitStatus);
+        Assert.Null(otherVersion.LastConfirmed);
+        Assert.True(otherVersion.NeedsAttention);
+
+        // Historical timestamps cannot imply a backup exists at a newly selected destination.
+        f.Root.Config.Backup!.Prefix = "another-machine";
+        Assert.Null(Read().Remote);
+        Assert.Null(Read().LastConfirmed);
+        Assert.Equal(BackupCommitStatus.NotCompared, Read().CommitStatus);
+    }
+
+    [Fact]
     public void Catalog_reads_names_without_fetching_histories_and_preview_fetches_only_the_selection()
     {
         f.Setup();
@@ -167,6 +209,13 @@ public sealed class BackupTests : IDisposable
         var catalog = Backup.Browse(f.Root);
         Assert.Equal(41, catalog.Items.Count);
         Assert.DoesNotContain(f.Log.Lines, line => line.Contains(" fetch ") || line.Contains(" log "));
+        f.Log.Clear();
+        var worktrees = Backup.Worktrees(f.Root, catalog);
+        Assert.Equal(41, worktrees.Count);
+        Assert.Equal(BackupCommitStatus.Saved, worktrees.Single(w => w.Name == "feature-x").CommitStatus);
+        Assert.Single(f.Log.Lines, line => line.Contains(" for-each-ref "));
+        Assert.DoesNotContain(f.Log.Lines, line => line.Contains(" fetch ") || line.Contains(" log ")
+            || line.Contains(" status ") || line.Contains(" rev-list ") || line.Contains(" merge-base "));
         var selected = catalog.Items.Single(i => i.Name == "copy-39");
         f.Log.Clear();
         var preview = Backup.Preview(f.Root, catalog, selected);

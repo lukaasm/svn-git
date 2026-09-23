@@ -51,6 +51,10 @@ public sealed partial class BackupPage : SgPage
     bool Overview => _itemName == null;
     string? Worktree => _itemKind == "branch" ? _itemName : null;
     IReadOnlyList<BackupWorktree> _worktrees = [];
+    const int WorktreePageSize = 20;
+    List<BackupWorktree> _matchingWorktrees = [];
+    int _shownWorktrees = WorktreePageSize;
+    int _otherMatches;
     readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
     List<BackupRow> _entries = new();
     BackupCatalog? _catalog;
@@ -63,7 +67,7 @@ public sealed partial class BackupPage : SgPage
     readonly UiRefresh _searchRefresh;
     bool _hidden;
     readonly BranchTargetValidation _targetValidation = new();
-    sealed record ViewState(string Destination, string Query, double Offset, string[] Expanded);
+    sealed record ViewState(string Destination, string Query, int Filter, int Shown, double Offset, string[] Expanded);
     ViewState? _returning;
     bool _restoring;
 
@@ -77,18 +81,21 @@ public sealed partial class BackupPage : SgPage
         Title = "Backup";
         Branch = Worktree;
         var overview = Overview ? Visibility.Visible : Visibility.Collapsed;
-        ScheduleOverview.Visibility = BackupSearch.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = AllWorktreesButton.Visibility = overview;
+        ScheduleOverview.Visibility = BackupToolbar.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = AllWorktreesButton.Visibility = overview;
         BackupNowButton.Visibility = PruneButton.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         Session.Log.Sink = Pane;
     }
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
     string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
-    internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray());
+    internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, BackupFilter.SelectedIndex,
+        _shownWorktrees, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray());
     internal override void RestoreViewState(object? state)
     {
         if (state is not ViewState view || view.Destination != Destination) return;
         _returning = view; _restoring = true;
         BackupSearch.Text = view.Query;
+        BackupFilter.SelectedIndex = view.Filter;
+        _shownWorktrees = view.Shown;
         _expanded.UnionWith(view.Expanded);
         _restoring = false;
     }
@@ -168,7 +175,7 @@ public sealed partial class BackupPage : SgPage
         _binding = false;
 
         Show(null);
-        if (Overview) FilterEntries();
+        if (Overview) FilterEntries(reset: false);
         else
         {
             var selected = _entries.FirstOrDefault(e => e.Reference.Kind == _itemKind && e.Name == _itemName);
@@ -183,22 +190,42 @@ public sealed partial class BackupPage : SgPage
     void ReadLog_Click(object sender, RoutedEventArgs e) => OutputWindow.Show();
 
     void Search_Changed(object sender, TextChangedEventArgs e) { if (!_restoring) _searchRefresh?.Request(); }
-    void FilterEntries()
+    void Filter_Changed(object sender, SelectionChangedEventArgs e) { if (!_restoring) _searchRefresh?.Request(); }
+    void FilterEntries(bool reset = true)
     {
         if (!Overview) return;
         var query = BackupSearch.Text.Trim();
         _previewReads.Cancel(); _preview = null; _selectedRow = null;
         PreviewLoading.Hide(); PreviewError.IsOpen = false; PreviewTitle.Visibility = Visibility.Collapsed;
         var matches = _entries.Where(e => query.Length == 0 || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
-        var worktrees = _worktrees.Where(w => query.Length == 0 || w.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
-        var others = matches.Where(e => e.Reference.Kind != "branch" && !(e.Reference.Kind == "wip" && _worktrees.Any(w => w.Remote?.Name == e.Name))).ToList();
-        BranchesHeader.Text = $"Worktrees ({worktrees.Count})";
-        RenderWorktrees(worktrees);
+        _matchingWorktrees = _worktrees.Where(w => (BackupFilter.SelectedIndex switch
+            { 1 => w.NeedsAttention, 2 => w.Remote == null, 3 => w.Path == null, _ => true })
+            && (query.Length == 0 || w.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || w.Checkout?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)).ToList();
+        var branchNames = _worktrees.Where(w => w.Remote != null).Select(w => w.Name).ToHashSet(StringComparer.Ordinal);
+        var others = matches.Where(e => e.Reference.Kind != "branch" && !(e.Reference.Kind == "wip" && branchNames.Contains(e.Name))).ToList();
+        BranchesHeader.Text = $"Worktrees ({_matchingWorktrees.Count})";
+        var take = reset ? WorktreePageSize : Math.Max(WorktreePageSize, _shownWorktrees);
+        Branches.Children.Clear();
+        _shownWorktrees = 0;
+        _otherMatches = others.Count;
+        AppendWorktrees(take);
         Others.ItemsSource = others;
         OthersCard.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        BackupMatches.Text = worktrees.Count + others.Count == 0 ? "No matching backup items. Try another search."
-            : $"{worktrees.Count} of {_worktrees.Count} worktrees · {others.Count} saved edits and shelves";
         Show(null);
+    }
+
+    void MoreWorktrees_Click(object sender, RoutedEventArgs e) => AppendWorktrees(WorktreePageSize);
+    void AppendWorktrees(int count)
+    {
+        RenderWorktrees(_matchingWorktrees.Skip(_shownWorktrees).Take(count));
+        _shownWorktrees = Branches.Children.Count;
+        var remaining = _matchingWorktrees.Count - _shownWorktrees;
+        MoreWorktrees.Visibility = remaining > 0 ? Visibility.Visible : Visibility.Collapsed;
+        MoreWorktrees.Text = $"Show {Math.Min(WorktreePageSize, remaining)} more";
+        BackupMatches.Text = _matchingWorktrees.Count + _otherMatches == 0 ? "No matching backup items. Change the search or filter."
+            : $"{_matchingWorktrees.Count} of {_worktrees.Count} worktrees · {_otherMatches} saved edits and shelves"
+                + (remaining > 0 ? $" · Showing {_shownWorktrees}" : "");
     }
 
     void Branch_Changed(object sender, SelectionChangedEventArgs e)

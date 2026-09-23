@@ -10,23 +10,29 @@ public sealed partial class BackupPage
 {
     void RenderWorktrees(IEnumerable<BackupWorktree> worktrees)
     {
-        Branches.Children.Clear();
         foreach (var worktree in worktrees)
         {
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            header.Children.Add(new FontIcon { Glyph = "\uED25", FontSize = 16 });
+            var header = new StackPanel { Spacing = 4, MaxWidth = 460 };
             var name = new TextBlock { Text = worktree.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                MaxWidth = 280, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+                TextTrimming = TextTrimming.CharacterEllipsis };
             ToolTipService.SetToolTip(name, worktree.Name);
             header.Children.Add(name);
-            header.Children.Add(new StatusChip
+            var status = WorktreeStatus(worktree);
+            var badges = new WrapRow { Spacing = 8 };
+            var chip = new StatusChip
             {
-                Text = worktree.Remote == null ? "Local only" : worktree.Path == null ? "Remote only" : "Local + remote",
-                Glyph = worktree.Remote == null ? "\uE8B7" : "\uE753",
-                Severity = worktree.Remote == null ? ChipSeverity.Caution : ChipSeverity.Neutral,
-            });
-            if (worktree.Excluded) header.Children.Add(new StatusChip { Text = "Excluded", Glyph = "\uE711", Severity = ChipSeverity.Caution });
-            var card = new SettingsExpander { Header = header, HorizontalAlignment = HorizontalAlignment.Stretch };
+                Text = status.Text, Glyph = status.Glyph, Severity = status.Severity,
+            };
+            ToolTipService.SetToolTip(chip, status.Help);
+            AutomationProperties.SetHelpText(chip, status.Help);
+            badges.Children.Add(chip);
+            if (worktree.Excluded) badges.Children.Add(new StatusChip { Text = "Excluded", Glyph = "\uE711", Severity = ChipSeverity.Caution });
+            header.Children.Add(badges);
+            if (worktree.LastConfirmed is { } when)
+                header.Children.Add(new TextBlock { Text = $"Confirmed here {when.LocalDateTime:g}",
+                    Style = (Style)Application.Current.Resources["Secondary"], TextWrapping = TextWrapping.Wrap });
+            var card = new SettingsExpander { Header = header, HeaderIcon = new FontIcon { Glyph = "\uED25" },
+                HorizontalAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetAutomationId(card, "BackupWorktree_" + worktree.Name);
             AutomationProperties.SetName(card, worktree.Name);
             var open = WorktreeButton("Manage", "\uE713", "BackupWorktreeOpen_" + worktree.Name,
@@ -52,7 +58,7 @@ public sealed partial class BackupPage
                 card.Items.Add(new SettingsCard
                 {
                     Header = "Remote backup", Description = worktree.Remote == null ? "No remote copy yet"
-                        : worktree.Remote.HasWip ? "Commits and uncommitted changes saved" : "Committed work saved",
+                        : worktree.Remote.HasWip ? "Contains commits and saved edits. Open to review their version." : "Contains commits. Open to review their version.",
                     HeaderIcon = new FontIcon { Glyph = "\uE753" }, Content = restore,
                 });
                 var prune = WorktreeButton("Prune…", "\uE74D", "BackupWorktreePrune_" + worktree.Name,
@@ -74,6 +80,16 @@ public sealed partial class BackupPage
             Branches.Children.Add(card);
         }
     }
+
+    static (string Text, string Glyph, ChipSeverity Severity, string Help) WorktreeStatus(BackupWorktree worktree) =>
+        worktree.Remote == null ? ("Local only", "\uE8B7", ChipSeverity.Caution, "No remote backup was found for this worktree.")
+        : worktree.Path == null ? ("Remote only", "\uE753", ChipSeverity.Neutral, "This backup has no local worktree folder. Manage opens restore options.")
+        : worktree.CommitStatus switch
+        {
+            BackupCommitStatus.Saved => ("Commits saved", "\uE73E", ChipSeverity.Success, "The remote matches this worktree's committed tip. Working files and shelves have not been compared."),
+            BackupCommitStatus.LocalDiffers => ("Local commits differ", "\uE70F", ChipSeverity.Attention, "Local commit IDs differ from the saved version. A restore or replay can change IDs without changing the work. Back up compares the changes before sending."),
+            _ => ("Compare versions", "\uE8AB", ChipSeverity.Caution, "This remote version has not been confirmed against the local tip. Manage opens its saved commits; a backup checks how the versions relate."),
+        };
 
     static IconButton WorktreeButton(string label, string glyph, string id, Func<Task> run, bool enabled = true, string help = "")
     {

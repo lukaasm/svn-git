@@ -56,14 +56,25 @@
                         </Grid>
                     </Border>
 
-                    <TextBox x:Name="BackupSearch" PlaceholderText="Search local and remote worktrees"
-                             AutomationProperties.Name="Search backup worktrees" TextChanged="Search_Changed" />
+                    <Grid x:Name="BackupToolbar" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox x:Name="BackupSearch" PlaceholderText="Search by worktree or checkout"
+                                 AutomationProperties.Name="Search backup worktrees" TextChanged="Search_Changed" />
+                        <ComboBox x:Name="BackupFilter" Grid.Column="1" SelectedIndex="0" MinWidth="160"
+                                  AutomationProperties.Name="Filter backup worktrees" SelectionChanged="Filter_Changed">
+                            <ComboBoxItem Content="All worktrees" />
+                            <ComboBoxItem Content="Needs attention" />
+                            <ComboBoxItem Content="Local only" />
+                            <ComboBoxItem Content="Remote only" />
+                        </ComboBox>
+                    </Grid>
                     <TextBlock x:Name="BackupMatches" Style="{StaticResource Secondary}" TextWrapping="Wrap"
                                AutomationProperties.LiveSetting="Polite" />
                     <TextBlock x:Name="BranchesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                    <TextBlock x:Name="SelectionHint" Text="Each card manages one worktree and its backup. Open it for restore options."
+                    <TextBlock x:Name="SelectionHint" Text="Status compares commits. Working files and shelves are checked when you back up. Manage opens restore options."
                                Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                     <StackPanel x:Name="Branches" Spacing="4" />
+                    <local:IconButton x:Name="MoreWorktrees" Text="Show 20 more" Glyph="&#xE70E;" Visibility="Collapsed"
+                                      HorizontalAlignment="Left" Click="MoreWorktrees_Click" />
 
                     <Expander x:Name="OthersCard" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="Collapsed">
                         <Expander.Header>

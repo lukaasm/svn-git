@@ -85,6 +85,18 @@ function Expand-Worktree([string]$name) {
     if (!$expander) { throw "Worktree card has no accessible expander: $name" }
     $expander.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
 }
+function Assert-BackupStatus([string]$name, [string]$status, [bool]$confirmed = $false) {
+    $null = Wait-For "$name status: $status" {
+        $card = Find-Ui ('BackupWorktree_' + $name) -IncludeOffscreen
+        if (!$card) { return $false }
+        $label = $card.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $status))
+        if (!$label) { return $false }
+        if (!$confirmed) { return $true }
+        @($card.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -like 'Confirmed here *' }).Count -eq 1
+    }
+}
 function Assert-Blocked([string]$buttonId, [string]$explanation) {
     $null = Wait-For "validation: $explanation" {
         $button = Find-Ui $buttonId
@@ -401,12 +413,14 @@ try {
     Start-App 'backup' $root
     Set-Ui 'BackupSearch' 'scoped-local'
     $null = Wait-For 'local worktree search finishes' { (Find-Ui 'BackupMatches').Current.Name -like '1 of *' }
+    Assert-BackupStatus 'scoped-local' 'Local only'
     Expand-Worktree 'scoped-local'
     $null = Wait-For 'local-only restore is unavailable' { $b = Find-Ui 'BackupWorktreeRestore_scoped-local' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
     Invoke-Ui 'BackupWorktreeSend_scoped-local'
     Wait-Receipt
     if ((Run 'git' @('--git-dir', $backup, 'show', 'refs/heads/scoped-local:scoped.txt')).Trim() -ne 'selected worktree') { throw 'Scoped backup did not publish its worktree.' }
     if ((Run 'git' @('--git-dir', $backup, 'rev-parse', 'refs/heads/imported')).Trim() -ne $beforeOther) { throw 'Scoped backup sent unrelated work.' }
+    Assert-BackupStatus 'scoped-local' 'Commits saved' $true
     if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'worktree-backups.png') }
     Invoke-Ui 'TaskQueueToggle'
     $task = Wait-For 'scoped backup receipt' {

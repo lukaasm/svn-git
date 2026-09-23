@@ -28,7 +28,7 @@ $null = New-Item -ItemType Directory -Path $env:SG_UI_TEST_DIRECTORY
 $process = $null
 try {
     $app = (Resolve-Path "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe").Path
-    $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $FixtureRoot + '"')) -PassThru
+    $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $FixtureRoot + '"')) -WindowStyle Hidden -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(40)
     $window = $null
     do {
@@ -41,6 +41,8 @@ try {
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
     if (!$control) { throw 'Probe did not reach the checkout overview.' }
+    # A XAML control has no native HWND; capture must resolve its owning frame instead of passing zero.
+    Save-UiWindow $control (Join-Path $ArtifactDirectory 'provider-frame.png')
     Initialize-UiReport $ArtifactDirectory 'Probe'
     Start-UiScenario 'Successful assertion'
     Start-Sleep -Milliseconds 25

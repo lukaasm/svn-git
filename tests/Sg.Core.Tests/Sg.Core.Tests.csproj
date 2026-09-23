@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sg.Core\Sg.Core.csproj" />
+    <ProjectReference Include="..\..\src\sg\sg.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

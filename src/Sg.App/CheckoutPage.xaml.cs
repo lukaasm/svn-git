@@ -781,6 +781,11 @@ public sealed partial class CheckoutPage : SgPage
         var row = WorktreeOf(sender);
         if (row != null) Go(() => new ReviewPage(row.Path), "review:" + row.Path);
     }
+    void CodeReview_Click(object sender, RoutedEventArgs e)
+    {
+        var row = WorktreeOf(sender);
+        if (row != null) Go(() => new CodeReviewPage(row.Path), "code-review:" + row.Path);
+    }
     void Coverage_Click(object sender, RoutedEventArgs e)
     {
         var row = WorktreeOf(sender);

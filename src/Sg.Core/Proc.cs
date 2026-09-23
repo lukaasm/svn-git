@@ -73,6 +73,19 @@ public sealed class ProcResult
 public static class Proc
 {
     static readonly UTF8Encoding Utf8 = new(false);
+    static readonly AsyncLocal<bool> IsolatedInput = new();
+
+    /// <summary>Protocol hosts own stdin. Child tools must receive EOF instead of inheriting its pipe.</summary>
+    public static IDisposable WithoutConsoleInput()
+    {
+        var previous = IsolatedInput.Value;
+        IsolatedInput.Value = true;
+        return new InputScope(previous);
+    }
+    sealed class InputScope(bool previous) : IDisposable
+    {
+        public void Dispose() => IsolatedInput.Value = previous;
+    }
 
     /// <summary>Runs a process to completion. Captures stdout and stderr as UTF-8 text, or streams stdout to a file.</summary>
     public static ProcResult Run(string exe, IReadOnlyList<string> args, string? cwd, ILog log,
@@ -83,7 +96,7 @@ public static class Proc
             FileName = exe,
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardInput = stdin != null,
+            RedirectStandardInput = stdin != null || IsolatedInput.Value,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = cwd ?? Environment.CurrentDirectory,
@@ -101,6 +114,7 @@ public static class Proc
         using var p = new Process { StartInfo = psi };
         try { p.Start(); }
         catch (Exception ex) { throw new SgException($"cannot start {exe}: {ex.Message}"); }
+        if (stdin == null && IsolatedInput.Value) p.StandardInput.Close();
 
         // Cancelling ends the child. git and svn both leave the working copy usable when killed:
         // a snapshot writes nothing until update-ref, and svn recovers with cleanup.
@@ -183,7 +197,7 @@ public static class Proc
             FileName = exe,
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardInput = stdin != null,
+            RedirectStandardInput = stdin != null || IsolatedInput.Value,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = cwd ?? Environment.CurrentDirectory,
@@ -200,6 +214,7 @@ public static class Proc
         using var p = new Process { StartInfo = psi };
         try { p.Start(); }
         catch (Exception ex) { throw new SgException($"cannot start {exe}: {ex.Message}"); }
+        if (stdin == null && IsolatedInput.Value) p.StandardInput.Close();
 
         // The same as Run: a stop from the user ends the child. An agent asked to settle a conflict
         // runs for minutes, and is the one child a person is likely to want to stop.

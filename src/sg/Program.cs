@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sg.Core;
 
-return Cli.Run(args);
+return args is ["mcp"] ? await McpHost.RunAsync() : Cli.Run(args);
 
 static class Cli
 {
@@ -95,7 +95,8 @@ static class Cli
                     return reviewed.Checks.Any(x => x.ExitCode != 0) ? 10 : 0;
                 }
                 else if (action == "ready") Json(Review.MarkReady(root, path));
-                else Json(new { Status = Review.Status(root, path), Record = Review.Read(root, path) });
+                else if (action == "status") Json(new { Status = Review.Status(root, path), Record = Review.Read(root, path) });
+                else Json(ReviewCommands.Run(root, path, action, a));
                 break;
             case "storage":
                 if (action == "archive")
@@ -140,6 +141,12 @@ static class Cli
             sg branch-update [--yes]                 preview/save edits, sync SVN, replay, recover edits
             sg activity [resume|close|recover <id>]  durable operations and separate recovery branches
             sg review [status|run|ready]              version-bound checks and readiness; configure reviewChecks in .sg/sg.json
+            sg review files|file <path>|threads|thread <id>
+            sg review comment --file <path> --lines <first:last> --body-file <file>
+            sg review reply|resolve|reopen <id> --body-file <file> --expected-revision <revision>
+                 [--version <token>] [--actor <name>] [--request-id <uuid>] [--worktree <name-or-path>]
+            sg review export [-o <file>] | handoff   portable review state or agent instructions
+            sg mcp                                  MCP server over stdin/stdout; configure clients to launch this command
             sg storage [archive <branch> [--yes]]    conservative archive preview; retained commits appear in Activity
             sg handoff [coverage [-o file]|preview <file>|test <file>]
                                                       check backup refs; test restores into a separate branch
@@ -175,7 +182,8 @@ static class Cli
                                                       where backups go. A prefix keeps two machines apart in one repository.
                                                       A file over --max-file (100) stays here; one push carries --max-push (1024)
                                                       at most, and more goes in several. 0 is no limit
-            sg backup exclude [<branch>...]           leave a worktree out of the backup: its branch, its uncommitted changes and
+            sg backup --worktree <branch>            back up only this worktree, including its code review and shelves
+            sg backup exclude [<branch>...]           leave a worktree out of the backup: its branch, code review, uncommitted changes and
                                                       its shelves stay here. What the remote holds of it stays too, until prune.
                                                       With no name: which worktrees are left out
             sg backup include <branch>...             put one back in; it goes with the next backup
@@ -965,7 +973,7 @@ static class Cli
                 var only = a.GetAll("--only");
                 if (only.Count > 0 && !a.Has("--force"))
                     throw new SgException("--only names what --force writes over, for example: sg backup --force --only branch/gui");
-                var r = Backup.Run(root, check, a.Has("--force"), only.Count > 0 ? only : null);
+                var r = Backup.Run(root, check, a.Has("--force"), only.Count > 0 ? only : null, worktree: a.Get("--worktree"));
                 if (json) { Json(r); return r.Rejected > 0 ? 10 : r.Ok ? 0 : 1; }
                 Console.WriteLine((check ? "backup check: " : "backup: ") + r.Url);
                 foreach (var i in r.Items)
@@ -1109,6 +1117,7 @@ sealed class Args
     {
         "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared",
         "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only",
+        "--worktree", "--body-file", "--body", "--file", "--side", "--lines", "--actor", "--expected-revision", "--version", "--request-id", "--state", "--offset",
     };
 
     public string? Command;

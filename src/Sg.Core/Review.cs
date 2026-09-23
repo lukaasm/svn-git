@@ -24,6 +24,7 @@ public sealed class ReviewRecord
     public string Snapshot { get; set; } = "";
     public string Version { get; set; } = "";
     public string Configuration { get; set; } = "";
+    public string CommentsVersion { get; set; } = "";
     public List<string> Files { get; set; } = new();
     public List<ReviewCheckResult> Checks { get; set; } = new();
     public DateTimeOffset Checked { get; set; } = DateTimeOffset.UtcNow;
@@ -40,7 +41,7 @@ public static class Review
         var branch = git.CurrentBranch(path);
         var snapshot = git.RefSha(root.SnapshotRef(Ops.BaseCheckout(root, branch))) ?? throw new SgException("No snapshot.");
         return new ReviewRecord { Branch = branch, Head = git.HeadSha(path), Snapshot = snapshot,
-            Version = WorkspaceVersion.Of(root, path), Configuration = WorkspaceVersion.Hash(JsonSerializer.Serialize(root.Config.ReviewChecks, SgConfig.JsonOptions)),
+            Version = WorkspaceVersion.Of(root, path), CommentsVersion = CodeReview.Revision(root, path), Configuration = WorkspaceVersion.Hash(JsonSerializer.Serialize(root.Config.ReviewChecks, SgConfig.JsonOptions)),
             Files = git.Out(path, "diff", "--name-only", snapshot, "HEAD").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList() };
     }
     static bool Same(ReviewRecord a, ReviewRecord b) => a.Head == b.Head && a.Snapshot == b.Snapshot && a.Version == b.Version && a.Configuration == b.Configuration;
@@ -55,7 +56,8 @@ public static class Review
         var record = Read(root, path);
         if (record == null) return "Not reviewed";
         if (!Same(record, Current(root, path))) return "Changed since review";
-        return record.Ready != null ? "Ready for this version" : record.Checks.Any(x => x.ExitCode != 0) ? "Checks failed" : "Checks complete; review required";
+        if (CodeReview.Read(root, path).Threads.Any(t => t.State == "open")) return "Open code review comments";
+        return record.Ready != null && record.CommentsVersion == CodeReview.Revision(root, path) ? "Ready for this version" : record.Checks.Any(x => x.ExitCode != 0) ? "Checks failed" : "Checks complete; review required";
     }
     static void Save(SgRoot root, ReviewRecord record) => AtomicFile.WriteAllText(FileFor(root, record.Branch), JsonSerializer.Serialize(record, SgConfig.JsonOptions));
     public static ReviewRecord RunChecks(SgRoot root, string path)
@@ -83,6 +85,10 @@ public static class Review
         var record = Read(root, path) ?? throw new SgException("Run checks for this version first (an empty check list is allowed).");
         if (!Same(record, Current(root, path))) throw new SgException("Changed since review. Run checks and review again.");
         if (record.Checks.Any(x => x.ExitCode != 0)) throw new SgException("Fix the failed checks first.");
+        var comments = CodeReview.Read(root, path);
+        if (comments.Threads.Any(t => t.State == "open")) throw new SgException("Resolve the open code review comments first.");
+        // Bind the state that was checked, so feedback arriving concurrently invalidates the stamp.
+        record.CommentsVersion = CodeReview.Revision(comments);
         record.Ready = DateTimeOffset.UtcNow;
         Save(root, record);
         return record;

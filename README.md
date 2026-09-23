@@ -58,7 +58,9 @@ Pull previews show placeholders immediately, then fill in local commits and edit
 
 Pull previews use labeled status colors for revisions and saved edits, with links to local commits, SVN history, and changed files. File lists and preservation details expand on demand. Worktree **Advanced** actions group readiness checks, backup coverage, export, and worktree settings; daily actions and recovery remain directly available.
 
-**Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
+**Code review** lets you leave file and line comments in a worktree, reply, resolve, or reopen them, and copy instructions for an agent. Comments and saved code context follow that worktree's backup and restore. **Review readiness** runs explicitly configured local checks and records the exact branch and feedback version reviewed; open comments prevent marking ready. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
+
+`sg mcp` exposes all 23 public CLI command families and seven typed code review tools through a local stdio MCP server, plus command help. See [MCP setup, review workflow, and backup details](MCP.md).
 
 **Storage** previews conservative worktree archives and manual temporary-data cleanup. Loading and error states retain useful content, navigation, and retry actions. Ignored and linked content blocks archive; commit checkpoints are recoverable through Activity. Archive and cleanup confirmations list what will be changed. Reclaimable physical space is shown as unknown. `scripts/test-storage-feedback.ps1 -FixtureRoot <disposable-root>` verifies loading under a held repository lock and recovery from a read error on a private desktop.
 

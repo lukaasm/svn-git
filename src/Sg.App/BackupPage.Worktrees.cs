@@ -27,6 +27,7 @@ public sealed partial class BackupPage
             AutomationProperties.SetHelpText(chip, status.Help);
             badges.Children.Add(chip);
             if (worktree.Excluded) badges.Children.Add(new StatusChip { Text = "Excluded", Glyph = "\uE711", Severity = ChipSeverity.Caution });
+            if (worktree.Remote?.HasReview == true) badges.Children.Add(new StatusChip { Text = "Code review", Glyph = "\uE90A", Severity = ChipSeverity.Neutral });
             header.Children.Add(badges);
             if (worktree.LastConfirmed is { } when)
                 header.Children.Add(new TextBlock { Text = $"Confirmed here {when.LocalDateTime:g}",
@@ -58,7 +59,7 @@ public sealed partial class BackupPage
                 card.Items.Add(new SettingsCard
                 {
                     Header = "Remote backup", Description = worktree.Remote == null ? "No remote copy yet"
-                        : worktree.Remote.HasWip ? "Contains commits and saved edits. Open to review their version." : "Contains commits. Open to review their version.",
+                        : (worktree.Remote.HasWip ? "Contains commits and saved edits." : "Contains commits.") + (worktree.Remote.HasReview ? " Code review comments and context are included." : "") + " Open to review their version.",
                     HeaderIcon = new FontIcon { Glyph = "\uE753" }, Content = restore,
                 });
                 var catalog = _catalog;

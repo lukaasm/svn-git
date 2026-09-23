@@ -267,6 +267,7 @@ public sealed class BackupEntry
     /// <summary>A branch of this name, a shelf of this id, is already here.</summary>
     public bool ExistsHere;
     public bool HasWip;
+    public bool HasReview;
     public DateTimeOffset? Last;
     /// <summary>Why it cannot be read, when it cannot: written by a newer sg, or not an sg backup at all.</summary>
     public string? Unreadable;
@@ -305,6 +306,7 @@ public sealed class RestoreResult
     public string? WipWhy;
     /// <summary>Shelves of the branch made again here, by id.</summary>
     public List<string> Shelves = new();
+    public int ReviewThreads;
     public bool Ok => Stopped == null;
 }
 
@@ -345,6 +347,7 @@ public static partial class Backup
         "branch" => "refs/heads/" + Prefix(b) + name,
         "wip" => RemoteWip + Prefix(b) + name,
         "edits" => RemoteEdits + Prefix(b) + name,
+        "review" => "refs/sg/review/" + Prefix(b) + name,
         _ => RemoteShelf + Prefix(b) + name,
     };
 
@@ -352,7 +355,7 @@ public static partial class Backup
     public static (string Kind, string Name)? Owned(BackupConfig b, string remoteRef)
     {
         var p = Prefix(b);
-        foreach (var (kind, head) in new[] { ("branch", "refs/heads/" + p), ("wip", RemoteWip + p), ("edits", RemoteEdits + p), ("shelf", RemoteShelf + p) })
+        foreach (var (kind, head) in new[] { ("branch", "refs/heads/" + p), ("wip", RemoteWip + p), ("edits", RemoteEdits + p), ("shelf", RemoteShelf + p), ("review", "refs/sg/review/" + p) })
             if (remoteRef.StartsWith(head, StringComparison.Ordinal) && remoteRef.Length > head.Length)
                 return (kind, remoteRef[head.Length..]);
         return null;
@@ -438,10 +441,16 @@ public static partial class Backup
         // Keep the result and its success receipt in the same operation, including CLI runs.
         using var operation = root.Lock();
         if (worktree != null && string.IsNullOrWhiteSpace(worktree)) throw new SgException("Choose a worktree to back up.");
-        if (check) return RunOnce(root, check: true, force, only, worktree);
+        if (check)
+        {
+            var preview = RunOnce(root, check: true, force, only, worktree);
+            BackUpReviews(root, preview, check: true);
+            return preview;
+        }
         try
         {
             var res = RunOnce(root, check: false, force, only, worktree);
+            BackUpReviews(root, res, check: false);
             res.When = DateTimeOffset.Now;
             KeepLast(root, res);
             if (worktree == null && res.Error == null && res.Items.All(i => i.State is "pushed" or "up to date" && i.LeftOut.Count == 0))
@@ -629,7 +638,7 @@ public static partial class Backup
         var stale = new List<string>();
         foreach (var r in remote.Keys)
         {
-            if (mine.Contains(r) || Owned(cfg, r) is not { } o) continue;
+            if (mine.Contains(r) || Owned(cfg, r) is not { } o || o.Kind == "review") continue;
             if (worktree != null && !(o.Kind is "branch" or "wip" && o.Name == worktree)) continue;
             if (!clean.ContainsKey(r))
             {
@@ -875,7 +884,7 @@ public static partial class Backup
         var cfg = Require(root);
         var git = root.Git;
         var remote = git.LsRemote(cfg.Url);
-        var owned = remote.Where(kv => Owned(cfg, kv.Key) != null).ToList();
+        var owned = remote.Where(kv => Owned(cfg, kv.Key) is { Kind: not "review" }).ToList();
         git.FetchRefs(cfg.Url, owned.Select(kv => { var o = Owned(cfg, kv.Key)!.Value; return "+" + kv.Key + ":" + FetchedRef(o.Kind, o.Name); }));
 
         var here = LocalNames(root);
@@ -884,7 +893,7 @@ public static partial class Backup
         foreach (var kv in owned)
         {
             var (kind, name) = Owned(cfg, kv.Key)!.Value;
-            var e = new BackupEntry { Kind = kind, Name = name, Sha = kv.Value };
+            var e = new BackupEntry { Kind = kind, Name = name, Sha = kv.Value, HasReview = kind == "branch" && remote.ContainsKey(RemoteRef(cfg, "review", name)) };
             res.Add(e);
             ReadEntry(root, cfg, here, wips, e);
         }
@@ -982,6 +991,9 @@ public static partial class Backup
         var hasBranch = remote.ContainsKey(branchRef);
         var hasWip = remote.ContainsKey(wipRef);
         var hasEdits = remote.ContainsKey(editsRef);
+        var reviewRef = RemoteRef(cfg, "review", name);
+        if (expectedRefs != null && remote.ContainsKey(reviewRef) != expectedRefs.ContainsKey(reviewRef))
+            throw new SgException("Code review backup coverage changed. Refresh the preview.");
         if (expectedRefs != null && (hasWip != expectedRefs.ContainsKey(wipRef) || !hasBranch))
             throw new SgException("Backup coverage changed. Refresh the receipt before restoring.");
         if (!hasBranch && !hasEdits) throw new SgException($"the backup holds nothing named {name}. sg backup list says what is there.");
@@ -1003,6 +1015,7 @@ public static partial class Backup
         }
 
         var specs = new List<string> { "+" + branchRef + ":" + FetchedRef("branch", name) };
+        var reviews = FetchReview(root, cfg, name, remote);
         if (hasWip) specs.Add("+" + wipRef + ":" + FetchedRef("wip", name));
         var shelfRefs = remote.Keys.Where(r => Owned(cfg, r) is { Kind: "shelf" }).ToList();
         specs.AddRange(shelfRefs.Select(r => "+" + r + ":" + FetchedRef("shelf", Owned(cfg, r)!.Value.Name)));
@@ -1072,6 +1085,7 @@ public static partial class Backup
 
         var made = Ops.Branch(root, target, into);
         res.Path = made.Path;
+        if (reviews != null) res.ReviewThreads = CodeReview.Import(root, made.Path, reviews).Threads.Count;
         var tip = snapshot;
         if (relink)
         {

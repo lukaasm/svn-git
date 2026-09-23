@@ -339,6 +339,10 @@
                                             <local:IconButton MinWidth="124" Glyph="&#xE70F;" Text="Editor" Tag="{x:Bind}" Click="Editor_Click" ToolTipService.ToolTip="Open the worktree in the editor set in Settings, or the Windows default for a folder." />
                                         </StackPanel>
                                     </controls:SettingsCard>
+                                    <controls:SettingsCard Header="Code review" Description="Leave comments on code, discuss fixes with agents, and resolve feedback.">
+                                        <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE90A;" /></controls:SettingsCard.HeaderIcon>
+                                        <local:IconButton MinWidth="124" Text="Review code" Glyph="&#xE90A;" Tag="{x:Bind}" Click="CodeReview_Click" AutomationProperties.AutomationId="CodeReviewAction" />
+                                    </controls:SettingsCard>
                                     <controls:SettingsCard Padding="0" HorizontalContentAlignment="Stretch" ContentAlignment="Vertical">
                                     <controls:SettingsExpander Header="Advanced" Description="Review checks, backup coverage, export, and worktree settings." HorizontalAlignment="Stretch" AutomationProperties.Name="Advanced" AutomationProperties.AutomationId="AdvancedWorktreeActions">
                                       <controls:SettingsExpander.HeaderIcon><FontIcon Glyph="&#xE713;" /></controls:SettingsExpander.HeaderIcon>

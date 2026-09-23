@@ -47,6 +47,10 @@ public sealed class UpdateRevision
     public long To { get; set; }
 }
 
+/// <summary>Read-only preview snapshots. Only the completed plan can be submitted.</summary>
+public sealed record BranchUpdateProgress(string Stage, string Branch = "", string Checkout = "", int Commits = 0,
+    IReadOnlyList<string>? BranchEdits = null, IReadOnlyList<string>? CheckoutEdits = null);
+
 public sealed class BranchUpdatePlan
 {
     public string Path { get; set; } = "";
@@ -96,19 +100,27 @@ public static class Operations
         Save(root, record);
     }
 
-    public static BranchUpdatePlan Plan(SgRoot root, string path, bool checkRemote = true)
+    public static BranchUpdatePlan Plan(SgRoot root, string path, bool checkRemote = true, Action<BranchUpdateProgress>? progress = null)
     {
+        progress?.Invoke(new("Waiting for repository access"));
         using var operation = root.Lock();
         var git = root.Git;
         path = git.Toplevel(path);
         var branch = git.BranchOrRebaseHead(path);
         var co = Ops.BaseCheckout(root, branch);
         var plan = new BranchUpdatePlan { Path = path, Branch = branch, Checkout = co.Name, Head = git.HeadSha(path), Snapshot = git.RefSha(root.SnapshotRef(co)) ?? "" };
+        if (plan.Snapshot.Length == 0) plan.Blockers.Add("The checkout has no local snapshot yet.");
+        else plan.Commits = git.CountCommits(plan.Snapshot, plan.Head);
+        void Report(string stage, bool branchRead = false, bool checkoutRead = false) => progress?.Invoke(new(stage,
+            plan.Branch, plan.Checkout, plan.Commits, branchRead ? plan.BranchEdits.ToArray() : null,
+            checkoutRead ? plan.CheckoutEdits.ToArray() : null));
+        Report("Reading branch edits");
         if (Pending(root, path) != null || Conflicts.HasPending(git, path)) plan.Blockers.Add("Resume the existing operation first.");
         if (List(root).Any(x => !x.Terminal && x.Checkout == co.Name)) plan.Blockers.Add("Another update owns this checkout. Finish it in Activity first.");
         var branchEdits = git.StatusEntries(path, untracked: true);
-        var checkoutEdits = Ops.CheckoutChanges(root, co);
         plan.BranchEdits = branchEdits.Select(x => x.Path).ToList();
+        Report("Reading checkout edits", branchRead: true);
+        var checkoutEdits = Ops.CheckoutChanges(root, co);
         plan.CheckoutEdits = checkoutEdits.Select(x => x.Path).ToList();
         foreach (var e in branchEdits)
             if (PathUtil.IsReparsePoint(PathUtil.Join(path, e.Path))) plan.Blockers.Add(e.Path + ": linked content cannot be put on a recovery shelf.");
@@ -117,14 +129,16 @@ public static class Operations
         foreach (var e in checkoutEdits)
             if (Directory.Exists(PathUtil.Join(co.Path, e.Path)) || PathUtil.IsReparsePoint(PathUtil.Join(co.Path, e.Path)) || e.Props is "modified" or "conflicted" || e.Item is "normal" or "conflicted" or "obstructed" || co.Skip.Any(p => PathUtil.IsUnder(e.Path, PathUtil.Rel(p))) || PathUtil.HasReservedName(e.Path))
                 plan.Blockers.Add(e.Path + ": this checkout edit cannot be safely shelved. Finish it first.");
-        if (plan.Snapshot.Length == 0) plan.Blockers.Add("The checkout has no local snapshot yet.");
-        else plan.Commits = git.CountCommits(plan.Snapshot, plan.Head);
-        if (plan.Ready && checkRemote)
-            plan.Revisions = Ops.RemoteCheck(root, co).Entries.Select(x => new UpdateRevision { WorkingCopy = x.Rel.Length == 0 ? co.Name : x.Rel, From = x.Snapshot, To = x.Server }).ToList();
         if (plan.Ready)
         {
-            plan.BranchVersion = WorkspaceVersion.Of(root, path);
-            plan.CheckoutVersion = WorkspaceVersion.Of(root, co.Path, checkout: true);
+            Report("Verifying files to preserve", branchRead: true, checkoutRead: true);
+            plan.BranchVersion = WorkspaceVersion.OfBranch(root, path, branchEdits);
+            plan.CheckoutVersion = WorkspaceVersion.OfCheckout(root, co.Path, checkoutEdits);
+        }
+        if (plan.Ready && checkRemote)
+        {
+            Report("Checking SVN revisions", branchRead: true, checkoutRead: true);
+            plan.Revisions = Ops.RemoteCheck(root, co, countCommits: false).Entries.Select(x => new UpdateRevision { WorkingCopy = x.Rel.Length == 0 ? co.Name : x.Rel, From = x.Snapshot, To = x.Server }).ToList();
         }
         return plan;
     }

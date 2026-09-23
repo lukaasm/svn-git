@@ -67,7 +67,10 @@ public sealed partial class EditCheckoutPage : SgPage
         var root = Session.Root;
         var co = CheckoutConfig();
         if (root == null || co == null) return;
+        NoExternals.Visibility = Visibility.Collapsed;
+        ExternalsReading.Show("Reading checkout externals…", Externals.ItemsSource == null);
         var list = await Runner.Quiet(Pane, () => Ops.ExternalsOf(root, co));
+        ExternalsReading.Hide();
         if (list == null) return;
         Externals.ItemsSource = list.Select(e => new ExternalRow
         {

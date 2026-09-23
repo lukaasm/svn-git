@@ -269,6 +269,7 @@ try {
                 [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Loading saved version…'))
             $loading -and !$loading.Current.IsOffscreen
         }
+        $null = Wait-For 'shared page read progress' { $reading = Find 'PageReadProgress'; $reading -and !$reading.Current.IsOffscreen }
         & git -C $localRemote update-ref $previewRef ($tip + '^')
         if ($LASTEXITCODE -ne 0) { throw 'Could not move the disposable preview ref.' }
     } finally { $previewLock.Dispose() }
@@ -280,6 +281,7 @@ try {
     Invoke-Element (Find 'BackupRetryPreview')
     $null = Wait-For 'retried preview shows selected branch' { $field = Find 'NameBox'; $field -and !$field.Current.IsOffscreen -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq $previewName }
     $null = Wait-For 'selected preview validates restore' { (Find 'RestoreButton').Current.IsEnabled }
+    $null = Wait-For 'shared progress ends after reading' { $reading = Find 'PageReadProgress'; !$reading -or $reading.Current.IsOffscreen }
     if ((Find 'BackupRetryPreview') -and !(Find 'BackupRetryPreview').Current.IsOffscreen) { throw 'Successful preview retained its error.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-preview.png')
     Invoke-Element (Find 'NavigationViewBackButton')

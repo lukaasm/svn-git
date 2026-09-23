@@ -3,12 +3,13 @@ using Sg.Core;
 namespace Sg.App;
 
 /// <summary>Owns disposable reads for one page. Replacement and navigation cancel child processes too.</summary>
-internal sealed class PageReads
+internal sealed class PageReads(Action<bool>? reading = null)
 {
     Request? _current;
     public Request Begin()
     {
         Cancel();
+        reading?.Invoke(true);
         return _current = new(this);
     }
     public void Cancel()
@@ -16,6 +17,7 @@ internal sealed class PageReads
         var previous = _current;
         _current = null;
         previous?.Cancel();
+        if (previous != null) reading?.Invoke(false);
     }
     internal sealed class Request(PageReads owner) : IDisposable
     {
@@ -24,6 +26,7 @@ internal sealed class PageReads
         internal void Cancel() => _cancel.Cancel();
         public async Task<T?> Run<T>(StatusStrip pane, Func<T> work, Action<string>? failed = null) where T : class
         {
+            using var feedback = pane.Reading();
             try
             {
                 using (Cancellation.Use(_cancel.Token))
@@ -48,8 +51,13 @@ internal sealed class PageReads
         }
         public void Dispose()
         {
-            if (ReferenceEquals(owner._current, this)) owner._current = null;
+            if (ReferenceEquals(owner._current, this))
+            {
+                owner._current = null;
+                owner.EndRead();
+            }
             _cancel.Dispose();
         }
     }
+    void EndRead() => reading?.Invoke(false);
 }

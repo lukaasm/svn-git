@@ -17,6 +17,37 @@ public sealed partial class StatusStrip : UserControl
     }
 
     public bool StopsAtBoundary { get; private set; }
+    public bool ShowReadFeedback { get; set; } = true;
+    int _readers;
+    bool _hasMessage;
+
+    /// <summary>Independent reads share one indicator; finishing one cannot hide another's progress.</summary>
+    public IDisposable Reading()
+    {
+        Ui(() => { _readers++; RefreshReads(); });
+        return new ReadLease(this);
+    }
+
+    void RefreshReads()
+    {
+        var visible = ShowReadFeedback && _readers > 0;
+        StatusText.Visibility = _hasMessage ? Visibility.Visible : Visibility.Collapsed;
+        ReadText.Text = _readers > 1 ? $"Loading {_readers} sections…" : "Loading…";
+        ReadStatus.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ReadBar.IsIndeterminate = visible;
+        if (!_running && _task == null)
+            Visibility = visible || _hasMessage ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    sealed class ReadLease(StatusStrip owner) : IDisposable
+    {
+        StatusStrip? _owner = owner;
+        public void Dispose()
+        {
+            var pane = Interlocked.Exchange(ref _owner, null);
+            pane?.Ui(() => { pane._readers--; pane.RefreshReads(); });
+        }
+    }
     public void StopAtBoundary(bool enabled) => Ui(() =>
     {
         StopsAtBoundary = enabled;
@@ -36,8 +67,9 @@ public sealed partial class StatusStrip : UserControl
 
     void Say(string text) => Ui(() =>
     {
+        if (_task == null) _hasMessage = true;
         StatusText.Text = text;
-        if (_task == null) Visibility = Visibility.Visible;
+        if (_task == null) { StatusText.Visibility = Visibility.Visible; Visibility = Visibility.Visible; }
         OutputWindow.SetStatus(text);
     });
 
@@ -78,7 +110,7 @@ public sealed partial class StatusStrip : UserControl
         // Task progress and its result belong to the persistent footer. Quiet-read errors still use this strip.
         if (task == null && _task != null) Visibility = Visibility.Collapsed;
         _task = task;
-        if (task != null) Visibility = Visibility.Collapsed;
+        if (task != null) { _hasMessage = false; Visibility = Visibility.Collapsed; }
         CancelButton.Visibility = task != null ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.IsEnabled = task != null;
     });

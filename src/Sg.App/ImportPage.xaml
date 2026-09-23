@@ -20,6 +20,7 @@
             </local:EmptyState.Action>
         </local:EmptyState>
 
+        <local:ReadFeedback x:Name="ImportReading" Grid.Row="1" VerticalAlignment="Top" />
         <ScrollViewer x:Name="Filled" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
 

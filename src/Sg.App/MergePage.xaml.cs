@@ -58,6 +58,7 @@ public sealed partial class MergePage : SgPage
     async Task LoadTargetsAsync()
     {
         var root = Session.Require();
+        RevisionsSkeleton.Show();
         SetBusy(true);
         try
         {
@@ -70,7 +71,7 @@ public sealed partial class MergePage : SgPage
             _binding = false;
             await LoadSourcesAsync();
         }
-        finally { SetBusy(false); }
+        finally { SetBusy(false); RevisionsSkeleton.Hide(); }
     }
 
     /// <summary>The branches on offer follow the working copy: a merge stays inside one repository.</summary>

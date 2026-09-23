@@ -71,13 +71,16 @@ public sealed partial class ImportPage : SgPage
         var root = Session.Require();
         Subtitle = _file;
         FilePath.Text = _file;
-
+        Unreadable.Visibility = Visibility.Collapsed;
+        Filled.Visibility = Visibility.Collapsed;
+        ImportReading.Show("Reading export and matching its checkout…");
         var read = await Runner.Quiet(Pane, () =>
         {
             var meta = Export.Read(_file);
             var co = Export.MatchCheckout(root, meta);
             return new { Meta = meta, Co = co, Drift = co == null ? new List<ExportDrift>() : Export.DriftOf(root, meta, co) };
         });
+        ImportReading.Hide();
         if (read == null)
         {
             // The reason is in the strip; the page offers the only two things that still mean anything.

@@ -290,6 +290,7 @@ public static class Runner
     /// </summary>
     public static async Task<T?> Quiet<T>(StatusStrip pane, Func<T> work) where T : class
     {
+        using var feedback = pane.Reading();
         try { return await Task.Run(work); }
         catch (SgException ex) { pane.Error(ex.Message); return null; }
         catch (Exception ex) { pane.Error(Unexpected(ex)); return null; }
@@ -302,6 +303,7 @@ public static class Runner
     /// </summary>
     public static async Task<T?> Quiet<T>(StatusStrip pane, Func<Task<T>> work) where T : class
     {
+        using var feedback = pane.Reading();
         try { return await work(); }
         catch (SgException ex) { pane.Error(ex.Message); return null; }
         catch (Exception ex) { pane.Error(Unexpected(ex)); return null; }

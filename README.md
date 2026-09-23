@@ -50,6 +50,8 @@ Import and backup restore validate branch names and destination folders before e
 
 Branch cards offer **Pull from SVN**: preview incoming revisions, preserve branch and checkout edits separately, sync, replay commits, and recover edits. **Activity** retains checkpoints and paused operations across restarts. Unsupported edits are named before mutation; an interrupted restoration requires review rather than an automatic second application.
 
+Pull previews show placeholders immediately, then fill in local commits and edits while SVN revisions are checked. Pull becomes available only when the complete plan is ready; submitting it rechecks files and staged content. Planning scans each workspace once and skips unused remote commit counts. Workflow screens, import previews, and checkout externals share loading placeholders; page reads share progress that stays visible while any section is loading. `scripts/test-pull-loading.ps1 -FixtureRoot <disposable-workflow-root>` checks delayed repository access, a stalled SVN server, navigation cancellation, and inline retry through background UI Automation.
+
 Pull previews use labeled status colors for revisions and saved edits, with links to local commits, SVN history, and changed files. File lists and preservation details expand on demand. Worktree **Advanced** actions group readiness checks, backup coverage, export, and worktree settings; daily actions and recovery remain directly available.
 
 **Review readiness** runs explicitly configured local checks and records the exact branch version reviewed. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.

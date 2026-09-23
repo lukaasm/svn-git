@@ -51,8 +51,8 @@
                            Text="Point an external at another branch on this machine only. This is svn switch on that external's own working copy: the svn:externals property is left alone, so nothing is committed and nobody else sees it. Sync afterwards and the snapshot records the switched content." />
                 <Border Style="{StaticResource Card}">
                     <StackPanel Spacing="10">
-                        <Grid>
-                            <local:RowListView x:Name="Externals" SelectionMode="Single" SelectionChanged="External_SelectionChanged">
+                        <Grid RowDefinitions="Auto,Auto">
+                            <local:RowListView x:Name="Externals" Grid.Row="1" SelectionMode="Single" SelectionChanged="External_SelectionChanged">
                                 <local:RowListView.ItemTemplate>
                                     <DataTemplate x:DataType="local:ExternalRow">
                                         <Grid ColumnDefinitions="180,Auto,*" ColumnSpacing="10" ToolTipService.ToolTip="{x:Bind Tip}">
@@ -64,7 +64,8 @@
                                     </DataTemplate>
                                 </local:RowListView.ItemTemplate>
                             </local:RowListView>
-                            <local:EmptyState x:Name="NoExternals" Visibility="Collapsed" Glyph="&#xE8B7;" Title="No externals"
+                            <local:ReadFeedback x:Name="ExternalsReading" />
+                            <local:EmptyState x:Name="NoExternals" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE8B7;" Title="No externals"
                                               Text="This checkout is one working copy. There is nothing to point elsewhere." Padding="16" />
                         </Grid>
                         <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">

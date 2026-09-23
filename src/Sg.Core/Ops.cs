@@ -1356,7 +1356,7 @@ public static class Ops
     // ---- remote check ----
 
     /// <summary>Asks the server whether the root or any external moved past the snapshot. One svn info call, then one log call per part that did.</summary>
-    public static RemoteCheckResult RemoteCheck(SgRoot root, CheckoutConfig co)
+    public static RemoteCheckResult RemoteCheck(SgRoot root, CheckoutConfig co, bool countCommits = true)
     {
         var git = root.Git;
         var svn = root.Svn;
@@ -1373,7 +1373,7 @@ public static class Ops
             var info = infos.FirstOrDefault(i => i.Url.TrimEnd('/').Equals(e.Url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
             if (info == null) continue;
             e.Server = info.LastChangedRev;
-            if (e.Behind) e.Commits = Math.Max(1, svn.LogCount(co.Path, e.Url, e.Snapshot + 1, 50));
+            if (e.Behind && countCommits) e.Commits = Math.Max(1, svn.LogCount(co.Path, e.Url, e.Snapshot + 1, 50));
         }
         return new RemoteCheckResult { Checkout = co.Name, Entries = entries };
     }

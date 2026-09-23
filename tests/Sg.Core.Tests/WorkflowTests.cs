@@ -11,6 +11,33 @@ public sealed class WorkflowTests : IDisposable
     }
 
     [Fact]
+    public void Pull_plan_scans_each_workspace_once_and_does_not_count_remote_commits()
+    {
+        var path = Branch();
+        Fixture.Put(f.Checkout, "CMakeLists.txt", "project(new_server_version)\n");
+        f.Svn.Ok(f.Checkout, "commit", "--non-interactive", "-m", "Changed on SVN", "CMakeLists.txt");
+        Fixture.Put(path, "notes.txt", "untracked branch edit\n");
+        Fixture.Put(f.Checkout, "local.txt", "untracked checkout edit\n");
+        f.Log.Clear();
+        var reports = new List<BranchUpdateProgress>();
+        var plan = Operations.Plan(f.Root, path, progress: reports.Add);
+        Assert.True(plan.Ready);
+        Assert.Contains(plan.Revisions, x => x.To > x.From);
+        Assert.Equal(2, f.Log.Lines.Count(x => x.Contains(" status ")));
+        Assert.DoesNotContain(f.Log.Lines, x => x.Contains(" log ") && x.Contains("--xml"));
+        Assert.Equal("Waiting for repository access", reports[0].Stage);
+        Assert.Equal("Checking SVN revisions", reports[^1].Stage);
+        Assert.Contains("notes.txt", reports[^1].BranchEdits!);
+        Assert.Contains("local.txt", reports[^1].CheckoutEdits!);
+        Assert.Null(reports[1].BranchEdits);
+        Assert.Equal(WorkspaceVersion.Of(f.Root, path), plan.BranchVersion);
+        Assert.Equal(WorkspaceVersion.Of(f.Root, f.Checkout, checkout: true), plan.CheckoutVersion);
+        Fixture.Put(f.Checkout, "local.txt", "changed after the preview\n");
+        Assert.Throws<SgException>(() => Operations.Run(f.Root, plan));
+        Assert.Empty(Operations.List(f.Root));
+    }
+
+    [Fact]
     public void Dirty_update_recovers_both_owners_and_retains_checkpoint()
     {
         var path = Branch();

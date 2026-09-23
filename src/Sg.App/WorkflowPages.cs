@@ -13,16 +13,27 @@ public abstract class WorkflowPage : SgPage
     readonly ScrollViewer _scroll = new();
     protected ScrollViewer Scroll => _scroll;
     bool _busy;
-    readonly PageReads _reads = new();
+    readonly PageReads _reads;
+    protected readonly ReadFeedback Reading = new() { Margin = new Thickness(16), MaxWidth = 1000, HorizontalAlignment = HorizontalAlignment.Stretch };
     protected WorkflowPage(string title)
     {
         Title = title;
+        Reading.StateId = "WorkflowLoading";
+        _reads = new(active =>
+        {
+            if (active) Reading.Show("Loading " + Title.ToLowerInvariant() + "…", Body.Children.Count == 0);
+            else Reading.Hide();
+            _scroll.IsEnabled = !active;
+        });
         var grid = new Grid();
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
         _scroll.Content = Body; _scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-        grid.Children.Add(_scroll);
-        Grid.SetRow(Pane, 1); grid.Children.Add(Pane); Content = grid;
+        grid.Children.Add(Reading);
+        Grid.SetRow(_scroll, 1); grid.Children.Add(_scroll);
+        Grid.SetRow(Pane, 2); grid.Children.Add(Pane); Content = grid;
+        Pane.ShowReadFeedback = false; // This layout places the shared feedback above its content.
         Shortcuts.Add(this, VirtualKey.F5, () => _ = Reload());
         Unloaded += (_, _) => OnHidden(); // Standalone window closure also ends disposable reads.
     }
@@ -116,8 +127,36 @@ public sealed class UpdateBranchPage : WorkflowPage
     }
     protected override async Task Reload()
     {
+        _submit = null;
+        Body.Children.Clear();
         using var generation = BeginRead(); var root = Session.Require();
-        var state = await generation.Run(Pane, () => (object?)Operations.Pending(root, _path) ?? (_lastResult != null ? (object)Operations.Read(root, _lastResult.Id) : Operations.Plan(root, _path)));
+        var completed = false;
+        IProgress<BranchUpdateProgress> progress = new Progress<BranchUpdateProgress>(preview =>
+        {
+            if (completed || !Current(generation)) return;
+            Reading.Show(preview.Stage + "…", preview.Branch.Length == 0);
+            if (preview.Branch.Length == 0) return;
+            Branch = preview.Branch; Checkout = preview.Checkout;
+            Body.Children.Clear(); Scroll.IsEnabled = true;
+            Text($"{preview.Branch} · {preview.Commits} local commits", true);
+            Status("Preparing pull plan", ChipSeverity.Attention, "\uE895");
+            Link("Review local commits", "\uE81C", () => new LogPage(_path), "log:" + _path);
+            if (preview.BranchEdits != null) Edits("Branch edits", preview.BranchEdits, _path);
+            else Body.Children.Add(new Skeleton { RowCount = 2 });
+            if (preview.CheckoutEdits != null) Edits("Checkout edits", preview.CheckoutEdits, root.Checkout(preview.Checkout).Path);
+            else Body.Children.Add(new Skeleton { RowCount = 2 });
+            Text("SVN revisions", true);
+            Body.Children.Add(new Skeleton { RowCount = 3 });
+        });
+        var state = await generation.Run(Pane, () => (object?)Operations.Pending(root, _path) ?? (_lastResult != null ? (object)Operations.Read(root, _lastResult.Id) : Operations.Plan(root, _path, progress: progress.Report)), _ => { });
+        completed = true;
+        if (Current(generation) && state == null)
+        {
+            Body.Children.Clear();
+            Link("Review local commits", "\uE81C", () => new LogPage(_path), "log:" + _path);
+            var notice = ReadNotice("Could not prepare this pull plan.", "PullPlanError");
+            ReadFailed(notice, "Could not prepare the pull plan. Retry, or open the error log for details.");
+        }
         if (state == null || !Current(generation)) return;
         Body.Children.Clear(); _submit = null;
         if (state is OperationRecord record)
@@ -197,12 +236,15 @@ public sealed class ReviewPage : WorkflowPage
     protected override async Task Reload()
     {
         using var generation = BeginRead(); var root = Session.Require();
-        var status = await generation.Run(Pane, () => new[] { Review.Status(root, _path) });
-        if (status == null || !Current(generation)) return;
-        var records = await generation.Run(Pane, () => new[] { Review.Read(root, _path) });
+        string? error = null;
+        var status = await generation.Run(Pane, () => new[] { Review.Status(root, _path) }, message => error = message);
+        if (!Current(generation)) return;
+        if (status == null) { Body.Children.Clear(); ReadFailed(ReadNotice("", "ReviewReadError"), "Could not read review status. " + error); return; }
+        var records = await generation.Run(Pane, () => new[] { Review.Read(root, _path) }, message => error = message);
         var record = records?.FirstOrDefault();
         if (!Current(generation)) return;
         Body.Children.Clear();
+        if (records == null) { ReadFailed(ReadNotice("", "ReviewReadError"), "Could not read review results. " + error); return; }
         var severity = status[0] switch
         {
             "Ready for this version" => ChipSeverity.Success,

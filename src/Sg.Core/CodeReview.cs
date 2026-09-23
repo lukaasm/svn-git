@@ -82,6 +82,13 @@ public static class CodeReview
         if (!Guid.TryParseExact(id, "N", out _)) throw new SgException("Invalid worktree review identity.");
         return Path.Combine(DirectoryFor(root), id + ".json");
     }
+    /// <summary>A local identity that follows worktree moves and is not reused by a replacement worktree.</summary>
+    public static string WorktreeIdentity(SgRoot root, string worktree)
+    {
+        var path = Worktree(root, worktree);
+        using var gate = Lock(root);
+        return Path.GetFileNameWithoutExtension(FileFor(root, path, true))!;
+    }
     public static CodeReviewData Read(SgRoot root, string worktree)
     {
         var path = Worktree(root, worktree);

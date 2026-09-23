@@ -93,13 +93,13 @@ public sealed partial class BlamePage : SgPage
         // A reload draws a new list, so nothing is open any more: the guard has to forget what was, or
         // clicking the line you were reading before Refresh does nothing at all.
         _shown = null;
-        DetailHead.Text = "";
+        UserColors.Plain(DetailHead, "");
         DetailMessage.Text = "";
         if (_rows.Count > 0)
         {
             // Half the window is about the line nobody has picked yet, so it says so rather than
             // sitting empty under two headers.
-            DetailHead.Text = "Pick a line on the left.";
+            UserColors.Plain(DetailHead, "Pick a line on the left.");
             DetailMessage.Text = "Its revision, what that revision said, and what else it did to this file.";
             Diff.ShowText("", "pick a line");
         }
@@ -132,7 +132,7 @@ public sealed partial class BlamePage : SgPage
         if (line.Local && line.Sha != null)
         {
             var sha = line.Sha;
-            DetailHead.Text = $"{sha}\n{line.Author}   {line.Date}\nOn the branch. SVN has not seen this line.";
+            UserColors.Header(DetailHead, sha + "\n", line.Author, $"   {line.Date}\nOn the branch. SVN has not seen this line.");
             DetailMessage.Text = Msg.Body(line.Summary);
             var mine = $"{_path}   {sha[..Math.Min(8, sha.Length)]}";
             Diff.BeginLoading(mine);
@@ -143,7 +143,7 @@ public sealed partial class BlamePage : SgPage
 
         if (line.Revision is not { } revision || revision == 0)
         {
-            DetailHead.Text = "Not committed yet.";
+            UserColors.Plain(DetailHead, "Not committed yet.");
             DetailMessage.Text = "";
             Diff.ShowText("", "nothing to show");
             return;
@@ -161,9 +161,7 @@ public sealed partial class BlamePage : SgPage
             return new { Log = log, Diff = root.Svn.DiffRevision(url, revision) };
         });
         if (read == null || _shown != line.Mark) return;
-        DetailHead.Text = read.Log == null
-            ? $"r{revision}   {line.Author}   {Msg.When(line.Date)}"
-            : $"r{read.Log.Revision}   {read.Log.Author}   {Msg.When(read.Log.Date)}";
+        UserColors.Header(DetailHead, $"r{read.Log?.Revision ?? revision}   ", read.Log?.Author ?? line.Author, $"   {Msg.When(read.Log?.Date ?? line.Date)}");
         DetailMessage.Text = Msg.Body(read.Log?.Message);
         Diff.ShowUnified(read.Diff, title);
     }

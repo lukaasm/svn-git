@@ -32,7 +32,7 @@ public sealed partial class DiffView
         threads = _reviews.Select(t => new
         {
             id = t.Id, side = t.Side, first = t.First, last = t.Last, state = t.State, conflict = t.Conflict,
-            messages = t.Messages.Select(m => new { actor = m.Actor, action = m.Action, body = m.Body, at = m.At }),
+            messages = t.Messages.Select(m => new { actor = m.Actor, actorColor = UserColors.Index(m.Actor), action = m.Action, body = m.Body, at = m.At }),
         }),
     });
 
@@ -65,7 +65,7 @@ public sealed partial class DiffView
             var id = root.GetProperty("id").GetString();
             var action = root.GetProperty("action").GetString();
             if (id == null || !_reviews.Any(t => t.Id == id)) return;
-            if (action is "reply" or "resolve" or "reopen") ReviewActionInvoked?.Invoke(id, action);
+            if (action is "select" or "reply" or "resolve" or "reopen") ReviewActionInvoked?.Invoke(id, action);
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
         { /* Ignore malformed or obsolete browser messages. */ }

@@ -197,7 +197,7 @@ public sealed partial class SvnLogPage : SgPage
             : $"{wcs.Count} working copies, newer on the server: {string.Join(", ", behind)}.";
         SyncButton.IsEnabled = true;
         _paths.Clear("Changed paths");
-        DetailHead.Text = "";
+        UserColors.Plain(DetailHead, "");
         DetailMessage.Text = "";
         _rev = null;
         _wc = null;
@@ -212,7 +212,7 @@ public sealed partial class SvnLogPage : SgPage
         _wc = _wcs.FirstOrDefault(w => w.Rel.Equals(row.Group, StringComparison.OrdinalIgnoreCase));
         if (_wc == null) return;
         _rev = row.Entry;
-        DetailHead.Text = $"r{row.Revision}   {row.Entry.Author}   {Msg.When(row.Entry.Date)}";
+        UserColors.Header(DetailHead, $"r{row.Revision}   ", row.Entry.Author, $"   {Msg.When(row.Entry.Date)}");
         DetailMessage.Text = Msg.Body(row.Entry.Message);
         _paths.SetItems(row.Entry.Paths.Select(p => new SvnPathRow
         {

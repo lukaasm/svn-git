@@ -3,7 +3,7 @@
 Git branches and worktrees over SVN checkouts. SVN stays the master.
 The design is in [DESIGN.md](DESIGN.md). This is milestone 1: the core library and the CLI.
 
-[Worktree code review roadmap](CODE_REVIEW_DESIGN.md), covering delivered features and planned navigation, code anchoring, and review rounds.
+[Worktree code review roadmap](CODE_REVIEW_DESIGN.md), covering delivered features and planned scope filters, rename tracking, and review rounds.
 
 ## Guided workflows
 

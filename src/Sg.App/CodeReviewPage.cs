@@ -22,6 +22,13 @@ public sealed class CodeReviewPage : SgPage
     readonly ScrollViewer _discussion;
     readonly IconButton _comment = new() { Text = "Comment", Glyph = "\uE90A", IsEnabled = false };
     readonly IconButton _backToDiff;
+    readonly IconButton _previous, _next;
+    readonly TextBlock _position = new() { VerticalAlignment = VerticalAlignment.Center };
+    readonly ReviewDrafts _drafts = new(DebugTestRun.UserFile("review-drafts"));
+    readonly Dictionary<string, FrameworkElement> _threadCards = [];
+    string? _draftScope, _currentThread;
+    IReadOnlyDictionary<string, ReviewDraft> _savedDrafts = new Dictionary<string, ReviewDraft>();
+    int _navigationRequest;
     Dictionary<string, ReviewLocation> _locations = [];
     ReviewFile? _file;
     string? _displayedVersion;
@@ -45,7 +52,13 @@ public sealed class CodeReviewPage : SgPage
         toolbar.Children.Add(Button("Refresh", "\uE72C", () => _ = Reload(), "CodeReviewRefresh"));
         toolbar.Children.Add(Button("Copy agent instructions", "\uE8C8", () => _ = CopyHandoff(), "CodeReviewHandoff"));
         toolbar.Children.Add(Button("Readiness", "\uE73E", () => Go(() => new ReviewPage(path), "review:" + path), "CodeReviewReadiness"));
-        layout.Children.Add(toolbar);
+        var navigation = new WrapRow { Spacing = 8 };
+        _previous = Button("Previous open", "\uE70E", () => _ = NavigateOpen(false), "ReviewPreviousOpen");
+        _next = Button("Next open", "\uE70D", () => _ = NavigateOpen(true), "ReviewNextOpen");
+        _previous.IsEnabled = _next.IsEnabled = false;
+        navigation.Children.Add(_previous); navigation.Children.Add(_next); navigation.Children.Add(_position);
+        AutomationProperties.SetAutomationId(_position, "ReviewPosition");
+        var header = new StackPanel { Spacing = 8 }; header.Children.Add(toolbar); header.Children.Add(navigation); layout.Children.Add(header);
         Grid.SetRow(_loading, 1); layout.Children.Add(_loading);
         Grid.SetRow(_notice, 2); layout.Children.Add(_notice);
         _workspace.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -64,16 +77,22 @@ public sealed class CodeReviewPage : SgPage
         AutomationProperties.SetAutomationId(_comment, "CodeReviewComment");
         AutomationProperties.SetAutomationId(_threads, "CodeReviewThreads");
         _comment.Click += async (_, _) => await NewComment();
-        _files.SelectionChanged += async (_, _) => { if (!_loadingFiles) { _selectedFile = (_files.SelectedItem as FileChoice)?.Path; _visibleThreads = 20; await LoadFile(); } };
+        _files.SelectionChanged += async (_, _) => { if (!_loadingFiles) { ++_navigationRequest; _currentThread = null; _selectedFile = (_files.SelectedItem as FileChoice)?.Path; _visibleThreads = 20; await LoadFile(); } };
         _filter.SelectionChanged += (_, _) => { _visibleThreads = 20; RenderThreads(); };
         _diff.ActionInvoked += async id => { if (id == "comment") await NewComment(selected: true); };
         _diff.SelectionChanged += () => _diff.SetActionState("comment", _file != null && _diff.Selection != null);
         _diff.ReviewActionInvoked += async (id, action) =>
         {
             if (_data.Threads.FirstOrDefault(t => t.Id == id) is not { } thread) return;
+            _currentThread = id; UpdateNavigation();
+            if (action == "select") return;
             await Address(thread, action);
             if (_file != null && _selectedFile == thread.Anchor.File) _diff.RevealReviewThread(id);
         };
+        Shortcuts.Add(this, Windows.System.VirtualKey.F8, () => _ = NavigateOpen(true));
+        Shortcuts.Add(this, Windows.System.VirtualKey.F8, Windows.System.VirtualKeyModifiers.Shift, () => _ = NavigateOpen(false));
+        ToolTipService.SetToolTip(_next, "Next unresolved comment across this worktree (F8)");
+        ToolTipService.SetToolTip(_previous, "Previous unresolved comment across this worktree (Shift+F8)");
         SizeChanged += (_, _) =>
         {
             var compact = ActualWidth < 1000;
@@ -90,18 +109,30 @@ public sealed class CodeReviewPage : SgPage
     }
     static TextBlock Text(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     public override void OnShown(bool returning) => _ = Reload();
-    public override void OnHidden() => _reads.Cancel();
+    public override void OnHidden() { ++_navigationRequest; _reads.Cancel(); }
     internal override object? CaptureViewState() => _selectedFile;
     internal override void RestoreViewState(object? state) => _selectedFile = state as string;
     void Error(string message) { _notice.Message = message; _notice.Severity = InfoBarSeverity.Error; _notice.IsOpen = true; }
     async Task Reload()
     {
         using var read = _reads.Begin(); var root = Session.Require();
-        var result = await read.Run(_pane, () => new Inventory(CodeReview.Files(root, _path), CodeReview.Read(root, _path)), Error);
+        var result = await read.Run(_pane, () =>
+        {
+            var scope = CodeReview.WorktreeIdentity(root, _path);
+            var files = CodeReview.Files(root, _path);
+            IReadOnlyDictionary<string, ReviewDraft> drafts = new Dictionary<string, ReviewDraft>();
+            string? draftError = null;
+            try { drafts = _drafts.List(scope); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or SgException) { draftError = "Drafts could not be loaded: " + e.Message; }
+            return new Inventory(files.Concat(drafts.Where(d => d.Key.StartsWith("comment:", StringComparison.Ordinal)).Select(d => d.Value.File)).Distinct(StringComparer.Ordinal).Order(StringComparer.OrdinalIgnoreCase).ToArray(), CodeReview.Read(root, _path), scope, drafts, draftError);
+        }, Error);
         if (result == null || !read.Current) return;
         _data = result.Data;
+        _draftScope = result.Scope;
+        _savedDrafts = result.Drafts;
+        if (result.DraftError != null) Error(result.DraftError);
         var counts = _data.Threads.GroupBy(t => t.Anchor.File).ToDictionary(g => g.Key, g => (Open: g.Count(t => t.State == "open"), Total: g.Count()));
-        var choices = result.Files.Select(f => { var count = counts.GetValueOrDefault(f); return new FileChoice(f, count.Open, count.Total - count.Open); }).ToArray();
+        var choices = result.Files.Select(f => { var count = counts.GetValueOrDefault(f); return new FileChoice(f, count.Open, count.Total - count.Open, _savedDrafts.Values.Any(d => d.File == f)); }).ToArray();
         _loadingFiles = true;
         _files.ItemsSource = choices;
         _files.SelectedItem = choices.FirstOrDefault(f => f.Path == _selectedFile) ?? choices.FirstOrDefault();
@@ -109,15 +140,16 @@ public sealed class CodeReviewPage : SgPage
         _loadingFiles = false;
         await LoadFile();
     }
-    sealed record Inventory(IReadOnlyList<string> Files, CodeReviewData Data);
-    sealed record FileChoice(string Path, int Open, int Resolved)
+    sealed record Inventory(IReadOnlyList<string> Files, CodeReviewData Data, string Scope, IReadOnlyDictionary<string, ReviewDraft> Drafts, string? DraftError);
+    sealed record FileChoice(string Path, int Open, int Resolved, bool Draft)
     {
-        public string Label => $"{Path}   ·   {Open} open · {Resolved} resolved";
+        public string Label => $"{Path}   ·   {Open} open · {Resolved} resolved" + (Draft ? " · draft" : "");
     }
     sealed record LoadedFile(ReviewFile File, Dictionary<string, ReviewLocation> Locations);
     async Task LoadFile()
     {
         _file = null; _displayedVersion = null; _comment.IsEnabled = false; _locations.Clear();
+        _comment.Text = _savedDrafts.ContainsKey("comment:" + _selectedFile) ? "Resume draft" : "Comment";
         _backToDiff.Visibility = Visibility.Collapsed;
         if (_selectedFile == null)
         {
@@ -145,12 +177,13 @@ public sealed class CodeReviewPage : SgPage
             _comment.IsEnabled = true;
         }
         else _diff.ShowText("This file cannot be loaded. Saved comments remain available on the right.", file);
+        _comment.IsEnabled = _file != null || _savedDrafts.ContainsKey("comment:" + file);
         RenderThreads();
     }
     void RenderThreads()
     {
-        _threads.Children.Clear();
-        var all = _data.Threads.Where(t => t.Anchor.File == _selectedFile).ToArray();
+        _threads.Children.Clear(); _threadCards.Clear(); UpdateNavigation();
+        var all = ReviewNavigation.Ordered(_data.Threads.Where(t => t.Anchor.File == _selectedFile));
         var open = all.Count(t => t.State == "open");
         _threads.Children.Add(new StatusChip { Text = $"{open} open · {all.Length - open} resolved", Glyph = "\uE90A", Severity = open > 0 ? ChipSeverity.Attention : ChipSeverity.Success });
         _threads.Children.Add(Text("Comments and saved code context are included when this worktree is backed up."));
@@ -166,26 +199,50 @@ public sealed class CodeReviewPage : SgPage
         {
             var card = new StackPanel { Spacing = 8 };
             var anchor = thread.Anchor;
-            card.Children.Add(new StatusChip { Text = thread.Conflict ? "Concurrent feedback · needs review" : thread.State == "open" ? "Open" : "Resolved", Glyph = thread.State == "open" ? "\uE90A" : "\uE73E", Severity = thread.State == "open" ? ChipSeverity.Attention : ChipSeverity.Success });
+            card.Children.Add(new StatusChip { Text = thread.Conflict ? "Concurrent feedback · needs review" : thread.State == "open" ? "Open" : "Resolved", Glyph = thread.State == "open" ? "\uE90A" : "\uE73E", Severity = thread.Conflict ? ChipSeverity.Caution : thread.State == "open" ? ChipSeverity.Attention : ChipSeverity.Success });
             card.Children.Add(Text(anchor.First == 0 ? "Whole file" : $"{anchor.Side} · lines {anchor.First}–{anchor.Last}"));
             var location = _locations.GetValueOrDefault(thread.Id);
             if (anchor.First > 0 && location?.State != "current")
                 card.Children.Add(Text(location?.First > 0 ? $"Now at line {location.First}" : "Saved anchor · open context to compare with current code"));
             foreach (var e in thread.Events)
             {
-                card.Children.Add(Text($"{e.Actor} · {e.Action} · {e.At.LocalDateTime:g}"));
+                var author = Text(""); UserColors.Header(author, "", e.Actor, $" · {e.Action} · {e.At.LocalDateTime:g}"); card.Children.Add(author);
                 card.Children.Add(Text(e.Body));
             }
             var actions = new WrapRow { Spacing = 8 };
-            if (location?.First > 0) actions.Children.Add(Button("Show in code", "\uE8A5", () => _diff.RevealReviewThread(thread.Id), "ReviewShow_" + thread.Id));
-            actions.Children.Add(Button("Context", "\uE8A5", () => _ = ShowContext(thread), "ReviewContext_" + thread.Id));
+            if (location?.First > 0) actions.Children.Add(Button("Show in code", "\uE8A5", () => { _currentThread = thread.Id; UpdateNavigation(); _diff.RevealReviewThread(thread.Id); }, "ReviewShow_" + thread.Id));
+            actions.Children.Add(Button("Context", "\uE8A5", () => { _currentThread = thread.Id; UpdateNavigation(); _ = ShowContext(thread); }, "ReviewContext_" + thread.Id));
             actions.Children.Add(Button("Reply", "\uE97A", () => _ = Address(thread, "reply"), "ReviewReply_" + thread.Id));
             var action = thread.State == "open" ? "resolve" : "reopen";
             actions.Children.Add(Button(thread.State == "open" ? "Resolve" : "Reopen", "\uE73E", () => _ = Address(thread, action), "ReviewAddress_" + thread.Id));
             card.Children.Add(actions);
-            _threads.Children.Add(new Border { Child = card, Padding = new Thickness(12), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"] });
+            var border = new Border { Child = card, Padding = new Thickness(12), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"] };
+            AutomationProperties.SetAutomationId(border, "ReviewThread_" + thread.Id);
+            _threadCards[thread.Id] = border; _threads.Children.Add(border);
         }
         if (shown.Length > _visibleThreads) _threads.Children.Add(Button("Show more comments", "\uE70D", () => { _visibleThreads += 20; RenderThreads(); }, "CodeReviewMore"));
+    }
+    void UpdateNavigation()
+    {
+        var open = ReviewNavigation.Ordered(_data.Threads.Where(t => t.State == "open"));
+        var index = Array.FindIndex(open, t => t.Id == _currentThread);
+        _position.Text = open.Length == 0 ? "No open comments in this worktree" : index >= 0 ? $"Open comment {index + 1} of {open.Length}" : $"{open.Length} open comments across {open.Select(t => t.Anchor.File).Distinct().Count()} files";
+        _previous.IsEnabled = _next.IsEnabled = open.Length > 0 && !_writing;
+    }
+    async Task NavigateOpen(bool forward)
+    {
+        if (_writing) return;
+        var thread = ReviewNavigation.Next(_data.Threads, _currentThread, _selectedFile, forward);
+        if (thread == null) return;
+        var request = ++_navigationRequest; _currentThread = thread.Id;
+        _selectedFile = thread.Anchor.File;
+        _loadingFiles = true; _files.SelectedItem = _files.Items.OfType<FileChoice>().FirstOrDefault(f => f.Path == _selectedFile); _loadingFiles = false;
+        _visibleThreads = Math.Max(20, Array.FindIndex(ReviewNavigation.Ordered(_data.Threads.Where(t => t.Anchor.File == _selectedFile && (_filter.SelectedIndex == 1 || t.State == "open"))), t => t.Id == thread.Id) + 1);
+        UpdateNavigation(); await LoadFile();
+        if (request != _navigationRequest) return;
+        if (_locations.GetValueOrDefault(thread.Id)?.First > 0) _diff.RevealReviewThread(thread.Id);
+        else if (thread.Anchor.First > 0) await ShowContext(thread);
+        if (request == _navigationRequest && _threadCards.TryGetValue(thread.Id, out var card)) BrowseScroll.Reveal(card);
     }
     async Task<ReviewContext?> ShowContext(CodeThread thread, bool display = true)
     {
@@ -205,45 +262,24 @@ public sealed class CodeReviewPage : SgPage
     }
     async Task NewComment(bool selected = false)
     {
-        if (_writing || _file == null) return;
-        var file = _file;
-        var range = selected ? _diff.Selection : null;
-        var side = new ComboBox { Header = "Code version", ItemsSource = new[] { "modified", "original" }, SelectedIndex = 0 };
-        var first = new NumberBox { Header = "First line (0 for whole file)", Value = range?.First ?? 0, Minimum = 0, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
-        var last = new NumberBox { Header = "Last line", Value = range?.Last ?? 0, Minimum = 0, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
-        var body = new TextBox { Header = "Feedback", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, MaxLength = 32000 };
-        AutomationProperties.SetAutomationId(body, "ReviewCommentBody");
-        AutomationProperties.SetAutomationId(first, "ReviewCommentFirst");
-        AutomationProperties.SetAutomationId(last, "ReviewCommentLast");
-        AutomationProperties.SetAutomationId(side, "ReviewCommentSide");
-        var content = new StackPanel { Spacing = 12 }; content.Children.Add(Text(file.File)); content.Children.Add(side); content.Children.Add(first); content.Children.Add(last); content.Children.Add(body);
-        _writing = true;
+        if (_writing || _selectedFile == null || _draftScope == null) return;
+        var file = _file; var root = Session.Require();
+        _writing = true; UpdateNavigation();
         try
         {
-            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Leave code review feedback", Content = content, PrimaryButtonText = "Save comment", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, IsPrimaryButtonEnabled = false };
-            var lineCounts = new[] { file.Modified.Count(c => c == '\n') + 1, file.Original.Count(c => c == '\n') + 1 };
-            void Validate()
-            {
-                var lines = lineCounts[side.SelectedIndex];
-                dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(body.Text) && double.IsFinite(first.Value) && double.IsFinite(last.Value)
-                    && first.Value == Math.Truncate(first.Value) && last.Value == Math.Truncate(last.Value)
-                    && first.Value >= 0 && last.Value >= first.Value && last.Value <= lines && (first.Value > 0 || last.Value == 0);
-            }
-            body.TextChanged += (_, _) => Validate(); first.ValueChanged += (_, _) => Validate(); last.ValueChanged += (_, _) => Validate(); side.SelectionChanged += (_, _) => Validate();
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (double.IsNaN(first.Value) || double.IsNaN(last.Value) || first.Value > int.MaxValue || last.Value > int.MaxValue || first.Value != Math.Truncate(first.Value) || last.Value != Math.Truncate(last.Value)) throw new SgException("Enter whole line numbers.");
-            var selectedSide = (string)side.SelectedItem; var firstLine = (int)first.Value; var lastLine = (int)last.Value; var feedback = body.Text;
-            var root = Session.Require();
-            await Task.Run(() => CodeReview.Add(root, _path, file, selectedSide, firstLine, lastLine, feedback));
+            var version = file == null ? "unavailable" : WorkspaceVersion.Hash(file.Original + "\0" + file.Modified);
+            var options = new ReviewComposer.Options("Leave code review feedback", "Save comment", "Feedback", _selectedFile, version, file, selected ? _diff.Selection : null, CanSubmit: file != null);
+            await ReviewComposer.Show(XamlRoot, _drafts, _draftScope, "comment:" + _selectedFile, options, draft =>
+                Task.Run(() => CodeReview.Add(root, _path, file!, draft.Side, (int)draft.First!.Value, (int)draft.Last!.Value, draft.Body, id: draft.Id)));
             await Reload();
         }
         catch (Exception e) { Error(e.Message); }
-        finally { _writing = false; }
+        finally { _writing = false; UpdateNavigation(); }
     }
     async Task Address(CodeThread thread, string action)
     {
-        if (_writing) return;
-        _writing = true;
+        if (_writing || _draftScope == null) return;
+        _writing = true; _currentThread = thread.Id; UpdateNavigation();
         try
         {
             var context = await ShowContext(thread, display: false);
@@ -255,17 +291,15 @@ public sealed class CodeReviewPage : SgPage
                 _notice.Severity = InfoBarSeverity.Warning; _notice.IsOpen = true;
                 return;
             }
-            var body = new TextBox { Header = action == "resolve" ? "What changed or why no change is needed" : "Reply", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, MaxLength = 32000 };
-            AutomationProperties.SetAutomationId(body, "ReviewAddressBody");
-            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = action == "resolve" ? "Resolve feedback" : action == "reopen" ? "Reopen feedback" : "Reply to feedback", Content = body, PrimaryButtonText = action == "resolve" ? "Resolve" : "Save", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false };
-            body.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(body.Text);
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            var explanation = body.Text;
-            await Task.Run(() => CodeReview.Address(Session.Require(), _path, thread.Id, action, explanation, context.Thread.Revision, version: context.Version));
+            var root = Session.Require();
+            var options = new ReviewComposer.Options(action == "resolve" ? "Resolve feedback" : action == "reopen" ? "Reopen feedback" : "Reply to feedback",
+                action == "resolve" ? "Resolve" : "Save", action == "resolve" ? "What changed or why no change is needed" : "Reply", thread.Anchor.File, context.Version);
+            await ReviewComposer.Show(XamlRoot, _drafts, _draftScope, thread.Id + ":" + action, options, draft =>
+                Task.Run(() => CodeReview.Address(root, _path, thread.Id, action, draft.Body, context.Thread.Revision, version: context.Version, requestId: draft.Id)));
             await Reload();
         }
         catch (Exception e) { Error(e.Message); }
-        finally { _writing = false; }
+        finally { _writing = false; UpdateNavigation(); }
     }
     async Task CopyHandoff()
     {

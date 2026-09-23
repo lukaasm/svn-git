@@ -222,7 +222,7 @@ public sealed partial class MonitorPage : SgPage
             else
             {
                 _paths.Clear("Changed paths");
-                DetailHead.Text = "";
+                UserColors.Plain(DetailHead, "");
                 DetailMessage.Text = "";
                 _rev = null;
                 var open = FirstUnread(rows);
@@ -284,7 +284,7 @@ public sealed partial class MonitorPage : SgPage
                 : rows.FirstOrDefault(r => r.Revision == previousRev && ItemOf(r)?.Id == previousItem);
             if (again != null) { Revisions.SelectedItem = again; return; }
             _paths.Clear("Changed paths");
-            DetailHead.Text = "";
+            UserColors.Plain(DetailHead, "");
             DetailMessage.Text = "";
             _rev = null;
             var open = FirstUnread(rows);
@@ -326,7 +326,7 @@ public sealed partial class MonitorPage : SgPage
         // A press is the user reading it. A selection the page made itself is not.
         if (!_selecting) MarkRead(row);
         if (same) return;
-        DetailHead.Text = $"r{row.Revision}   {row.Entry.Author}   {Msg.When(row.Entry.Date)}";
+        UserColors.Header(DetailHead, $"r{row.Revision}   ", row.Entry.Author, $"   {Msg.When(row.Entry.Date)}");
         DetailMessage.Text = Msg.Body(row.Entry.Message);
         _paths.SetItems(row.Entry.Paths.Select(p => new SvnPathRow
         {
@@ -431,7 +431,7 @@ public sealed partial class MonitorPage : SgPage
         _rev = null;
         Revisions.ItemsSource = null;
         _paths.Clear("Changed paths");
-        DetailHead.Text = "";
+        UserColors.Plain(DetailHead, "");
         DetailMessage.Text = "";
         Diff.ShowText("", "pick a repository");
         ItemHeader.Text = "Pick a repository";

@@ -88,6 +88,12 @@ Expand a worktree and choose **Review code**, or launch `sg-ui code-review <work
 
 Review readiness cannot be marked ready with open threads. A readiness stamp includes the feedback revision: new feedback invalidates it, while code/check configuration freshness retains its existing behavior. Resolving feedback does not publish code or automatically mark the branch ready.
 
+**Previous open** and **Next open** walk unresolved comments across files and wrap at the ends (F8 / Shift+F8 from native controls). Mapped comments open inline; uncertain anchors open their saved context. Resolving a comment keeps its place for the next step.
+
+Comment, reply, resolve, and reopen composers save drafts in the background. **Keep draft** (or Escape) retains the text and line range; **Discard draft** removes only that composer’s draft. Drafts survive restarting SG, follow a worktree move/rename, and show **Resume draft** in the file toolbar. Changed code requires reviewing the draft before submission. Failed saves retain the text, and another SG window cannot silently overwrite a newer draft. Unpublished drafts stay in the user’s local app data: they are excluded from backups, agent tools, and readiness checks. Published feedback follows the backup behavior below.
+
+Usernames share one stable, case-insensitive color mapping across commit lists, SVN history, blame, backup comparisons, and native/inline review threads. Identity colors use the shared theme palette; review status colors use the same severity resources as native badges. Labels and icons retain the meaning without relying on color.
+
 ## Backup behavior
 
 Code review travels with each included worktree's backup, including a backup scoped with `--worktree`. It remains included when uncommitted-file backup is disabled. Excluding a worktree excludes its annotations too. There are no new backup triggers; the configured interval and explicit **Back up** actions apply.
@@ -104,4 +110,4 @@ Local documents live under `.sg/code-reviews/`; a private Git worktree identity 
 
 Core tests cover review freshness, readiness, move/rename identity, concurrent feedback, corrupt input, and selected-worktree backup/restore. MCP tests launch the real stdio server, negotiate the protocol, discover all 31 tools, exercise CLI delegation and typed review operations, and reject stale resolutions. They run with the regular `dotnet test tests/Sg.Core.Tests` command.
 
-After building the Debug CLI and x64 app, run `scripts/test-code-review.ps1 -FixtureRoot <disposable-workflow-fixture-root>`. It uses Windows UI Automation on a private desktop to add, resolve, reopen, and reload feedback, records screenshots, and removes its temporary worktree. It does not control the interactive desktop or open a real working repository.
+After building the Debug CLI and x64 app, run `scripts/test-code-review.ps1 -FixtureRoot <disposable-workflow-fixture-root>`. It uses Windows UI Automation and WebView DOM automation on a private desktop to exercise feedback, draft recovery, cross-file navigation, shared colors, and Push to SVN scroll retention with 46 local commits. It records screenshots and removes its temporary worktree. It does not control the interactive desktop or open a real working repository.

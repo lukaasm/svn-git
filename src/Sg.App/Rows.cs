@@ -757,8 +757,9 @@ public sealed class SvnPathRow : StatusRow
     public override string TreePath => Path.Path;
 }
 
-public sealed class CommitRow
+public sealed class CommitRow : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
     public string Sha { get; set; } = "";
     public string Date { get; set; } = "";
     public string Author { get; set; } = "";
@@ -769,7 +770,18 @@ public sealed class CommitRow
     /// The push window only: this commit is above the one the push stops at, so it waits for the next
     /// push. The row dims and wears a tag; every other window leaves this alone.
     /// </summary>
-    public bool Staying { get; set; }
+    bool _staying;
+    public bool Staying
+    {
+        get => _staying;
+        set
+        {
+            if (_staying == value) return;
+            _staying = value;
+            PropertyChanged?.Invoke(this, new(nameof(RowOpacity)));
+            PropertyChanged?.Invoke(this, new(nameof(StaysVisibility)));
+        }
+    }
 
     /// <summary>
     /// The one line a run of snapshots folds into. A branch sits on a long tail of them, one per sync,

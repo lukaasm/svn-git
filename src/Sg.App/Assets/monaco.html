@@ -289,8 +289,10 @@ body.sg-flat .monaco-component {
      the strong wash would turn the screen into a field of green, so those two fall back to something
      between the two. */
   function defineTheme(t) {
-    document.documentElement.style.setProperty('--sg-review-open', '#' + t.modified);
-    document.documentElement.style.setProperty('--sg-review-resolved', '#' + t.added);
+    document.documentElement.style.setProperty('--sg-review-open', '#' + t.reviewOpen);
+    document.documentElement.style.setProperty('--sg-review-resolved', '#' + t.reviewResolved);
+    document.documentElement.style.setProperty('--sg-review-conflict', '#' + t.reviewConflict);
+    (t.users || []).forEach(function (color, index) { document.documentElement.style.setProperty('--sg-user-' + index, '#' + color); });
     monaco.editor.defineTheme('sg-custom', {
       base: t.dark ? 'vs-dark' : 'vs',
       inherit: true,

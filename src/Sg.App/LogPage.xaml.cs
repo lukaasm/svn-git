@@ -129,7 +129,7 @@ public sealed partial class LogPage : SgPage
     void NothingPicked(string? why = null)
     {
         _currentSha = "";
-        DetailHead.Text = "";
+        UserColors.Plain(DetailHead, "");
         DetailMessage.Text = "";
         _filter.Clear("Files");
         Diff.ShowText("", why ?? "pick a commit to see what it changed");
@@ -286,8 +286,8 @@ public sealed partial class LogPage : SgPage
         // A commit a rewrite in another window took away reads like any other failure: the pane says so and
         // the page empties, so pressing the row again tries once more instead of hitting the sha guard.
         if (head == null) { NothingPicked("could not read that commit"); return; }
-        DetailHead.Text = $"{head.Details.Sha}\n{head.Details.Author} <{head.Details.Email}>\n{head.Details.Date}"
-                          + (head.Details.Parents.Length > 0 ? $"\nparent {head.Details.Parents[..Math.Min(8, head.Details.Parents.Length)]}" : "");
+        UserColors.Header(DetailHead, head.Details.Sha + "\n", head.Details.Author, $" <{head.Details.Email}>\n{head.Details.Date}"
+                          + (head.Details.Parents.Length > 0 ? $"\nparent {head.Details.Parents[..Math.Min(8, head.Details.Parents.Length)]}" : ""));
         DetailMessage.Text = head.Details.Body;
         _filter.SetItems(head.Files.Select(f => new FileRow
         {

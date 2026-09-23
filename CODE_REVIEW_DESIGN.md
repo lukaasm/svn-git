@@ -1,6 +1,6 @@
 # Worktree code review
 
-Implementation update: delivered features include the review page, shared durable comments, CLI addressing, a 31-tool MCP server, readiness integration, worktree-scoped backup/restore, inline gutter threads, and per-file open/resolved counts. See [the shipped behavior and setup](MCP.md). This document remains the broader UX roadmap; richer navigation/scope filters, rename tracking, and review rounds are not yet implemented. Backup was brought forward from the later phase at the user's request.
+Implementation update: delivered features include the review page, shared durable comments, CLI addressing, a 31-tool MCP server, readiness integration, worktree-scoped backup/restore, inline gutter threads, per-file open/resolved counts, local composer drafts, and navigation between unresolved comments across files. Usernames and review states share colors with the other views. See [the shipped behavior and setup](MCP.md). This document remains the broader UX roadmap; richer scope filters, rename tracking, and review rounds are not yet implemented. Backup was brought forward from the later phase at the user's request.
 
 Status: design and feature roadmap. The implementation update above identifies delivered features; later sections also contain planned behavior.
 

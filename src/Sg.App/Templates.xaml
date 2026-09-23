@@ -220,13 +220,13 @@
          goes now and what waits is read off the list itself. Every other window leaves both off. -->
     <DataTemplate x:Key="CommitRowTemplate" x:DataType="local:CommitRow">
         <Grid ColumnDefinitions="12,100,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}"
-              Opacity="{x:Bind RowOpacity}">
+              Opacity="{x:Bind RowOpacity, Mode=OneWay}">
             <!-- Only the one line a run of snapshots folds into wears a chevron. The column is there on
                  every row so the authors stay in one line down the list. -->
             <FontIcon Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" Visibility="{x:Bind ChevronVisibility}" FontSize="9" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{x:Bind Author}" Style="{StaticResource RowTextDim}" />
+            <TextBlock Grid.Column="1" Text="{x:Bind Author}" local:UserColors.Name="{x:Bind Author}" Style="{StaticResource RowTextDim}" />
             <TextBlock Grid.Column="2" Text="{x:Bind Subject, Mode=OneWay}" Style="{StaticResource RowText}" FontWeight="{x:Bind Weight}" />
-            <Border Grid.Column="3" Visibility="{x:Bind StaysVisibility}" CornerRadius="4" Padding="6,1" VerticalAlignment="Center"
+            <Border Grid.Column="3" Visibility="{x:Bind StaysVisibility, Mode=OneWay}" CornerRadius="4" Padding="6,1" VerticalAlignment="Center"
                     Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
                 <TextBlock Text="stays" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </Border>
@@ -253,7 +253,7 @@
             <Border CornerRadius="4" Padding="6,1" Background="{x:Bind MarkBackground}" VerticalAlignment="Center" HorizontalAlignment="Left">
                 <TextBlock Text="{x:Bind Mark}" Foreground="{x:Bind MarkBrush}" Style="{StaticResource RowText}" FontWeight="SemiBold" />
             </Border>
-            <TextBlock Grid.Column="1" Text="{x:Bind Author}" Style="{StaticResource RowTextDim}" TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="1" Text="{x:Bind Author}" local:UserColors.Name="{x:Bind Author}" Style="{StaticResource RowTextDim}" TextTrimming="CharacterEllipsis" />
             <TextBlock Grid.Column="2" Text="{x:Bind Number}" Style="{StaticResource RowTextDim}" TextAlignment="Right" />
             <TextBlock Grid.Column="3" Text="{x:Bind Text}" FontFamily="Cascadia Mono, Consolas" FontSize="12"
                        TextWrapping="NoWrap" IsTextSelectionEnabled="True" />
@@ -282,7 +282,7 @@
                         <TextBlock Text="{x:Bind Repo}" Foreground="{x:Bind RepoBrush}" Style="{StaticResource RowText}" FontWeight="SemiBold" />
                     </Border>
                 </Grid>
-                <TextBlock Text="{x:Bind Author}" Style="{StaticResource RowTextDim}" Width="100" />
+                <TextBlock Text="{x:Bind Author}" local:UserColors.Name="{x:Bind Author}" Style="{StaticResource RowTextDim}" Width="100" />
             </StackPanel>
             <TextBlock Grid.Column="2" Text="{x:Bind Subject}" Style="{StaticResource RowText}" FontWeight="{x:Bind Weight}" />
         </Grid>

@@ -125,9 +125,10 @@ public sealed partial class PushPage : SgPage
         WarnBar.ActionButton = p.NeedsRebase ? RebaseNowButton() : null;
         // Newest first, so the ones above the boundary are the ones that stay. The picked line is the
         // last one going, which puts the selection right on the edge between the two halves.
+        var previousRows = _commitRows.ToDictionary(c => c.Sha, StringComparer.Ordinal);
         _commitRows = p.Commits.Select((c, i) =>
         {
-            var row = CommitRow.From(c, snapshot: false);
+            var row = previousRows.GetValueOrDefault(c.Sha) ?? CommitRow.From(c, snapshot: false);
             row.Staying = i < p.Commits.Count - p.Sending;
             return row;
         }).ToList();
@@ -224,7 +225,8 @@ public sealed partial class PushPage : SgPage
         var shown = _commitFilter.Apply(_commitRows);
         var cut = _cut >= 0 && _cut < _commitRows.Count ? _commitRows[_cut] : null;
         _binding = true;
-        Commits.ItemsSource = shown;
+        // Changing the upper bound only repaints which rows stay. Rebinding resets the list's scroll.
+        if (Commits.ItemsSource is not IReadOnlyList<CommitRow> current || !current.SequenceEqual(shown)) Commits.ItemsSource = shown;
         Commits.SelectedItem = cut != null && shown.Contains(cut) ? cut : null;
         _binding = false;
         CommitsHeader.Text = _commitFilter.Active

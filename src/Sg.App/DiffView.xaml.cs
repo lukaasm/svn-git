@@ -46,6 +46,7 @@ public sealed partial class DiffView : UserControl
         CollapsedToggle.IsChecked = Session.Settings.DiffCollapsed;
         WhitespaceToggle.IsChecked = Session.Settings.DiffIgnoreWhitespace;
         Loaded += OnLoaded;
+        ActualThemeChanged += (_, _) => SendTheme();
         // A theme picked in Settings repaints every diff already on screen, not only the next one opened.
         Themes.Changed += SendTheme;
         // A page that was left is dropped, and the browser inside it must go too: a WebView2 is a
@@ -419,6 +420,10 @@ public sealed partial class DiffView : UserControl
                 number = t.Number, type = t.Type, function = t.Function,
                 added = t.Added, removed = t.Removed, modified = t.Modified,
                 renamed = t.Renamed, conflict = t.Conflict, untracked = t.Untracked,
+                users = UserColors.Palette,
+                reviewOpen = UserColors.Hex(StatusChip.ForegroundFor(ChipSeverity.Attention)),
+                reviewResolved = UserColors.Hex(StatusChip.ForegroundFor(ChipSeverity.Success)),
+                reviewConflict = UserColors.Hex(StatusChip.ForegroundFor(ChipSeverity.Caution)),
             },
         });
     }

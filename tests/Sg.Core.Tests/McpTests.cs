@@ -3,6 +3,11 @@ using System.Text.Json;
 
 namespace Sg.Core.Tests;
 
+// The stdio deadline measures the server, not contention from parallel Git/SVN fixture processes.
+[CollectionDefinition("MCP process integration", DisableParallelization = true)]
+public sealed class McpProcessCollection;
+
+[Collection("MCP process integration")]
 public sealed class McpTests
 {
     sealed class Client : IDisposable

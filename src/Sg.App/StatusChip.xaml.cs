@@ -75,19 +75,10 @@ public sealed partial class StatusChip : UserControl
 
     void Apply()
     {
-        var tone = Severity switch
-        {
-            ChipSeverity.Attention => "Attention",
-            ChipSeverity.Caution => "Caution",
-            ChipSeverity.Critical => "Critical",
-            ChipSeverity.Success => "Success",
-            _ => "Neutral",
-        };
+        var tone = Tone(Severity);
         Pill.Background = Res($"SystemFillColor{tone}BackgroundBrush", "ControlFillColorSecondaryBrush");
         Pill.BorderBrush = Res("ControlStrokeColorDefaultBrush");
-        var foreground = Severity == ChipSeverity.Neutral
-            ? Res("TextFillColorSecondaryBrush")
-            : Res($"SystemFillColor{tone}Brush", "TextFillColorPrimaryBrush");
+        var foreground = ForegroundFor(Severity);
         Icon.Foreground = foreground;
         CountText.Foreground = foreground;
         Icon.Glyph = Glyph;
@@ -97,6 +88,17 @@ public sealed partial class StatusChip : UserControl
         Label.Text = Text;
         Label.Visibility = Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
+    static string Tone(ChipSeverity severity) => severity switch
+        {
+            ChipSeverity.Attention => "Attention",
+            ChipSeverity.Caution => "Caution",
+            ChipSeverity.Critical => "Critical",
+            ChipSeverity.Success => "Success",
+            _ => "Neutral",
+        };
+    public static Brush? ForegroundFor(ChipSeverity severity) => severity == ChipSeverity.Neutral
+            ? Res("TextFillColorSecondaryBrush")
+            : Res($"SystemFillColor{Tone(severity)}Brush", "TextFillColorPrimaryBrush");
 
     /// <summary>The first of these the theme defines. A missing brush leaves the chip plain, never crashes it.</summary>
     static Brush? Res(params string[] keys)

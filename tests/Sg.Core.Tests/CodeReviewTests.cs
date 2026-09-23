@@ -15,6 +15,7 @@ public sealed class CodeReviewTests : IDisposable
     public void Addressing_requires_current_feedback_and_code_and_survives_move()
     {
         var path = Setup();
+        var identity = CodeReview.WorktreeIdentity(f.Root, path);
         var source = File.ReadAllText(Path.Combine(path, "CMakeLists.txt"));
         var thread = Comment(path);
         Assert.Equal(source, File.ReadAllText(Path.Combine(path, "CMakeLists.txt")));
@@ -34,6 +35,7 @@ public sealed class CodeReviewTests : IDisposable
         f.Root.Git.Ok(null, "worktree", "move", path, moved);
         f.Root.Git.Ok(moved, "branch", "-m", "renamed");
         Assert.Equal(thread.Id, Assert.Single(CodeReview.Read(f.Root, moved).Threads).Id);
+        Assert.Equal(identity, CodeReview.WorktreeIdentity(f.Root, moved));
         Assert.Equal(source, CodeReview.Context(f.Root, moved, thread.Id).Original);
     }
 

@@ -42,11 +42,13 @@ window.createReviewThreads = function (diff, post) {
       var card = element('article', 'sg-review-thread'); card.dataset.threadId = item.id;
       history.appendChild(card);
       var status = item.conflict ? 'Concurrent feedback · needs review' : item.state === 'resolved' ? 'Resolved' : 'Open';
-      card.appendChild(element('span', 'sg-review-status ' + item.state, (item.state === 'resolved' ? '✓ ' : '● ') + status));
+      card.appendChild(element('span', 'sg-review-status ' + (item.conflict ? 'conflict' : item.state), (item.state === 'resolved' ? '✓ ' : '● ') + status));
       if (item.last !== item.first) card.appendChild(element('span', 'sg-review-range', 'Lines ' + item.first + '–' + item.last));
       if (item.messages.length > 20) card.appendChild(element('p', 'sg-review-meta', 'Showing the latest 20 entries. Earlier history is in the comments pane.'));
       item.messages.slice(-20).forEach(function (message) {
-        card.appendChild(element('div', 'sg-review-meta', message.actor + ' · ' + message.action + ' · ' + message.at));
+        var meta = element('div', 'sg-review-meta'), author = element('span', 'sg-review-author', message.actor);
+        author.style.color = 'var(--sg-user-' + message.actorColor + ')';
+        meta.appendChild(author); meta.appendChild(document.createTextNode(' · ' + message.action + ' · ' + message.at)); card.appendChild(meta);
         card.appendChild(element('p', 'sg-review-body', message.body));
       });
       var actions = element('div', 'sg-review-actions'); card.appendChild(actions);
@@ -75,6 +77,7 @@ window.createReviewThreads = function (diff, post) {
     observer.observe(panel); resize();
     editor.revealLineNearTop(thread.first);
     if (selected) selected.focus({ preventScroll: true });
+    post('review:' + JSON.stringify({ document: documentId, id: id, action: 'select' }));
   }
   function clear() {
     close(false); threads = [];
@@ -100,9 +103,9 @@ window.createReviewThreads = function (diff, post) {
         });
         editor.updateOptions({ glyphMargin: threads.length > 0 });
         decorations[side].set(Array.from(groups, function (entry) {
-          var line = entry[0], group = entry[1], open = group.some(function (t) { return t.state === 'open'; });
+          var line = entry[0], group = entry[1], open = group.some(function (t) { return t.state === 'open'; }), conflict = group.some(function (t) { return t.conflict; });
           return { range: new monaco.Range(line, 1, line, 1), options: {
-            glyphMarginClassName: 'sg-review-glyph ' + (open ? 'sg-review-open' : 'sg-review-resolved'),
+            glyphMarginClassName: 'sg-review-glyph ' + (conflict ? 'sg-review-conflict' : open ? 'sg-review-open' : 'sg-review-resolved'),
             glyphMarginHoverMessage: { value: group.length + ' comment thread(s). Click to open, or use Show in code in the comments pane.' },
             stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
           } };

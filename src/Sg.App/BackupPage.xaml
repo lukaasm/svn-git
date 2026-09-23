@@ -9,9 +9,9 @@
 
         <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
-        <!-- Keep worktrees first; reports and scheduling stay in the same scrolling column. -->
-        <ScrollViewer x:Name="ContentScroll" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
+        <!-- Constrain the viewport, not its content, so expanding a card cannot recenter the column. -->
+        <ScrollViewer x:Name="ContentScroll" Grid.Row="1" MaxWidth="1000" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+            <StackPanel Spacing="8" Padding="0,0,0,8">
                 <local:ReportCard x:Name="ReadingBackup" AutomationProperties.AutomationId="BackupReading" />
                 <InfoBar x:Name="ReadError" AutomationProperties.AutomationId="BackupReadError" Severity="Error"
                          Title="Could not read the backup repository" Message="Your last backup report is still available. Retry, or open the log for details."

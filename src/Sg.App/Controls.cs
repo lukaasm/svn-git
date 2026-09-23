@@ -119,6 +119,8 @@ public static class ColumnSplitter
 /// </summary>
 public sealed class WrapRow : Panel
 {
+    // WinUI narrows measured doubles to floats before arranging. Subpixel rounding must not add a row.
+    const double WidthTolerance = 0.01;
     public static readonly DependencyProperty SpacingProperty = DependencyProperty.Register(
         nameof(Spacing), typeof(double), typeof(WrapRow), new PropertyMetadata(8.0, Relayout));
 
@@ -157,7 +159,7 @@ public sealed class WrapRow : Panel
             if (size.Width == 0 && size.Height == 0) continue;   // a collapsed badge takes no gap either
 
             var gap = lineWidth > 0 ? Spacing : 0;
-            if (lineWidth > 0 && lineWidth + gap + size.Width > limit)
+            if (lineWidth > 0 && lineWidth + gap + size.Width > limit + WidthTolerance)
             {
                 widest = Math.Max(widest, lineWidth);
                 total += lineHeight + (first ? 0 : Between);
@@ -189,7 +191,7 @@ public sealed class WrapRow : Panel
             }
 
             var gap = x > 0 ? Spacing : 0;
-            if (x > 0 && x + gap + size.Width > final.Width)
+            if (x > 0 && x + gap + size.Width > final.Width + WidthTolerance)
             {
                 x = 0;
                 y += lineHeight + Between;

@@ -11,6 +11,7 @@ public abstract class WorkflowPage : SgPage
     protected readonly StackPanel Body = new() { Spacing = 12, Padding = new Thickness(16), MaxWidth = 1000, HorizontalAlignment = HorizontalAlignment.Left };
     protected readonly StatusStrip Pane = new();
     readonly ScrollViewer _scroll = new();
+    protected ScrollViewer Scroll => _scroll;
     bool _busy;
     readonly PageReads _reads = new();
     protected WorkflowPage(string title)

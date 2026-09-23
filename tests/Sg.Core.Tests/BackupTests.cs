@@ -69,6 +69,60 @@ public sealed class BackupTests : IDisposable
     BackupItem Item(BackupResult r, string kind, string name) =>
         r.Items.Single(i => i.Kind == kind && i.Name == name);
 
+    [Fact]
+    public void Catalog_reads_names_without_fetching_histories_and_preview_fetches_only_the_selection()
+    {
+        f.Setup();
+        MakeBranch("feature-x");
+        Backup.Set(f.Root, Remote());
+        Backup.Run(f.Root);
+        var tip = RemoteGit("rev-parse", "refs/heads/feature-x").Trim();
+        for (var i = 0; i < 40; i++) RemoteGit("update-ref", "refs/heads/copy-" + i, tip);
+        f.Log.Clear();
+        var catalog = Backup.Browse(f.Root);
+        Assert.Equal(41, catalog.Items.Count);
+        Assert.DoesNotContain(f.Log.Lines, line => line.Contains(" fetch ") || line.Contains(" log "));
+        var selected = catalog.Items.Single(i => i.Name == "copy-39");
+        f.Log.Clear();
+        var preview = Backup.Preview(f.Root, catalog, selected);
+        Assert.Equal(2, preview.Entry.Commits);
+        Assert.Equal(2, preview.Entry.Subjects.Count);
+        Assert.Equal(f.Co.Name, preview.Entry.Checkout);
+        Assert.Equal(tip, preview.ExpectedRefs["refs/heads/copy-39"]);
+        var fetch = Assert.Single(f.Log.Lines, line => line.Contains(" fetch "));
+        Assert.Contains("refs/heads/copy-39", fetch);
+        Assert.DoesNotContain("refs/heads/copy-0:", fetch);
+        Assert.Single(f.Log.Lines, line => line.Contains(" log ") && line.Contains("--first-parent"));
+        // A list is a versioned preview, not permission to silently switch to newer remote work.
+        RemoteGit("update-ref", "refs/heads/copy-39", tip + "^");
+        Assert.Contains("changed", Assert.Throws<SgException>(() => Backup.Preview(f.Root, catalog, selected)).Message);
+        Assert.Throws<SgException>(() => Backup.Restore(f.Root, selected.Name, "not-created", expectedRefs: preview.ExpectedRefs));
+        Assert.Null(f.Root.Git.RefSha("refs/heads/not-created"));
+        f.Root.Config.Backup!.Prefix = "different";
+        Assert.Throws<SgException>(() => Backup.Preview(f.Root, catalog, selected));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Preview_prevents_restore_when_saved_edits_change(bool alreadyHadEdits)
+    {
+        f.Setup();
+        var path = MakeBranch("feature-x");
+        if (alreadyHadEdits) Fixture.Put(path, "draft.txt", "unfinished work\n");
+        Backup.Set(f.Root, Remote());
+        Backup.Run(f.Root);
+        var catalog = Backup.Browse(f.Root);
+        var preview = Backup.Preview(f.Root, catalog, catalog.Items.Single(i => i.Kind == "branch"));
+        Assert.Equal(alreadyHadEdits, preview.Entry.HasWip);
+        Assert.Equal(alreadyHadEdits, preview.ExpectedRefs.ContainsKey("refs/sg/wip/feature-x"));
+        // Both a newly added saved-edits ref and a changed one invalidate the preview.
+        RemoteGit("update-ref", "refs/sg/wip/feature-x", preview.Entry.Sha);
+        Assert.Throws<SgException>(() => Backup.Restore(f.Root, "feature-x", "not-created", wip: true, expectedRefs: preview.ExpectedRefs));
+        Assert.Null(f.Root.Git.RefSha("refs/heads/not-created"));
+        Assert.False(Directory.Exists(f.Root.WorktreePathFor("not-created")));
+    }
+
     [Theory]
     [InlineData(false, "recover-edits")]
     [InlineData(true, "recover-edits")]

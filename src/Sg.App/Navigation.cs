@@ -78,6 +78,10 @@ public abstract class SgPage : Page
     /// <summary>Called when the host takes this page off screen. A page that was made for one visit is dropped after this.</summary>
     public virtual void OnHidden() { }
 
+    // Navigation retains small browsing values, never page controls or submitted operation inputs.
+    internal virtual object? CaptureViewState() => null;
+    internal virtual void RestoreViewState(object? state) { }
+
     /// <summary>
     /// Leave this page: back to the one before it, or close the window when this is the only page in
     /// it. Every window used to have a Close button; this is what that button does now.
@@ -113,10 +117,16 @@ public abstract class SgPage : Page
 /// </summary>
 public sealed class NavHost : ContentControl
 {
-    sealed record Entry(Func<SgPage> Make, string Key);
+    sealed record Entry(Func<SgPage> Make, string Key)
+    {
+        public object? ViewState;
+        public string? StateRoot;
+    }
 
     readonly List<Entry> _entries = new();
     int _index = -1;
+    Entry? _currentEntry;
+    string? _currentRoot;
     const int Depth = 30;
 
     /// <summary>The window this host is in. The host's owner sets it; pages ask for it.</summary>
@@ -191,6 +201,11 @@ public sealed class NavHost : ContentControl
         var previous = Current;
         if (previous != null)
         {
+            if (_currentEntry != null)
+            {
+                _currentEntry.ViewState = previous.CaptureViewState();
+                _currentEntry.StateRoot = _currentRoot;
+            }
             previous.HeaderChanged -= OnHeaderChanged;
             previous.OnHidden();
             // After this navigation, never inside it. Whoever opened a page answers its Left, and some of
@@ -201,6 +216,9 @@ public sealed class NavHost : ContentControl
         }
         _index = index;
         var page = _entries[index].Make();
+        _currentEntry = _entries[index];
+        _currentRoot = Session.Root?.RootPath;
+        if (_currentEntry.StateRoot == _currentRoot) page.RestoreViewState(_currentEntry.ViewState);
         page.Host = this;
         page.HeaderChanged += OnHeaderChanged;
         Current = page;

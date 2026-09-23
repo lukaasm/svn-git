@@ -11,7 +11,7 @@ if (!$Worker) {
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -FixtureRoot '" + $FixtureRoot.Replace("'", "''") + "' -SourceRoot '" + $SourceRoot.Replace("'", "''") + "' -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-browse-' + [Guid]::NewGuid().ToString('N')))
     try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(180)
+        $deadline = [DateTime]::UtcNow.AddSeconds(240)
         while (!$desktop.Wait(200)) { if ([DateTime]::UtcNow -ge $deadline) { throw "Browsing test timed out. See $ArtifactDirectory" } }
         if ($desktop.ExitCode -ne 0) { throw "Browsing test failed. See $ArtifactDirectory/probe-error.txt" }
         Write-Output "PASS: Browsing. Artifacts: $ArtifactDirectory"
@@ -47,8 +47,19 @@ function Entries {
 }
 $process = $null; $window = $null; $created = [Collections.Generic.List[string]]::new()
 $originalConfig = $null; $listener = $null; $client = $null
+$previewRef = $null; $localRemote = $null
 Initialize-UiReport $ArtifactDirectory 'Browsing'
 try {
+    $fixtureConfig = Get-Content -Raw -LiteralPath (Join-Path $FixtureRoot '.sg/sg.json') | ConvertFrom-Json
+    $localRemote = [IO.Path]::GetFullPath($fixtureConfig.backup.url)
+    $fixtureParent = [IO.Path]::GetFullPath((Split-Path $FixtureRoot)) + [IO.Path]::DirectorySeparatorChar
+    if (!$localRemote.StartsWith($fixtureParent, [StringComparison]::OrdinalIgnoreCase) -or !(Test-Path -LiteralPath $localRemote -PathType Container) -or $fixtureConfig.backup.prefix) { throw 'Preview test requires an unprefixed local fixture remote.' }
+    $tip = (& git -C $localRemote rev-parse refs/heads/source).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture needs its source backup.' }
+    $previewName = 'preview-' + [Guid]::NewGuid().ToString('N')
+    $previewRef = 'refs/heads/' + $previewName
+    & git -C $localRemote update-ref $previewRef $tip
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the disposable preview ref.' }
     $records = @(Get-ChildItem -LiteralPath (Join-Path $SourceRoot '.sg/operations') -Filter '*.json' | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json })
     if (!$records.Count) { throw 'Source needs saved activity.' }
     for ($i = 0; $i -lt 240; $i++) {
@@ -86,6 +97,39 @@ try {
     $null = Wait-For 'first page restored' { (Entries).Count -eq 20 }
     Invoke-Element (Find 'ActivityMore')
     $null = Wait-For 'second page appended' { (Entries).Count -eq 40 }
+    Start-UiScenario 'Activity restores search, loaded history, and scroll position on return'
+    Set-Field 'ActivitySearch' 'replay-'
+    $null = Wait-For 'filtered first page' { (Entries).Count -eq 20 }
+    Invoke-Element (Find 'ActivityMore')
+    $null = Wait-For 'filtered second page' { (Entries).Count -eq 40 }
+    (Entries)[0].GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    $scrollParent = (Find 'ActivitySearch')
+    $scroll = $null
+    while ($scrollParent) {
+        if ($scrollParent.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable) { break }
+        $scrollParent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scrollParent)
+    }
+    if (!$scroll) { throw 'Activity needs a scrolling history.' }
+    # Expansion can finish a bring-into-view request after UIA returns; wait for the requested scroll.
+    $null = Wait-For 'activity scrolled before leaving' {
+        $scroll.SetScrollPercent(-1, 60)
+        $scroll.Current.VerticalScrollPercent -gt 50
+    }
+    $beforeScroll = $scroll.Current.VerticalScrollPercent
+    Select-Element (Find 'SettingsItem')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'activity search retained on return' { $field = Find 'ActivitySearch'; $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'replay-' }
+    $null = Wait-For 'loaded history retained' { (Entries).Count -eq 40 }
+    if ((Entries)[0].GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -ne 'Expanded') { throw 'Expanded activity details were lost on return.' }
+    $scrollParent = Find 'ActivitySearch'; $scroll = $null
+    while ($scrollParent) {
+        if ($scrollParent.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable) { break }
+        $scrollParent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scrollParent)
+    }
+    $null = Wait-For 'activity scroll retained' { $scroll.Current.VerticalScrollPercent -gt 50 }
+    @{ before = $beforeScroll; after = $scroll.Current.VerticalScrollPercent } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'scroll.json')
+    $scroll.SetScrollPercent(-1, 0)
+    Set-Field 'ActivitySearch' ''
     (Find 'ActivityFilter').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     $attention = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Needs attention'))
@@ -101,9 +145,42 @@ try {
     Set-Field 'BackupSearch' 'no-backup-matches-this-search'
     $null = Wait-For 'backup search empty state' { (Find 'BackupMatches').Current.Name -like 'No matching*' }
     if ((Find 'NameBox') -and !(Find 'NameBox').Current.IsOffscreen) { throw 'Search left a hidden restore target actionable.' }
+    Select-Element (Find 'SettingsItem')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'backup search retained on return' { $field = Find 'BackupSearch'; $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'no-backup-matches-this-search' }
+    $null = Wait-For 'backup results retain search' { $count = Find 'BackupMatches'; $count -and $count.Current.Name -like 'No matching*' }
     Set-Field 'BackupSearch' ''
     $null = Wait-For 'backup search cleared' { (Find 'BackupMatches').Current.Name -like '*backup items' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-search.png')
+    $backupScroll = (Find 'ContentScroll').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    $null = Wait-For 'backup scrolled before leaving' { $backupScroll.SetScrollPercent(-1, 50); $backupScroll.Current.VerticalScrollPercent -gt 40 }
+    Select-Element (Find 'SettingsItem')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'backup scroll restored' {
+        $scroller = Find 'ContentScroll'
+        $scroller -and $scroller.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).Current.VerticalScrollPercent -gt 40
+    }
+
+    Start-UiScenario 'Backup previews reject changed versions and retry only the selected item'
+    & git -C $localRemote update-ref $previewRef ($tip + '^')
+    if ($LASTEXITCODE -ne 0) { throw 'Could not move the disposable preview ref.' }
+    Set-Field 'BackupSearch' $previewName
+    $null = Wait-For 'one matching preview branch' { (Find 'BackupMatches').Current.Name -like '1 of *' }
+    $branch = (Find 'Branches').FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))
+    Select-Element $branch
+    $null = Wait-For 'changed preview error' { $button = Find 'BackupRetryPreview'; $button -and !$button.Current.IsOffscreen }
+    if ((Find 'NameBox') -and !(Find 'NameBox').Current.IsOffscreen) { throw 'Changed backup enabled a restore form.' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-preview-error.png')
+    & git -C $localRemote update-ref $previewRef $tip
+    if ($LASTEXITCODE -ne 0) { throw 'Could not restore the disposable preview ref.' }
+    Invoke-Element (Find 'BackupRetryPreview')
+    $null = Wait-For 'retried preview shows selected branch' { $field = Find 'NameBox'; $field -and !$field.Current.IsOffscreen -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq $previewName }
+    $null = Wait-For 'selected preview validates restore' { (Find 'RestoreButton').Current.IsEnabled }
+    if ((Find 'BackupRetryPreview') -and !(Find 'BackupRetryPreview').Current.IsOffscreen) { throw 'Successful preview retained its error.' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-preview.png')
+    Set-Field 'BackupSearch' 'no-backup-matches-this-search'
+    $null = Wait-For 'search clears selected preview' { $field = Find 'NameBox'; !$field -or $field.Current.IsOffscreen }
 
     Start-UiScenario 'Leaving Backup terminates a stalled Git read without creating a task'
     Stop-Process -Id $process.Id; $process.WaitForExit(); $process = $null
@@ -144,5 +221,6 @@ try {
     if ($client) { $client.Dispose() }
     if ($listener) { $listener.Stop() }
     if ($originalConfig) { [IO.File]::WriteAllText((Join-Path $FixtureRoot '.sg/sg.json'), $originalConfig) }
+    if ($previewRef) { & git -C $localRemote update-ref -d $previewRef }
     foreach ($path in $created) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path } }
 }

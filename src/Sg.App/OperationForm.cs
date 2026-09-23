@@ -44,4 +44,4 @@ internal sealed class OperationForm<TRequest>(params Control[] inputs) where TRe
 }
 
 internal sealed record ImportRequest(string File, string Name, string Checkout);
-internal sealed record RestoreRequest(string Source, string Name, string Checkout, bool WithEdits, bool Replace);
+internal sealed record RestoreRequest(string Source, string Name, string Checkout, bool WithEdits, bool Replace, IReadOnlyDictionary<string, string>? ExpectedRefs = null);

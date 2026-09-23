@@ -22,7 +22,7 @@ internal sealed class PageReads
         readonly CancellationTokenSource _cancel = new();
         public bool Current => ReferenceEquals(owner._current, this) && !_cancel.IsCancellationRequested;
         internal void Cancel() => _cancel.Cancel();
-        public async Task<T?> Run<T>(StatusStrip pane, Func<T> work) where T : class
+        public async Task<T?> Run<T>(StatusStrip pane, Func<T> work, Action<string>? failed = null) where T : class
         {
             try
             {
@@ -34,7 +34,17 @@ internal sealed class PageReads
             }
             catch (Exception) when (!Current) { return null; }
             catch (OperationCanceledException) { return null; }
-            catch (Exception ex) { Runner.ReadError(pane, ex); return null; }
+            catch (Exception ex)
+            {
+                if (failed == null) Runner.ReadError(pane, ex);
+                else
+                {
+                    // A page with inline recovery owns the feedback; keep diagnostics without opening another window.
+                    pane.Append("error: " + ex);
+                    failed(ex.Message);
+                }
+                return null;
+            }
         }
         public void Dispose()
         {

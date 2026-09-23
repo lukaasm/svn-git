@@ -13,7 +13,7 @@
 
         <!-- One scrolling column: how the last backup went, then what the remote holds. The report used to sit
              above the scroller, and a report of a few rows pushed the list under it out of reach. -->
-        <ScrollViewer Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="ContentScroll" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
                 <local:BackupStatusView />
 
@@ -63,29 +63,53 @@
                         </Grid>
                     </Border>
 
-                    <TextBox x:Name="BackupSearch" PlaceholderText="Search branches, shelves, and checkout edits"
-                             AutomationProperties.Name="Search backup contents" TextChanged="Search_Changed" />
+                    <TextBox x:Name="BackupSearch" PlaceholderText="Search backup names"
+                             AutomationProperties.Name="Search backup names" TextChanged="Search_Changed" />
                     <TextBlock x:Name="BackupMatches" Style="{StaticResource Secondary}" TextWrapping="Wrap"
                                AutomationProperties.LiveSetting="Polite" />
                     <TextBlock x:Name="BranchesHeader" Text="Branches" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                    <TextBlock x:Name="SelectionHint" Text="Choose a branch to review its commits and restore options."
+                    <TextBlock x:Name="SelectionHint" Text="Select an item to load its saved commits and revisions. Branches also show restore options."
                                Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                     <Border Style="{StaticResource Card}" Padding="4">
                         <local:RowListView x:Name="Branches" MaxHeight="320" SelectionMode="Single" SelectionChanged="Branch_Changed">
                             <local:RowListView.ItemTemplate>
                                 <DataTemplate x:DataType="local:BackupRow">
-                                    <Grid ColumnDefinitions="220,110,*,Auto" ColumnSpacing="{StaticResource RowSpacing}"
-                                          ToolTipService.ToolTip="{x:Bind Tip}">
+                                    <Grid ColumnDefinitions="220,140,*,Auto" ColumnSpacing="{StaticResource RowSpacing}"
+                                          ToolTipService.ToolTip="{x:Bind Tip, Mode=OneWay}">
                                         <TextBlock Text="{x:Bind Name}" Style="{StaticResource RowText}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind What}" Style="{StaticResource RowMonoDim}" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind From}" Style="{StaticResource RowTextDim}" />
-                                        <TextBlock Grid.Column="3" Text="{x:Bind Note}" Style="{StaticResource RowTextDim}" Foreground="{x:Bind NoteBrush}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind What, Mode=OneWay}" Style="{StaticResource RowMonoDim}" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind From, Mode=OneWay}" Style="{StaticResource RowTextDim}" />
+                                        <TextBlock Grid.Column="3" Text="{x:Bind Note, Mode=OneWay}" Style="{StaticResource RowTextDim}" Foreground="{x:Bind NoteBrush, Mode=OneWay}" />
                                     </Grid>
                                 </DataTemplate>
                             </local:RowListView.ItemTemplate>
                         </local:RowListView>
                     </Border>
 
+                    <TextBlock x:Name="OthersHeader" Text="Also there" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
+                    <Border x:Name="OthersCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
+                        <local:RowListView x:Name="Others" MaxHeight="240" SelectionMode="Single" SelectionChanged="Branch_Changed">
+                            <local:RowListView.ItemTemplate>
+                                <DataTemplate x:DataType="local:BackupRow">
+                                    <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip, Mode=OneWay}">
+                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource RowText}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind What, Mode=OneWay}" Style="{StaticResource RowTextDim}" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind Note, Mode=OneWay}" Style="{StaticResource RowTextDim}" Foreground="{x:Bind NoteBrush, Mode=OneWay}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </local:RowListView.ItemTemplate>
+                        </local:RowListView>
+                    </Border>
+
+                    <TextBlock x:Name="PreviewTitle" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" />
+                    <local:ReportCard x:Name="PreviewLoading" AutomationProperties.AutomationId="BackupPreviewLoading" />
+                    <InfoBar x:Name="PreviewError" AutomationProperties.AutomationId="BackupPreviewError" Severity="Error"
+                             Title="Could not preview this backup" IsOpen="False" IsClosable="False">
+                        <local:WrapRow Spacing="8">
+                            <local:IconButton Text="Retry preview" Glyph="&#xE72C;" AutomationProperties.AutomationId="BackupRetryPreview" Click="RetryPreview_Click" />
+                            <local:IconButton Text="Refresh list" Glyph="&#xE895;" AutomationProperties.AutomationId="BackupRefreshList" Click="RetryRead_Click" />
+                        </local:WrapRow>
+                    </InfoBar>
                     <InfoBar x:Name="DriftBar" Severity="Warning" IsClosable="False" IsOpen="False"
                              Title="This checkout has moved on since the backup" />
 
@@ -112,21 +136,6 @@
                             <local:RowListView.ItemTemplate>
                                 <DataTemplate x:DataType="x:String">
                                     <TextBlock Text="{x:Bind}" Style="{StaticResource RowText}" />
-                                </DataTemplate>
-                            </local:RowListView.ItemTemplate>
-                        </local:RowListView>
-                    </Border>
-
-                    <TextBlock x:Name="OthersHeader" Text="Also there" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
-                    <Border x:Name="OthersCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
-                        <local:RowListView x:Name="Others" MaxHeight="240" SelectionMode="None">
-                            <local:RowListView.ItemTemplate>
-                                <DataTemplate x:DataType="local:BackupRow">
-                                    <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">
-                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource RowText}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind What}" Style="{StaticResource RowTextDim}" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind Note}" Style="{StaticResource RowTextDim}" Foreground="{x:Bind NoteBrush}" />
-                                    </Grid>
                                 </DataTemplate>
                             </local:RowListView.ItemTemplate>
                         </local:RowListView>

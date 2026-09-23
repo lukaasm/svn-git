@@ -20,6 +20,10 @@ public sealed class ActivityPage : WorkflowPage
     SgRoot? _root;
     int _itemsStart, _shown;
     DateTime? _day;
+    sealed record ViewState(string Query, int Filter, int Shown, double Offset, string[] Expanded);
+    ViewState? _returning;
+    bool _restoring;
+    readonly Dictionary<string, Expander> _details = [];
     public ActivityPage() : base("Activity and recovery")
     {
         AutomationProperties.SetAutomationId(_search, "ActivitySearch");
@@ -30,16 +34,28 @@ public sealed class ActivityPage : WorkflowPage
         AutomationProperties.SetLiveSetting(_count, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         AutomationProperties.SetAutomationId(_more, "ActivityMore");
         _searchRefresh = new(DispatcherQueue, () => { if (IsLoaded && _root != null) Render(reset: true); }, TimeSpan.FromMilliseconds(150));
-        _search.TextChanged += (_, _) => _searchRefresh.Request();
-        _filter.SelectionChanged += (_, _) => _searchRefresh.Request();
+        _search.TextChanged += (_, _) => { if (!_restoring) _searchRefresh.Request(); };
+        _filter.SelectionChanged += (_, _) => { if (!_restoring) _searchRefresh.Request(); };
         _more.Click += (_, _) => Render(reset: false);
         _toolbar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _toolbar.Children.Add(_search); Grid.SetColumn(_filter, 1); _toolbar.Children.Add(_filter);
     }
     public override void OnHidden() { base.OnHidden(); _root = null; }
+    internal override object? CaptureViewState() => _root == null ? _returning : new ViewState(_search.Text, _filter.SelectedIndex, _shown,
+        Scroll.VerticalOffset, _details.Where(p => p.Value.IsExpanded).Select(p => p.Key).ToArray());
+    internal override void RestoreViewState(object? state)
+    {
+        if (state is not ViewState view) return;
+        _returning = view;
+        _restoring = true;
+        _search.Text = view.Query;
+        _filter.SelectedIndex = view.Filter;
+        _restoring = false;
+    }
     protected override async Task Reload()
     {
+        _returning ??= CaptureViewState() as ViewState;
         using var generation = BeginRead(); var root = Session.Require();
         _root = null;
         Body.Children.Clear();
@@ -72,10 +88,17 @@ public sealed class ActivityPage : WorkflowPage
         }
         _itemsStart = Body.Children.Count;
         _root = root;
-        Render(reset: true);
+        var returning = _returning;
+        Render(reset: true, take: returning?.Shown ?? PageSize);
+        if (returning != null)
+        {
+            foreach (var id in returning.Expanded) if (_details.TryGetValue(id, out var detail)) detail.IsExpanded = true;
+            BrowseScroll.Restore(Scroll, returning.Offset);
+            _returning = null;
+        }
     }
 
-    void Render(bool reset)
+    void Render(bool reset, int take = PageSize)
     {
         if (_root is not { } root) return;
         Body.Children.Remove(_more);
@@ -86,9 +109,10 @@ public sealed class ActivityPage : WorkflowPage
                 && (query.Length == 0 || string.Join('\n', OperationTitle(r), r.Branch, r.Checkout, r.PhaseLabel, r.Detail,
                     string.Join('\n', r.Steps)).Contains(query, StringComparison.OrdinalIgnoreCase))).ToList();
             while (Body.Children.Count > _itemsStart) Body.Children.RemoveAt(_itemsStart);
+            _details.Clear();
             _shown = 0; _day = null;
         }
-        var end = Math.Min(_shown + PageSize, _matches.Count);
+        var end = Math.Min(_shown + Math.Max(PageSize, take), _matches.Count);
         foreach (var record in _matches.Skip(_shown).Take(end - _shown))
         {
             if (_day != record.Updated.LocalDateTime.Date) {
@@ -128,6 +152,7 @@ public sealed class ActivityPage : WorkflowPage
                 details.Content = content;
             };
             Body.Children.Add(details);
+            _details[record.Id] = details;
             TimelineEntry(entryStart, "ActivityEntry_" + record.Id);
         }
         _shown = end;

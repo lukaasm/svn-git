@@ -877,63 +877,70 @@ public static partial class Backup
             var (kind, name) = Owned(cfg, kv.Key)!.Value;
             var e = new BackupEntry { Kind = kind, Name = name, Sha = kv.Value };
             res.Add(e);
-            List<ThinCommit> chain;
-            try { chain = Thin.Chain(git, kv.Value); }
-            catch (SgException ex) { e.Unreadable = ex.Message; continue; }
-            if (chain.Count == 0 || chain[0].Kind != ThinKind.Marker)
-            {
-                e.Unreadable = "not an sg backup: it does not start with a marker";
-                continue;
-            }
-            if (chain[0].Version > Thin.Version)
-            {
-                e.Unreadable = $"written by a newer sg (format {chain[0].Version}, this one reads {Thin.Version}). Update sg.";
-                continue;
-            }
-            var meta = MetaOf(name, chain[0].Body);
-            e.Url = meta.Root?.Url ?? "";
-            e.Revision = meta.Root?.Revision ?? 0;
-            e.Bases = meta.Bases;
-            var changes = chain.Where(c => c.Kind == ThinKind.Change).ToList();
-            e.Commits = changes.Count;
-            e.Subjects = changes.Select(c => c.Subject).ToList();
-            var last = chain[^1];
-            if (DateTimeOffset.TryParse(last.Author.Date, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when)) e.Last = when;
-            var co = Export.MatchCheckout(root, meta);
-            if (co != null)
-            {
-                e.Checkout = co.Name;
-                e.Drift = Export.DriftOf(root, meta, co);
-            }
-            switch (kind)
-            {
-                case "branch":
-                    e.Branch = name;
-                    e.ExistsHere = here.Branches.Contains(name);
-                    e.HasWip = wips.Contains(name);
-                    e.Excluded = IsExcluded(cfg, name);
-                    break;
-                case "wip":
-                    e.Branch = name;
-                    e.ExistsHere = here.Branches.Contains(name);
-                    e.Title = "uncommitted changes";
-                    e.Excluded = IsExcluded(cfg, name);
-                    break;
-                case "edits":
-                    e.Branch = name;
-                    e.ExistsHere = here.Checkouts.Contains(name);
-                    e.Title = "local edits";
-                    break;
-                default:
-                    var s = Shelf.Parse(name, last.Sha, last.Body);
-                    e.Branch = s.IsCheckout ? "" : s.Branch;
-                    e.Title = s.Title;
-                    e.ExistsHere = here.Shelves.Contains(name);
-                    e.Excluded = !s.IsCheckout && IsExcluded(cfg, s.Branch);
-                    break;
-            }
+            ReadEntry(root, cfg, here, wips, e);
         }
         return res.OrderBy(e => e.Kind switch { "branch" => 0, "wip" => 1, "edits" => 2, _ => 3 }).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    static void ReadEntry(SgRoot root, BackupConfig cfg, Local here, HashSet<string> wips, BackupEntry e)
+    {
+        var git = root.Git;
+        var kind = e.Kind; var name = e.Name;
+        List<ThinCommit> chain;
+        try { chain = Thin.Chain(git, e.Sha); }
+        catch (SgException ex) { e.Unreadable = ex.Message; return; }
+        if (chain.Count == 0 || chain[0].Kind != ThinKind.Marker)
+        {
+            e.Unreadable = "not an sg backup: it does not start with a marker";
+            return;
+        }
+        if (chain[0].Version > Thin.Version)
+        {
+            e.Unreadable = $"written by a newer sg (format {chain[0].Version}, this one reads {Thin.Version}). Update sg.";
+            return;
+        }
+        var meta = MetaOf(name, chain[0].Body);
+        e.Url = meta.Root?.Url ?? "";
+        e.Revision = meta.Root?.Revision ?? 0;
+        e.Bases = meta.Bases;
+        var changes = chain.Where(c => c.Kind == ThinKind.Change).ToList();
+        e.Commits = changes.Count;
+        e.Subjects = changes.Select(c => c.Subject).ToList();
+        var last = chain[^1];
+        if (DateTimeOffset.TryParse(last.Author.Date, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when)) e.Last = when;
+        var co = Export.MatchCheckout(root, meta);
+        if (co != null)
+        {
+            e.Checkout = co.Name;
+            e.Drift = Export.DriftOf(root, meta, co);
+        }
+        switch (kind)
+        {
+            case "branch":
+                e.Branch = name;
+                e.ExistsHere = here.Branches.Contains(name);
+                e.HasWip = wips.Contains(name);
+                e.Excluded = IsExcluded(cfg, name);
+                break;
+            case "wip":
+                e.Branch = name;
+                e.ExistsHere = here.Branches.Contains(name);
+                e.Title = "uncommitted changes";
+                e.Excluded = IsExcluded(cfg, name);
+                break;
+            case "edits":
+                e.Branch = name;
+                e.ExistsHere = here.Checkouts.Contains(name);
+                e.Title = "local edits";
+                break;
+            default:
+                var s = Shelf.Parse(name, last.Sha, last.Body);
+                e.Branch = s.IsCheckout ? "" : s.Branch;
+                e.Title = s.Title;
+                e.ExistsHere = here.Shelves.Contains(name);
+                e.Excluded = !s.IsCheckout && IsExcluded(cfg, s.Branch);
+                break;
+        }
     }
 
     /// <summary>The marker as the export reader sees an export: the same matching and the same drift report.</summary>

@@ -6,28 +6,33 @@ using Sg.Core;
 
 namespace Sg.App;
 
-/// <summary>One thing the backup holds, as a row: a branch to pick, or a shelf or a wip to know about.</summary>
-public sealed class BackupRow
+/// <summary>A catalog row whose metadata arrives when selected.</summary>
+public sealed class BackupRow : System.ComponentModel.INotifyPropertyChanged
 {
-    public BackupEntry Entry { get; init; } = new();
-    public string Name => Entry.Name;
+    public required BackupReference Reference { get; init; }
+    public BackupEntry? Entry { get; private set; }
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+    public void Loaded(BackupEntry entry) { Entry = entry; PropertyChanged?.Invoke(this, new(null)); }
+    public string Name => Reference.Name;
 
-    public string What => Entry.Unreadable != null ? "cannot be read"
+    public string What => Entry == null ? Reference.Kind switch { "branch" => Reference.HasWip ? "Branch + edits" : "Branch", "wip" => "Uncommitted edits", "edits" => "Checkout edits", _ => "Shelf" }
+        : Entry.Unreadable != null ? "cannot be read"
         : Entry.Kind == "branch" ? (Entry.Commits == 1 ? "1 commit" : Entry.Commits + " commits") + (Entry.HasWip ? " + wip" : "")
         : Entry.Kind == "wip" ? "uncommitted changes of " + Entry.Branch
         : Entry.Kind == "edits" ? "local edits of checkout " + Entry.Branch
         : "shelf \"" + Entry.Title + "\"" + (Entry.Branch.Length > 0 ? " of " + Entry.Branch : "");
 
-    public string From => Entry.Unreadable ?? $"from {(Entry.Checkout.Length > 0 ? Entry.Checkout : Entry.Url)} r{Entry.Revision}"
+    public string From => Entry == null ? "Select to load preview" : Entry.Unreadable ?? $"from {(Entry.Checkout.Length > 0 ? Entry.Checkout : Entry.Url)} r{Entry.Revision}"
                                              + (Entry.Last is { } t ? $"   {t.LocalDateTime:yyyy-MM-dd HH:mm}" : "");
 
     /// <summary>What stands between this and a restore, in two words: it is here already, or the checkout moved on.</summary>
-    public string Note => Entry.Unreadable != null ? "" : Entry.Excluded ? "excluded here" : Entry.ExistsHere ? "here" : Entry.Drift.Count > 0 ? "checkout moved on" : Entry.Checkout.Length == 0 ? "no checkout matches" : "";
+    public string Note => Entry == null ? Reference.Excluded ? "excluded here" : Reference.ExistsHere ? "here" : ""
+        : Entry.Unreadable != null ? "" : Entry.Excluded ? "excluded here" : Entry.ExistsHere ? "here" : Entry.Drift.Count > 0 ? "checkout moved on" : Entry.Checkout.Length == 0 ? "no checkout matches" : "";
 
     public Brush NoteBrush => (Brush)Application.Current.Resources[
-        Entry.ExistsHere || Entry.Excluded || Entry.Unreadable != null ? "TextFillColorTertiaryBrush" : Note.Length > 0 ? "StatusModifiedBrush" : "TextFillColorSecondaryBrush"];
+        (Entry?.ExistsHere ?? Reference.ExistsHere) || (Entry?.Excluded ?? Reference.Excluded) || Entry?.Unreadable != null ? "TextFillColorTertiaryBrush" : Note.Length > 0 ? "StatusModifiedBrush" : "TextFillColorSecondaryBrush"];
 
-    public string Tip => Entry.Unreadable
+    public string Tip => Entry == null ? Reference.Name + " · Select to read its saved version." : Entry.Unreadable
         ?? (Entry.Excluded ? "The worktree is excluded from the backup on this machine, so this is what it sent before, or another machine's copy. No backup writes over it; Prune lists it.\n" : "")
          + (Entry.Url.Length > 0 ? Entry.Url + " r" + Entry.Revision : Entry.Name);
 }
@@ -40,23 +45,39 @@ public sealed class BackupRow
 public sealed partial class BackupPage : SgPage
 {
     readonly OperationForm<RestoreRequest> _form;
-    List<BackupEntry> _entries = new();
+    List<BackupRow> _entries = new();
+    BackupCatalog? _catalog;
+    BackupPreview? _preview;
+    BackupRow? _selectedRow;
     BackupEntry? _picked;
     bool _binding;
     readonly PageReads _reads = new();
+    readonly PageReads _previewReads = new();
     readonly UiRefresh _searchRefresh;
     bool _hidden;
     readonly BranchTargetValidation _targetValidation = new();
+    sealed record ViewState(string Destination, string Query, double Offset);
+    ViewState? _returning;
+    bool _restoring;
 
     public BackupPage()
     {
         InitializeComponent();
         _searchRefresh = new(DispatcherQueue, () => { if (IsLoaded) FilterEntries(); }, TimeSpan.FromMilliseconds(150));
-        _form = new(NameBox, IntoBox, ForceBox, WipBox, Branches);
+        _form = new(NameBox, IntoBox, ForceBox, WipBox, Branches, Others, BackupSearch);
         Unloaded += (_, _) => OnHidden();
         Title = "Backup";
         Session.Log.Sink = Pane;
-        _ = LoadAsync();
+    }
+    public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
+    string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
+    internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, _returning?.Offset ?? ContentScroll.VerticalOffset);
+    internal override void RestoreViewState(object? state)
+    {
+        if (state is not ViewState view || view.Destination != Destination) return;
+        _returning = view; _restoring = true;
+        BackupSearch.Text = view.Query;
+        _restoring = false;
     }
 
     CheckoutConfig? Into => IntoBox.SelectedItem is string name ? Session.Root?.Checkout(name) : null;
@@ -65,6 +86,9 @@ public sealed partial class BackupPage : SgPage
     {
         if (_hidden) return;
         using var read = _reads.Begin();
+        _previewReads.Cancel();
+        _catalog = null; _entries.Clear(); _preview = null; _selectedRow = null;
+        PreviewLoading.Hide(); PreviewError.IsOpen = false; PreviewTitle.Visibility = Visibility.Collapsed;
         ReadingBackup.Hide();
         ReadError.IsOpen = false;
         _targetValidation.Invalidate();
@@ -100,26 +124,27 @@ public sealed partial class BackupPage : SgPage
         ShowReport(LastReport, Backup.Last(root), ActFor);
         ReadingBackup.Running("Reading the backup repository…", "You can keep browsing. The saved report above remains available.");
 
-        var list = await read.Run(Pane, () => Backup.List(root));
+        var catalog = await read.Run(Pane, () => Backup.Browse(root));
         if (!read.Current || root.RootPath != Session.Root?.RootPath) return;
         ReadingBackup.Hide();
-        if (list == null)
+        if (catalog == null)
         {
             ReadError.IsOpen = true;
             return;
         }
-        _entries = list;
-        var branches = list.Where(e => e.Kind == "branch").Select(e => new BackupRow { Entry = e }).ToList();
-        var others = list.Where(e => e.Kind != "branch").Select(e => new BackupRow { Entry = e }).ToList();
-        if (list.Count == 0)
+        _catalog = catalog;
+        _entries = catalog.Items.Select(e => new BackupRow { Reference = e }).ToList();
+        var branches = _entries.Where(e => e.Reference.Kind == "branch").ToList();
+        var others = _entries.Where(e => e.Reference.Kind != "branch").ToList();
+        if (_entries.Count == 0)
         {
             Nothing.Visibility = Visibility.Visible;
             Summary.Text = "";
             return;
         }
         Filled.Visibility = Visibility.Visible;
-        Headline.Text = $"{branches.Count} branch(es), {others.Count(o => o.Entry.Kind == "shelf")} shelf/shelves, "
-                        + $"{others.Count(o => o.Entry.Kind is "wip" or "edits")} folder(s) with uncommitted changes";
+        Headline.Text = $"{branches.Count} branches · {others.Count(o => o.Reference.Kind == "shelf")} shelves · "
+                        + $"{others.Count(o => o.Reference.Kind is "wip" or "edits")} saved edits";
         FilterEntries();
 
         _binding = true;
@@ -130,20 +155,22 @@ public sealed partial class BackupPage : SgPage
         // destination validation; auto-selecting an existing branch greeted users with a conflict.
         Branches.SelectedItem = null;
         Show(null);
+        if (_returning is { } view) { BrowseScroll.Restore(ContentScroll, view.Offset); _returning = null; }
     }
 
-    public override void OnHidden() { _hidden = true; _reads.Cancel(); _targetValidation.Invalidate(); }
+    public override void OnHidden() { _hidden = true; _reads.Cancel(); _previewReads.Cancel(); _targetValidation.Invalidate(); }
     async void RetryRead_Click(object sender, RoutedEventArgs e) => await LoadAsync();
     void ReadLog_Click(object sender, RoutedEventArgs e) => OutputWindow.Show();
 
-    void Search_Changed(object sender, TextChangedEventArgs e) => _searchRefresh?.Request();
+    void Search_Changed(object sender, TextChangedEventArgs e) { if (!_restoring) _searchRefresh?.Request(); }
     void FilterEntries()
     {
         var query = BackupSearch.Text.Trim();
-        var matches = _entries.Where(e => query.Length == 0 || string.Join('\n', e.Name, e.Branch, e.Checkout, e.Title)
-            .Contains(query, StringComparison.OrdinalIgnoreCase)).Select(e => new BackupRow { Entry = e }).ToList();
-        var branches = matches.Where(e => e.Entry.Kind == "branch").ToList();
-        var others = matches.Where(e => e.Entry.Kind != "branch").ToList();
+        _previewReads.Cancel(); _preview = null; _selectedRow = null;
+        PreviewLoading.Hide(); PreviewError.IsOpen = false; PreviewTitle.Visibility = Visibility.Collapsed;
+        var matches = _entries.Where(e => query.Length == 0 || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        var branches = matches.Where(e => e.Reference.Kind == "branch").ToList();
+        var others = matches.Where(e => e.Reference.Kind != "branch").ToList();
         BranchesHeader.Text = branches.Count == 1 ? "Branch" : $"Branches ({branches.Count})";
         Branches.ItemsSource = branches;
         Others.ItemsSource = others;
@@ -154,15 +181,50 @@ public sealed partial class BackupPage : SgPage
         Show(null);
     }
 
-    void Branch_Changed(object sender, SelectionChangedEventArgs e) => Show((Branches.SelectedItem as BackupRow)?.Entry);
+    async void Branch_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_binding) return;
+        var row = (sender as ListView)?.SelectedItem as BackupRow;
+        if (row == null) return;
+        _binding = true;
+        if (ReferenceEquals(sender, Branches)) Others.SelectedItem = null; else Branches.SelectedItem = null;
+        _binding = false;
+        await PreviewAsync(row);
+    }
+    async void RetryPreview_Click(object sender, RoutedEventArgs e) { if (_selectedRow is { } row) await PreviewAsync(row); }
+    async Task PreviewAsync(BackupRow row)
+    {
+        if (_catalog is not { } catalog || _hidden) return;
+        var root = Session.Require();
+        using var read = _previewReads.Begin();
+        _selectedRow = row; _preview = null;
+        _targetValidation.Invalidate();
+        Show(null);
+        SelectionHint.Visibility = Visibility.Collapsed;
+        PreviewTitle.Text = row.Name;
+        PreviewTitle.Visibility = Visibility.Visible;
+        PreviewError.IsOpen = false;
+        PreviewLoading.Running("Loading saved version…", "Commits and SVN revisions are read only for the item you select.");
+        BrowseScroll.Reveal(PreviewTitle);
+        var preview = await read.Run(Pane, () => Backup.Preview(root, catalog, row.Reference),
+            error => PreviewError.Message = error);
+        if (!read.Current || _hidden || !ReferenceEquals(_catalog, catalog) || root.RootPath != Session.Root?.RootPath) return;
+        PreviewLoading.Hide();
+        if (preview == null) { PreviewError.IsOpen = true; BrowseScroll.Reveal(PreviewTitle); return; }
+        _preview = preview;
+        row.Loaded(preview.Entry);
+        if (preview.Entry.Unreadable != null) { PreviewError.Message = preview.Entry.Unreadable; PreviewError.IsOpen = true; }
+        Show(preview.Entry);
+        BrowseScroll.Reveal(PreviewTitle);
+    }
 
     /// <summary>One branch on screen: its commits, its bases beside the ones here, and the restore controls filled for it.</summary>
     void Show(BackupEntry? entry)
     {
         _picked = entry;
         var has = entry != null && entry.Unreadable == null;
-        RestoreRow.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
-        RestoreButton.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        RestoreRow.Visibility = has && entry!.Kind == "branch" ? Visibility.Visible : Visibility.Collapsed;
+        RestoreButton.Visibility = RestoreRow.Visibility;
         SelectionHint.Visibility = entry == null ? Visibility.Visible : Visibility.Collapsed;
         CommitsHeader.Visibility = CommitsCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         BasesHeader.Visibility = BasesCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
@@ -218,25 +280,25 @@ public sealed partial class BackupPage : SgPage
     async void SyncButton()
     {
         if (_form == null || _form.Running) return;
-        var entry = _picked;
+        var entry = _picked?.Kind == "branch" ? _picked : null;
         var name = NameBox.Text.Trim();
         var root = Session.Root;
         ExistingDestination.Update(null, null);
         RestoreButton.IsEnabled = false;
-        if (name.Length > 0 && root != null && _picked != null)
+        if (name.Length > 0 && root != null && entry != null)
             ExplainTarget("Checking branch name and destination…");
-        var check = await _targetValidation.CheckAsync(_picked == null ? null : root, name);
+        var check = await _targetValidation.CheckAsync(entry == null ? null : root, name);
         if (check == null) return;
         ExistingDestination.Update(root, check.Existing);
         var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
         RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
         var retry = entry != null && Into is { } checkout && _form.IsRetry(
-            new RestoreRequest(entry.Name, name, checkout.Name, WipBox.IsChecked == true && entry.HasWip, force));
+            new RestoreRequest(entry.Name, name, checkout.Name, WipBox.IsChecked == true && entry.HasWip, force, _preview?.ExpectedRefs));
         RestoreLabel.Text = entry == null ? "Restore"
             : force && taken ? $"{(retry ? "Retry overwrite" : "Overwrite")} with {entry.Commits} commit(s)"
             : retry ? "Retry restore" : $"Restore {entry.Commits} commit(s)";
-        ExplainTarget(entry == null ? "Pick a branch."
+        ExplainTarget(entry == null ? "Select a branch to preview a restore."
             : entry.Unreadable != null ? entry.Unreadable
             : Into == null && entry.Checkout.Length == 0 ? $"No checkout here points at {entry.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."
@@ -276,12 +338,12 @@ public sealed partial class BackupPage : SgPage
         if (_form.Running) return;
         var entry = _picked;
         var co = Into;
-        if (entry == null || co == null) return;
+        if (entry?.Kind != "branch" || entry.Unreadable != null || co == null || _preview == null) return;
         var name = NameBox.Text.Trim();
         var wip = WipBox.IsChecked == true && entry.HasWip;
         var root = Session.Require();
         var force = ForceBox.IsChecked == true;
-        var request = new RestoreRequest(entry.Name, name, co.Name, wip, force);
+        var request = new RestoreRequest(entry.Name, name, co.Name, wip, force, _preview?.ExpectedRefs);
         var overwrite = force && root.Git.RefSha("refs/heads/" + name) != null;
 
         var confirmed = overwrite
@@ -300,7 +362,7 @@ public sealed partial class BackupPage : SgPage
         ExistingDestination.Update(null, null);
         ResultBar.IsOpen = false;
         var res = await _form.Run(request, submitted => Runner.Run(Pane, "restore " + submitted.Name,
-            () => Backup.Restore(root, submitted.Source, submitted.Name, submitted.Checkout, submitted.WithEdits, submitted.Replace),
+            () => Backup.Restore(root, submitted.Source, submitted.Name, submitted.Checkout, submitted.WithEdits, submitted.Replace, expectedRefs: submitted.ExpectedRefs),
             worktree: new(submitted.Checkout, submitted.Name, root.WorktreePathFor(submitted.Name))), sender);
         _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
@@ -316,6 +378,7 @@ public sealed partial class BackupPage : SgPage
         Conflicts.ItemsSource = conflicts;
 
         entry.ExistsHere = true;
+        _selectedRow?.Loaded(entry);
         RestoreButton.IsEnabled = false;
         ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. Close this and the worktree is on the checkout's card."
             : res.Waiting ? "Resume the operation to finish, skip a commit, or cancel." : "Review the result above for saved work or edits that need attention.");
@@ -356,9 +419,10 @@ public sealed partial class BackupPage : SgPage
     {
         await LoadAsync();
         if (_hidden) return;
-        var entry = _entries.FirstOrDefault(e => e.Kind == "branch" && e.Name == item.Name);
-        if (entry == null) return;
-        Show(entry);
+        var row = _entries.FirstOrDefault(e => e.Reference.Kind == "branch" && e.Name == item.Name);
+        if (row == null) return;
+        await PreviewAsync(row);
+        if (_picked == null || _picked.Unreadable != null || _hidden) return;
         ForceBox.IsChecked = false;
         var name = item.Name + "-backup";
         for (var n = 2; Session.Require().Git.RefSha("refs/heads/" + name) != null; n++) name = item.Name + "-backup-" + n;

@@ -3,6 +3,8 @@
 Git branches and worktrees over SVN checkouts. SVN stays the master.
 The design is in [DESIGN.md](DESIGN.md). This is milestone 1: the core library and the CLI.
 
+Proposed: [Worktree code review](CODE_REVIEW_DESIGN.md), covering inline comments, agent replies and resolution, code anchoring, and delivery stages.
+
 ## Guided workflows
 
 The Windows app keeps a **Tasks** pane aligned with the page content, including standalone action windows. Filter by All tasks, Active, Needs attention, or Finished; filtering preserves expanded results and never hides the overall activity summary. Clear finished removes session results across all filters while keeping running work and durable recovery records. Expand it for progress, cancellation, output, and results from this session; the latest 100 tasks are retained until cleared or the app exits. Navigating away leaves tasks running. Cancellation stays visibly pending until the worker stops and releases the repository; tasks that stop at a step boundary finish that step first. Cancelling a queued task reports that no work started. Use **Copy task details** on any expanded task to copy its current status, timestamps, repository, result, and retained output. Expand a finished task for its result action: open the created folder, review a paused replay or update, or return to Backup. Navigation actions stay tied to the task’s original root. Paused replays and partial results are marked **Needs attention**, and durable recovery remains in **Activity** after a restart.

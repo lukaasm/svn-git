@@ -43,6 +43,7 @@ public sealed partial class BackupPage : SgPage
     List<BackupEntry> _entries = new();
     BackupEntry? _picked;
     bool _binding;
+    int _readGeneration;
     readonly BranchTargetValidation _targetValidation = new();
 
     public BackupPage()
@@ -58,6 +59,9 @@ public sealed partial class BackupPage : SgPage
 
     async Task LoadAsync()
     {
+        var generation = ++_readGeneration;
+        ReadingBackup.Hide();
+        ReadError.IsOpen = false;
         _targetValidation.Invalidate();
         ExistingDestination.Update(null, null);
         _picked = null;
@@ -67,7 +71,7 @@ public sealed partial class BackupPage : SgPage
         var configured = Backup.Configured(root);
         NoBackup.Visibility = configured ? Visibility.Collapsed : Visibility.Visible;
         Filled.Visibility = Nothing.Visibility = Visibility.Collapsed;
-        RestoreRow.Visibility = configured ? Visibility.Visible : Visibility.Collapsed;
+        RestoreRow.Visibility = Visibility.Collapsed;
         BackupNowButton.IsEnabled = PruneButton.IsEnabled = configured;
         RestoreButton.IsEnabled = false;
         if (!configured)
@@ -87,11 +91,14 @@ public sealed partial class BackupPage : SgPage
         UrlText.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
         ShowReport(LastReport, Backup.Last(root), ActFor);
+        ReadingBackup.Running("Reading the backup repository…", "You can keep browsing. The saved report above remains available.");
 
         var list = await Runner.Quiet(Pane, () => Backup.List(root));
+        if (generation != _readGeneration || root.RootPath != Session.Root?.RootPath) return;
+        ReadingBackup.Hide();
         if (list == null)
         {
-            Summary.Text = "The line at the bottom says why the backup could not be read.";
+            ReadError.IsOpen = true;
             return;
         }
         _entries = list;
@@ -115,11 +122,15 @@ public sealed partial class BackupPage : SgPage
         IntoBox.ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList();
         _binding = false;
 
-        // The first branch that is not here yet is what the page was most likely opened for.
-        var first = branches.FirstOrDefault(b => !b.Entry.ExistsHere && b.Entry.Unreadable == null) ?? branches.FirstOrDefault();
-        if (first != null) Branches.SelectedItem = first;
-        else Show(null);
+        // Browsing the backup is not yet a restore. Wait for an explicit selection before showing
+        // destination validation; auto-selecting an existing branch greeted users with a conflict.
+        Branches.SelectedItem = null;
+        Show(null);
     }
+
+    public override void OnHidden() => _readGeneration++;
+    async void RetryRead_Click(object sender, RoutedEventArgs e) => await LoadAsync();
+    void ReadLog_Click(object sender, RoutedEventArgs e) => OutputWindow.Show();
 
     void Branch_Changed(object sender, SelectionChangedEventArgs e) => Show((Branches.SelectedItem as BackupRow)?.Entry);
 
@@ -128,6 +139,9 @@ public sealed partial class BackupPage : SgPage
     {
         _picked = entry;
         var has = entry != null && entry.Unreadable == null;
+        RestoreRow.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        RestoreButton.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        SelectionHint.Visibility = entry == null ? Visibility.Visible : Visibility.Collapsed;
         CommitsHeader.Visibility = CommitsCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         BasesHeader.Visibility = BasesCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (!has)

@@ -45,6 +45,13 @@ public sealed class TaskQueue
     readonly object _gate = new();
     readonly List<OperationTask> _tasks = [];
     public event Action? Changed;
+    /// <summary>Ownership, lifecycle, cancellation, or history changed. Progress and output use Changed only.</summary>
+    public event Action? StateChanged;
+    void Notify(bool stateChanged)
+    {
+        if (stateChanged) StateChanged?.Invoke();
+        Changed?.Invoke();
+    }
     public IReadOnlyList<TaskSnapshot> Snapshot()
     {
         lock (_gate) return _tasks.Select(t => t.Snapshot()).ToArray();
@@ -66,12 +73,12 @@ public sealed class TaskQueue
         lock (_gate)
         {
             if (Blocking(root) != null) return null;
-            task = new OperationTask(title, root, boundary, worktree, () => Changed?.Invoke());
+            task = new OperationTask(title, root, boundary, worktree, Notify);
             _tasks.Add(task);
             // Retain recent receipts without retaining page objects or unbounded output.
             while (_tasks.Count > 100 && _tasks.FirstOrDefault(t => !t.Snapshot().Active) is { } old) _tasks.Remove(old);
         }
-        Changed?.Invoke();
+        Notify(true);
         return task;
     }
     public void Cancel(Guid id)
@@ -83,7 +90,7 @@ public sealed class TaskQueue
     public void ClearFinished()
     {
         lock (_gate) _tasks.RemoveAll(t => !t.Snapshot().Active);
-        Changed?.Invoke();
+        Notify(true);
     }
 }
 
@@ -91,9 +98,9 @@ public sealed class OperationTask
 {
     readonly object _gate = new();
     readonly CancellationTokenSource _cancel = new();
-    readonly Action _changed;
+    readonly Action<bool> _changed;
     TaskSnapshot _state;
-    internal OperationTask(string title, string root, bool boundary, PendingWorktree? worktree, Action changed)
+    internal OperationTask(string title, string root, bool boundary, PendingWorktree? worktree, Action<bool> changed)
     {
         _changed = changed;
         _state = new(Guid.NewGuid(), title, root, TaskState.Waiting, "Waiting for repository access", null,
@@ -101,14 +108,14 @@ public sealed class OperationTask
     }
     public CancellationToken Token => _cancel.Token;
     public TaskSnapshot Snapshot() { lock (_gate) return _state; }
-    public void Running() => Change(s => s.Active ? s with { State = TaskState.Running, Detail = "Starting…" } : s);
+    public void Running() => Change(s => s.Active ? s with { State = TaskState.Running, Detail = "Starting…" } : s, stateChanged: true);
     public void Progress(string detail, double? percent = null) => Change(s => s.Active ? s with { Detail = detail, Percent = percent } : s);
     public void Append(string line) => Change(s => s with { Log = Tail(s.Log + line + Environment.NewLine) });
     static string Tail(string text) => text.Length <= 24000 ? text : "[Earlier output omitted]\n" + text[^23000..];
     public void Finish(TaskState state, string detail, TaskFollowUp? followUp = null)
     {
         if (state is TaskState.Waiting or TaskState.Running) throw new ArgumentException("A result must be terminal.", nameof(state));
-        Change(s => s.Active ? s with { State = state, Detail = detail, Percent = null, Finished = DateTimeOffset.Now, FollowUp = followUp } : s);
+        Change(s => s.Active ? s with { State = state, Detail = detail, Percent = null, Finished = DateTimeOffset.Now, FollowUp = followUp } : s, stateChanged: true);
     }
     public void Cancel()
     {
@@ -118,11 +125,16 @@ public sealed class OperationTask
             _state = _state with { StopRequested = true };
         }
         _cancel.Cancel();
-        _changed();
+        _changed(true);
     }
-    void Change(Func<TaskSnapshot, TaskSnapshot> change)
+    void Change(Func<TaskSnapshot, TaskSnapshot> change, bool stateChanged = false)
     {
-        lock (_gate) _state = change(_state);
-        _changed();
+        lock (_gate)
+        {
+            var next = change(_state);
+            if (ReferenceEquals(next, _state)) return;
+            _state = next;
+        }
+        _changed(stateChanged);
     }
 }

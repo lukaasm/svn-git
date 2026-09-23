@@ -23,6 +23,13 @@
             </Grid>
             <TextBlock Text="Keep the overview open or running in the tray. Busy intervals are skipped."
                        Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+            <InfoBar x:Name="SkippedNotice" Title="Last interval skipped" Severity="Warning" IsOpen="False" IsClosable="False">
+                <StackPanel Spacing="8">
+                    <TextBlock x:Name="SkippedReason" AutomationProperties.AutomationId="BackupSkippedReason" TextWrapping="Wrap" />
+                    <local:IconButton x:Name="BlockingTask" AutomationProperties.AutomationId="BackupBlockingTask"
+                                      Text="View blocking task" Glyph="&#xE8A5;" HorizontalAlignment="Left" Click="BlockingTask_Click" />
+                </StackPanel>
+            </InfoBar>
         </StackPanel>
     </Border>
 </UserControl>

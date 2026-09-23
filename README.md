@@ -28,6 +28,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-workflow-presentation.ps1 -FixtureRoot <workflow-fixture-root>` checks Activity, Coverage, Review readiness, and Storage on a private desktop and captures each page. Use a disposable fixture retained by the workflow suite, with its `source` branch, operation history, local backup remote, and no configured review checks. It verifies check editing, ordering, validation, literal argument persistence, recorded result totals, navigation to failed or empty output, and literal output search with selection, scrolling, and wraparound without executing commands. It restores the original check configuration and review record afterward. It checks coverage without publishing or restoring a backup.
 
+`scripts/test-backup-feedback.ps1 -FixtureRoot <workflow-fixture-root> -SourceRoot <real-root>` copies presentation fields from saved activity into an isolated Debug replay. The source is read only; no captured operation is executed. It exercises 97 retained tasks and continuous output, navigation, skipped-backup links across task filters, interval-only scheduling, and backup read failure/retry against a local disposable remote. It records automation timings and screenshots under `TestResults/UI`; `-Baseline` runs only the navigation replay. The Debug replay hook is inactive unless an isolated test directory contains its input file, and is compiled out of release builds.
+
 The Debug app uses a separate instance key, settings, monitor data, crash log, update directory, and WebView profile per run. Release builds ignore the test-directory environment variable. Background runs skip the system-clipboard assertion because Windows desktops in the same window station share that resource; the direct task test still covers it. Notification registration is disabled for isolated runs.
 
 For direct Windows UI Automation testing on your visible desktop, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected. Add `-CheckRecovery` to verify startup discovery, recovery navigation, and notice removal after reconciliation.
@@ -455,12 +457,17 @@ default). Automatic backups run only at that interval; commits, shelves, rebases
 Settings and Backup show the next scheduled time and the last complete successful backup for this destination.
 Changing the interval starts a new countdown immediately; navigation does not reset it. Keep the overview open or
 running in the tray: busy intervals are skipped until the next tick. Zero disables automatic backups. Manual backup remains available.
+When an interval is skipped, Settings and Backup name the blocking task and link to its progress or retained result.
+Finishing that task does not start an extra backup. Task history shows status icons, start times, and durations;
+log bursts update the visible progress at a bounded rate without refreshing unrelated action controls.
 Success history is recorded by this version onward and survives later failures; checks and runs with conflicts or omitted files do not count as complete success. Every worktree card
 says "backed up 3 min ago", "2 commits not backed up", "backup failed" with the reason, or "backing up...", and
 its Backup row has Exclude: the worktree stays out of every backup, the chip says "excluded from the backup", and
 Include puts it back. **Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item
 that was sent, failed, diverged or left files out - then what the remote holds, Restore, Back up now, Prune. When the
 last backup failed or could not run, the overview says so in a red bar above the worktrees, with Open backup on it.
+The Backup page retains that report while reading the remote and offers Retry if the read fails. Restore options
+appear after you choose a branch, keeping routine backup inspection free of premature destination errors.
 
 ## Server branches
 

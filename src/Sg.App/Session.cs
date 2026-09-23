@@ -94,6 +94,8 @@ public sealed class AppSettings
     }
 }
 
+public sealed record SkippedBackup(string Root, string Url, string Prefix, DateTimeOffset When, string Reason, Guid? TaskId);
+
 /// <summary>The one open root, its log sink, and helpers every window uses.</summary>
 public static class Session
 {
@@ -123,6 +125,19 @@ public static class Session
     /// <summary>The overview's actual timer deadline. Null when its scheduler is stopped.</summary>
     public static DateTimeOffset? NextBackup { get; private set; }
     public static event Action? BackupScheduleChanged;
+    public static SkippedBackup? LastSkippedBackup { get; private set; }
+    internal static void SkipBackup(SgRoot root, TaskSnapshot? blocker)
+    {
+        LastSkippedBackup = new(root.RootPath, root.Config.Backup!.Url, root.Config.Backup.Prefix,
+            DateTimeOffset.Now, blocker == null ? "The previous backup was still finishing." : blocker.Title + " was still in progress.", blocker?.Id);
+        BackupScheduleChanged?.Invoke();
+    }
+    internal static void ClearBackupSkip(SgRoot root)
+    {
+        if (LastSkippedBackup?.Root != root.RootPath) return;
+        LastSkippedBackup = null;
+        BackupScheduleChanged?.Invoke();
+    }
     internal static void SetNextBackup(DateTimeOffset? when)
     {
         NextBackup = when;

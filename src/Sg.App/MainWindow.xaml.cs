@@ -70,6 +70,7 @@ public sealed partial class MainWindow : Window
         Session.Log.Sink = Pane;
         Host.Window = this;
         Tasks.Navigation = Host;
+        Host.Tasks = Tasks;
         Host.Changed += SyncHeader;
         Host.AttachShortcuts((FrameworkElement)Content, escapeCloses: false);
         _monitor = DispatcherQueue.CreateTimer();
@@ -88,7 +89,7 @@ public sealed partial class MainWindow : Window
         Shortcuts.Add(this, VirtualKey.F5, () => _ = RefreshAllAsync());
         Shortcuts.Add(this, VirtualKey.K, VirtualKeyModifiers.Control, () => _ = QuickJump.ShowAsync(this, JumpEntries()));
         MonitorService.Changed += UpdateMonitorBadge;
-        Session.Tasks.Changed += TasksChanged;
+        Session.Tasks.StateChanged += TasksChanged;
         // Opening or closing the pane swaps which of the two unread markers is on show.
         Nav.PaneOpened += (_, _) => UpdateMonitorBadge();
         Nav.PaneClosed += (_, _) => UpdateMonitorBadge();
@@ -98,13 +99,14 @@ public sealed partial class MainWindow : Window
             Session.Settings.Saved -= BackupSettingsSaved;
             Session.SetNextBackup(null);
             MonitorService.Changed -= UpdateMonitorBadge;
-            Session.Tasks.Changed -= TasksChanged;
+            Session.Tasks.StateChanged -= TasksChanged;
         };
         UpdateMonitorBadge();
         Updates.Sweep();
         ShowOverview((CheckoutRow?)null);
         _ = RefreshAsync(runStartAction: true);
         _ = CheckUpdateAsync();
+        DebugTestRun.ReplayTasks();
     }
 
     IReadOnlyList<RecoveryItem> _recovery = [];
@@ -319,7 +321,14 @@ public sealed partial class MainWindow : Window
     internal async Task<BackupResult?> BackupAsync(bool quiet)
     {
         var root = Session.Root;
-        if (root == null || !Backup.Configured(root) || _backingUp || Session.Tasks.Blocking(root.RootPath) != null) return null;
+        if (root == null || !Backup.Configured(root)) return null;
+        var blocker = Session.Tasks.Blocking(root.RootPath);
+        if (_backingUp || blocker != null)
+        {
+            if (quiet) Session.SkipBackup(root, blocker);
+            return null;
+        }
+        Session.ClearBackupSkip(root);
         _backingUp = true;
         Session.BackingUp = true;
         Overview.RepaintWorktrees();

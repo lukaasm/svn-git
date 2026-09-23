@@ -5,6 +5,31 @@ namespace Sg.Core.Tests;
 public class TaskQueueTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     [Fact]
+    public void Log_bursts_do_not_refresh_ownership_observers_but_lifecycle_changes_do()
+    {
+        var queue = new TaskQueue();
+        var states = new List<TaskSnapshot?>();
+        var updates = 0;
+        queue.StateChanged += () => states.Add(queue.Snapshot().LastOrDefault());
+        queue.Changed += () => updates++;
+        var task = queue.TryStart("Pull from SVN", "root")!;
+        task.Running();
+        for (var i = 0; i < 1000; i++) { task.Append("Applied commit " + i); task.Progress("Replaying", i / 10.0); }
+        Assert.Equal(2, states.Count);
+        Assert.Equal(2002, updates);
+        Assert.Contains("Applied commit 999", task.Snapshot().Log);
+        task.Cancel();
+        Assert.True(states[^1]!.Stopping);
+        Assert.NotNull(queue.Blocking("root"));
+        task.Finish(TaskState.Cancelled, "Stopped");
+        Assert.Equal(TaskState.Cancelled, states[^1]!.State);
+        Assert.Null(queue.Blocking("root"));
+        queue.ClearFinished();
+        Assert.Null(states[^1]);
+        Assert.Equal(5, states.Count);
+    }
+
+    [Fact]
     public void Repeated_collision_checks_do_not_allocate_history_snapshots()
     {
         var queue = new TaskQueue();

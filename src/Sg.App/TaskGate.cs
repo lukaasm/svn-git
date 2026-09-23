@@ -51,11 +51,11 @@ public sealed class TaskGate : ContentControl
                 };
                 Content = _gate;
             }
-            Session.Tasks.Changed += Changed;
+            Session.Tasks.StateChanged += Changed;
             Session.RootChanged += Changed;
             Changed();
         };
-        Unloaded += (_, _) => { Session.Tasks.Changed -= Changed; Session.RootChanged -= Changed; };
+        Unloaded += (_, _) => { Session.Tasks.StateChanged -= Changed; Session.RootChanged -= Changed; };
     }
     void Changed() => _refresh.Request();
     void Refresh()

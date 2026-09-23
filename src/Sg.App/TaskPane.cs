@@ -22,15 +22,17 @@ public sealed class TaskPane : UserControl
     readonly TextBlock _viewSummary = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _clear;
     public NavHost? Navigation { get; set; }
-    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp, Button ViewOutput)
+    sealed record Row(Border Card, Button Toggle, TextBlock Title, TextBlock Metadata, StatusChip Chip, FontIcon Chevron,
+        StackPanel Body, TextBlock Detail, TextBlock Output, Button Cancel, ProgressBar Bar, Button FollowUp, Button ViewOutput)
     {
         public TaskSnapshot? LastTask;
+        public TaskSnapshot? DetailsTask;
         public string? Root;
     }
 
     public TaskPane()
     {
-        _refresh = new(DispatcherQueue, () => { if (IsLoaded) Refresh(); });
+        _refresh = new(DispatcherQueue, () => { if (IsLoaded) Refresh(); }, TimeSpan.FromMilliseconds(100));
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         var header = new Grid { ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -68,7 +70,7 @@ public sealed class TaskPane : UserControl
         var view = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         view.Children.Add(_filter); view.Children.Add(_viewSummary);
         toolbar.Children.Add(view);
-        _clear = new Button { Content = "Clear finished", Padding = new Thickness(8, 4, 8, 4), Style = (Style)Application.Current.Resources["QuietButton"] };
+        _clear = new IconButton { Text = "Clear finished", Glyph = "\uE74D", Padding = new Thickness(8, 4, 8, 4), Style = (Style)Application.Current.Resources["QuietButton"] };
         AutomationProperties.SetAutomationId(_clear, "ClearFinishedTasks");
         const string clearHelp = "Clear all finished results from this session, including failures, across every filter. Running tasks and saved recovery records are kept.";
         ToolTipService.SetToolTip(_clear, clearHelp);
@@ -132,23 +134,38 @@ public sealed class TaskPane : UserControl
         {
             _rows.Children.Remove(_views[id].Card); _views.Remove(id);
         }
-        foreach (var task in tasks)
+        var position = 0;
+        foreach (var task in tasks.Reverse())
         {
+            // Hidden filters do not need controls at all. Existing rows retain their expansion state.
+            if (!Visible(task) && !_views.ContainsKey(task.Id)) continue;
             if (!_views.TryGetValue(task.Id, out var row))
             {
                 row = MakeRow(task.Id);
                 _views.Add(task.Id, row);
-                _rows.Children.Insert(0, row.Card);
+                _rows.Children.Add(row.Card);
             }
             row.Card.Visibility = Visible(task) ? Visibility.Visible : Visibility.Collapsed;
+            if (!Visible(task)) continue;
+            if (_rows.Children.IndexOf(row.Card) != position)
+            {
+                _rows.Children.Remove(row.Card);
+                _rows.Children.Insert(position, row.Card);
+            }
+            position++;
             UpdateTitle(row, task);
-            if (ReferenceEquals(row.LastTask, task) && row.Root == Session.Root?.RootPath) continue;
+            if (ReferenceEquals(row.LastTask, task) && row.Root == Session.Root?.RootPath
+                && (row.Body.Visibility != Visibility.Visible || ReferenceEquals(row.DetailsTask, task))) continue;
             row.LastTask = task;
             row.Root = Session.Root?.RootPath;
-            var detail = Message(task) + "\n" + task.Root;
-            if (row.Detail.Text != detail) row.Detail.Text = detail;
-            var liveOutput = task.Active ? task.Log : "";
-            if (row.Output.Text != liveOutput) row.Output.Text = liveOutput;
+            if (row.Body.Visibility == Visibility.Visible)
+            {
+                var detail = Message(task) + "\n" + task.Root;
+                if (row.Detail.Text != detail) row.Detail.Text = detail;
+                var liveOutput = task.Active ? task.Log : "";
+                if (row.Output.Text != liveOutput) row.Output.Text = liveOutput;
+                row.DetailsTask = task;
+            }
             row.Output.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
             row.ViewOutput.Visibility = task.Active ? Visibility.Collapsed : Visibility.Visible;
             row.Cancel.Visibility = task.Active ? Visibility.Visible : Visibility.Collapsed;
@@ -175,9 +192,39 @@ public sealed class TaskPane : UserControl
     {
         var elapsed = (task.Finished ?? DateTimeOffset.Now) - task.Started;
         var title = $"{State(task)} · {task.Title} · {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
-        if (row.Title.Text == title) return;
-        row.Title.Text = title;
+        if (AutomationProperties.GetName(row.Toggle) == title) return;
+        row.Title.Text = task.Title;
+        row.Metadata.Text = $"{task.StatusLabel} · {task.Started.LocalDateTime:HH:mm:ss} · {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
+        row.Chip.Severity = task.State switch
+        {
+            TaskState.Succeeded => ChipSeverity.Success, TaskState.Failed => ChipSeverity.Critical,
+            TaskState.NeedsAttention => ChipSeverity.Caution, TaskState.Running => ChipSeverity.Attention,
+            _ => ChipSeverity.Neutral
+        };
+        row.Chip.Glyph = task.State switch
+        {
+            TaskState.Succeeded => "\uE73E", TaskState.Failed => "\uEA39", TaskState.NeedsAttention => "\uE7BA",
+            TaskState.Cancelled => "\uE711", TaskState.Waiting => "\uE823", _ => "\uE895"
+        };
+        var help = $"{task.Title}\nStarted {task.Started.LocalDateTime:g}\n{task.Root}";
+        AutomationProperties.SetHelpText(row.Toggle, help);
+        ToolTipService.SetToolTip(row.Toggle, help);
         AutomationProperties.SetName(row.Toggle, title);
+    }
+
+    /// <summary>Reveal the exact task even when the pane or a history filter has hidden it.</summary>
+    public void ShowTask(Guid id)
+    {
+        if (!Session.Tasks.Snapshot().Any(t => t.Id == id)) return;
+        _body.Visibility = Visibility.Visible;
+        _chevron.Glyph = "\uE70E";
+        _filter.SelectedIndex = 0;
+        Refresh();
+        if (!_views.TryGetValue(id, out var row)) return;
+        row.Body.Visibility = Visibility.Visible;
+        row.Chevron.Glyph = "\uE70E";
+        Refresh();
+        DispatcherQueue.TryEnqueue(() => { row.Toggle.StartBringIntoView(); row.Toggle.Focus(FocusState.Programmatic); });
     }
     static bool SameRoot(string a, string? b) => string.Equals(a.TrimEnd('/', '\\'), b?.TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase);
     void OpenResult(Guid id)
@@ -229,7 +276,10 @@ public sealed class TaskPane : UserControl
     };
     Row MakeRow(Guid id)
     {
-        var title = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var title = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis };
+        var metadata = new TextBlock { Style = (Style)Application.Current.Resources["Secondary"], FontSize = 12 };
+        var chip = new StatusChip { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 0, 0) };
+        var chevron = new FontIcon { Glyph = "\uE70D", FontSize = 12 };
         var detail = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
         var output = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 12 };
         var cancel = new Button { Margin = new Thickness(0, 4, 12, 4), VerticalAlignment = VerticalAlignment.Top };
@@ -252,20 +302,32 @@ public sealed class TaskPane : UserControl
         AutomationProperties.SetAutomationId(feedback, "CopyTaskFeedback_" + id);
         AutomationProperties.SetLiveSetting(feedback, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         copy.Click += (_, _) => CopyDetails(id, feedback);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var actions = new WrapRow { Spacing = 8 };
         actions.Children.Add(followUp); actions.Children.Add(viewOutput); actions.Children.Add(copy);
         body.Children.Add(detail); body.Children.Add(actions); body.Children.Add(feedback); body.Children.Add(bar); body.Children.Add(output);
-        var toggle = new Button { Content = title, Padding = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Stretch,
+        var caption = new StackPanel { Spacing = 2 }; caption.Children.Add(title); caption.Children.Add(metadata);
+        var headingContent = new Grid { ColumnSpacing = 12 };
+        headingContent.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        headingContent.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        headingContent.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        headingContent.Children.Add(chip); Grid.SetColumn(caption, 1); headingContent.Children.Add(caption);
+        Grid.SetColumn(chevron, 2); headingContent.Children.Add(chevron);
+        var toggle = new Button { Content = headingContent, Padding = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Style = (Style)Application.Current.Resources["QuietButton"] };
         AutomationProperties.SetAutomationId(toggle, "Task_" + id);
-        toggle.Click += (_, _) => body.Visibility = body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        toggle.Click += (_, _) =>
+        {
+            body.Visibility = body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            chevron.Glyph = body.Visibility == Visibility.Visible ? "\uE70E" : "\uE70D";
+            Refresh();
+        };
         var heading = new Grid { ColumnSpacing = 12 };
         heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         heading.Children.Add(toggle); Grid.SetColumn(cancel, 1); heading.Children.Add(cancel);
         var layout = new StackPanel(); layout.Children.Add(heading); layout.Children.Add(body);
         var card = new Border { Child = layout, BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] };
-        return new(card, toggle, title, detail, output, cancel, bar, followUp, viewOutput);
+        return new(card, toggle, title, metadata, chip, chevron, body, detail, output, cancel, bar, followUp, viewOutput);
     }
 }
 
@@ -279,8 +341,8 @@ public sealed class PendingWorktrees : UserControl
     {
         _refresh = new(DispatcherQueue, () => { if (IsLoaded) RefreshRows(); });
         Content = _rows;
-        Loaded += (_, _) => { Session.Tasks.Changed += Changed; Changed(); };
-        Unloaded += (_, _) => Session.Tasks.Changed -= Changed;
+        Loaded += (_, _) => { Session.Tasks.StateChanged += Changed; Changed(); };
+        Unloaded += (_, _) => Session.Tasks.StateChanged -= Changed;
     }
     public void Refresh() => Changed();
     void Changed() => _refresh.Request();

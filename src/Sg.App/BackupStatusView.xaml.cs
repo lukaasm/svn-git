@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Sg.Core;
 
@@ -14,14 +15,14 @@ public sealed partial class BackupStatusView : UserControl
     public BackupStatusView()
     {
         InitializeComponent();
-        _refresh = new(DispatcherQueue, () => { if (IsLoaded) Refresh(); });
+        _refresh = new(DispatcherQueue, () => { if (IsLoaded) Refresh(); }, TimeSpan.FromMilliseconds(100));
         Loaded += (_, _) =>
         {
             _historyKey = null;
             Session.BackupScheduleChanged += Changed;
             Session.Settings.Saved += Changed;
             Session.RootChanged += Changed;
-            Session.Tasks.Changed += Changed;
+            Session.Tasks.StateChanged += Changed;
             Changed();
         };
         Unloaded += (_, _) =>
@@ -30,7 +31,7 @@ public sealed partial class BackupStatusView : UserControl
             Session.BackupScheduleChanged -= Changed;
             Session.Settings.Saved -= Changed;
             Session.RootChanged -= Changed;
-            Session.Tasks.Changed -= Changed;
+            Session.Tasks.StateChanged -= Changed;
         };
     }
 
@@ -48,6 +49,18 @@ public sealed partial class BackupStatusView : UserControl
         AutomationProperties.SetHelpText(NextRun, next?.ToString("O") ?? "");
         ScheduleChip.Severity = next.HasValue ? ChipSeverity.Attention : ChipSeverity.Neutral;
 
+        var skip = Session.LastSkippedBackup;
+        var relevant = configured && skip?.Root == root!.RootPath && skip.Url == root.Config.Backup!.Url && skip.Prefix == root.Config.Backup.Prefix;
+        SkippedNotice.IsOpen = relevant;
+        if (relevant)
+        {
+            SkippedReason.Text = $"{Format(skip!.When)} · {skip.Reason} No backup started during that interval.";
+            BlockingTask.Tag = skip.TaskId;
+            var task = Session.Tasks.Snapshot().FirstOrDefault(t => t.Id == skip.TaskId);
+            BlockingTask.Visibility = task != null ? Visibility.Visible : Visibility.Collapsed;
+            BlockingTask.Text = task?.Active == true ? "View blocking task" : "View task result";
+        }
+
         // Task progress can arrive many times a second. Read the small receipt only on load,
         // destination changes, or task completion, and keep even that I/O off the UI thread.
         var finished = Session.Tasks.Snapshot().Where(t => t.Root == root?.RootPath && !t.Active).Select(t => t.Id);
@@ -55,6 +68,13 @@ public sealed partial class BackupStatusView : UserControl
         if (key == _historyKey) return;
         _historyKey = key;
         _ = ReadSuccessAsync(root, ++_generation);
+    }
+
+    void BlockingTask_Click(object sender, RoutedEventArgs e)
+    {
+        if (BlockingTask.Tag is not Guid id) return;
+        for (DependencyObject? parent = this; parent != null; parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(parent))
+            if (parent is SgPage page) { page.Host?.Tasks?.ShowTask(id); return; }
     }
 
     async Task ReadSuccessAsync(SgRoot? root, int generation)

@@ -121,6 +121,8 @@ public sealed class NavHost : ContentControl
 
     /// <summary>The window this host is in. The host's owner sets it; pages ask for it.</summary>
     public Window? Window { get; set; }
+    /// <summary>The persistent task pane in this window, for links from operation feedback.</summary>
+    internal TaskPane? Tasks { get; set; }
 
     public NavHost()
     {

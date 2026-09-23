@@ -32,8 +32,8 @@ public sealed partial class CheckoutPage : SgPage
         InitializeComponent();
         _owner = owner;
         Title = "Overview";
-        Loaded += (_, _) => { Session.Tasks.Changed += TaskStateChanged; TaskStateChanged(); };
-        Unloaded += (_, _) => Session.Tasks.Changed -= TaskStateChanged;
+        Loaded += (_, _) => { Session.Tasks.StateChanged += TaskStateChanged; TaskStateChanged(); };
+        Unloaded += (_, _) => Session.Tasks.StateChanged -= TaskStateChanged;
         // A card's glyph colour, its sentence colour and its accent button are a brush and a style taken
         // out of the app's resources, and the ones taken belong to the theme that was on at the time. The
         // chips beside them re-read their own on a theme change; without this the rest of the card does

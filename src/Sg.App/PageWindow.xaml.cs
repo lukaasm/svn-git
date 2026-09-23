@@ -15,6 +15,7 @@ public sealed partial class PageWindow : Window
         WindowHelper.Chrome(this, AppTitleBar, width, height);
         Host.Window = this;
         Tasks.Navigation = Host;
+        Host.Tasks = Tasks;
         Host.Changed += Sync;
         Host.AttachShortcuts((FrameworkElement)Content, escapeCloses: true);
         Host.Go(make, key);

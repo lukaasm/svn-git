@@ -61,6 +61,15 @@ public sealed partial class BackupPage
                         : worktree.Remote.HasWip ? "Contains commits and saved edits. Open to review their version." : "Contains commits. Open to review their version.",
                     HeaderIcon = new FontIcon { Glyph = "\uE753" }, Content = restore,
                 });
+                var catalog = _catalog;
+                var compare = WorktreeButton("Compare…", "\uE8A5", "BackupWorktreeCompare_" + worktree.Name,
+                    () => { Go(() => new BackupComparePage(worktree.Name, catalog), "backup-compare:" + worktree.Name); return Task.CompletedTask; },
+                    worktree.Remote != null, "Compare local and saved commit histories; read a patch only when selected.");
+                card.Items.Add(new SettingsCard
+                {
+                    Header = "Compare histories", Description = "Review local and saved commits side by side, with their SVN bases and patches.",
+                    HeaderIcon = new FontIcon { Glyph = "\uE8A5" }, Content = compare,
+                });
                 var prune = WorktreeButton("Prune…", "\uE74D", "BackupWorktreePrune_" + worktree.Name,
                     () => PruneAsync(worktree.Name), help: "Preview stale refs belonging only to " + worktree.Name);
                 card.Items.Add(new SettingsCard

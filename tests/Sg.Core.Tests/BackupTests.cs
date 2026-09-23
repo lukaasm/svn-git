@@ -155,6 +155,72 @@ public sealed class BackupTests : IDisposable
     }
 
     [Fact]
+    public void Comparison_reads_only_selected_commits_and_patches_stay_pinned_after_versions_move()
+    {
+        f.Setup();
+        var path = MakeBranch("selected");
+        MakeBranch("untouched");
+        Backup.Set(f.Root, Remote());
+        Assert.True(Backup.Run(f.Root).Ok);
+        Fixture.Put(path, "local.txt", "local addition\n");
+        f.Root.Git.Ok(path, "add", "local.txt");
+        f.Root.Git.Ok(path, "commit", "-q", "-m", "local third commit");
+        Fixture.Put(path, "draft.txt", "unfinished\n");
+        var catalog = Backup.Browse(f.Root);
+        var item = catalog.Items.Single(i => i.Kind == "branch" && i.Name == "selected");
+        var last = Backup.LastSuccess(f.Root);
+        f.Log.Clear();
+        var comparison = Backup.Compare(f.Root, catalog, item);
+        Assert.Equal(3, comparison.Local!.Commits.Count);
+        Assert.Equal(2, comparison.Remote.Commits.Count);
+        Assert.Equal("local third commit", comparison.Local.Commits[0].Subject);
+        Assert.Equal("second: rename one, delete one", comparison.Remote.Commits[0].Subject);
+        Assert.Equal(item.Sha, comparison.Remote.Tip);
+        Assert.Equal(path, comparison.LocalPath);
+        Assert.Single(f.Log.Lines, l => l.Contains(" fetch "));
+        Assert.DoesNotContain(f.Log.Lines, l => l.Contains(" status ") || l.Contains(" push ") || l.Contains("commit-tree") || l.Contains("refs/heads/untouched:"));
+        Assert.Equal(last, Backup.LastSuccess(f.Root));
+        var localSha = comparison.Local.Commits[0].Sha;
+        var remoteSha = comparison.Remote.Commits[0].Sha;
+        var localPatch = Backup.ComparisonPatch(f.Root, comparison, false, localSha);
+        var remotePatch = Backup.ComparisonPatch(f.Root, comparison, true, remoteSha);
+        Assert.Contains("+local addition", localPatch);
+        Assert.DoesNotContain("draft.txt", localPatch);
+        Assert.Contains("tool.py", remotePatch);
+        Fixture.Put(path, "local.txt", "later change\n");
+        f.Root.Git.Ok(path, "commit", "-q", "-am", "later commit");
+        RemoteGit("update-ref", "refs/heads/selected", item.Sha + "^");
+        Assert.Equal(localPatch, Backup.ComparisonPatch(f.Root, comparison, false, localSha));
+        Assert.Equal(remotePatch, Backup.ComparisonPatch(f.Root, comparison, true, remoteSha));
+        Assert.Throws<SgException>(() => Backup.ComparisonPatch(f.Root, comparison, true, localSha));
+        Assert.Throws<SgException>(() => Backup.Compare(f.Root, catalog, item));
+        Assert.Equal("unfinished\n", File.ReadAllText(Path.Combine(path, "draft.txt")));
+    }
+
+    [Fact]
+    public void Comparison_supports_remote_only_and_snapshot_only_backups_and_validates_destination()
+    {
+        f.Setup();
+        Ops.Branch(f.Root, "empty", f.Co);
+        Backup.Set(f.Root, Remote());
+        Backup.Run(f.Root);
+        var tip = RemoteGit("rev-parse", "refs/heads/empty").Trim();
+        RemoteGit("update-ref", "refs/heads/elsewhere", tip);
+        var catalog = Backup.Browse(f.Root);
+        var empty = catalog.Items.Single(i => i.Name == "empty");
+        var local = Backup.Compare(f.Root, catalog, empty);
+        Assert.Empty(local.Local!.Commits);
+        Assert.Empty(local.Remote.Commits);
+        Assert.NotEmpty(local.Remote.Bases);
+        var remote = Backup.Compare(f.Root, catalog, catalog.Items.Single(i => i.Name == "elsewhere"));
+        Assert.Null(remote.Local);
+        Assert.Null(remote.LocalPath);
+        Assert.Empty(remote.Remote.Commits);
+        f.Root.Config.Backup!.Prefix = "changed";
+        Assert.Throws<SgException>(() => Backup.Compare(f.Root, catalog, empty));
+    }
+
+    [Fact]
     public void Worktree_status_compares_committed_tips_without_claiming_files_are_saved()
     {
         f.Setup();

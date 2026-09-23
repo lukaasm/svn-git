@@ -11,7 +11,7 @@ if (!$Worker) {
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -FixtureRoot '" + $FixtureRoot.Replace("'", "''") + "' -SourceRoot '" + $SourceRoot.Replace("'", "''") + "' -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-browse-' + [Guid]::NewGuid().ToString('N')))
     try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(240)
+        $deadline = [DateTime]::UtcNow.AddSeconds(360)
         while (!$desktop.Wait(200)) { if ([DateTime]::UtcNow -ge $deadline) { throw "Browsing test timed out. See $ArtifactDirectory" } }
         if ($desktop.ExitCode -ne 0) { throw "Browsing test failed. See $ArtifactDirectory/probe-error.txt" }
         Write-Output "PASS: Browsing. Artifacts: $ArtifactDirectory"
@@ -228,6 +228,33 @@ try {
         $scroller -and $scroller.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).Current.VerticalScrollPercent -gt 40
     }
     $null = Wait-For 'expanded backup worktree retained' { Find 'BackupWorktreeSend_source' }
+
+    Start-UiScenario 'Compare selected histories, inspect patches, and retain search and selection'
+    Invoke-Element (Find 'BackupWorktreeCompare_source')
+    $null = Wait-For 'comparison loaded' { $label = Find 'ComparedAt'; $label -and $label.Current.Name -like 'source*Compared*' }
+    $listItem = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty, $true)
+    $localCommit = (Find 'BackupCompareLocal').FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listItem)
+    $remoteCommit = (Find 'BackupCompareRemote').FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listItem)
+    if (!$localCommit -or !$remoteCommit) { throw 'Comparison needs both local and saved commit histories.' }
+    Select-Element $localCommit
+    $null = Wait-For 'local patch loaded' { $title = Find 'TitleText'; $title -and $title.Current.Name -like 'Local*' }
+    Select-Element $remoteCommit
+    $null = Wait-For 'backup patch loaded' { $title = Find 'TitleText'; $title -and $title.Current.Name -like 'Backup*' }
+    $selectedTitle = (Find 'PatchTitle').Current.Name
+    Set-Field 'BackupCompareSearch' 'no-commit-matches-this-search'
+    $null = Wait-For 'search clears selected patch' { (Find 'PatchTitle').Current.Name -eq 'Select a commit to inspect its changes' }
+    $null = Wait-For 'local search empty state' { (Find 'LocalEmpty').Current.Name -like 'No local commits match*' }
+    Set-Field 'BackupCompareSearch' ''
+    $null = Wait-For 'saved history restored after clearing search' { (Find 'BackupCompareRemote').FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listItem) }
+    Select-Element ((Find 'BackupCompareRemote').FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listItem))
+    $null = Wait-For 'same saved commit selected again' { (Find 'PatchTitle').Current.Name -eq $selectedTitle }
+    Select-Element (Find 'SettingsItem')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'comparison selection restored on return' { $title = Find 'TitleText'; $title -and $title.Current.Name -eq $selectedTitle }
+    Start-Sleep -Milliseconds 500
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-comparison.png')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'return to backup worktrees' { Find 'BackupSearch' }
 
     Start-UiScenario 'Backup previews reject changed versions and retry only the selected item'
     (Find 'ContentScroll').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).SetScrollPercent(-1, 0)

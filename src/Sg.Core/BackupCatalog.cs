@@ -38,20 +38,28 @@ public static partial class Backup
 
     public static BackupPreview Preview(SgRoot root, BackupCatalog catalog, BackupReference item)
     {
-        var cfg = Require(root);
-        if (catalog.Root != root.RootPath || catalog.Url != cfg.Url || catalog.Prefix != cfg.Prefix || !catalog.Items.Contains(item))
-            throw new SgException("The backup destination changed. Refresh the backup list before opening a preview.");
         using var operation = root.Lock();
+        var cfg = FetchSelection(root, catalog, item);
         var remoteRef = RemoteRef(cfg, item.Kind, item.Name);
-        var localRef = FetchedRef(item.Kind, item.Name);
-        root.Git.FetchRefs(cfg.Url, ["+" + remoteRef + ":" + localRef]);
-        if (root.Git.RefSha(localRef) != item.Sha)
-            throw new SgException("This backup changed since the list was read. Refresh the list to preview its current version.");
         var entry = new BackupEntry { Kind = item.Kind, Name = item.Name, Sha = item.Sha };
         var expected = new Dictionary<string, string>(StringComparer.Ordinal) { [remoteRef] = item.Sha };
         var wipRef = RemoteRef(cfg, "wip", item.Name);
         if (item.Kind == "branch" && catalog.Refs.TryGetValue(wipRef, out var wipSha)) expected[wipRef] = wipSha;
         ReadEntry(root, cfg, LocalNames(root), item.HasWip ? new(StringComparer.Ordinal) { item.Name } : new(StringComparer.Ordinal), entry);
         return new(entry, expected);
+    }
+
+    // Callers hold the root lock so validation and the fetched version belong to the same destination.
+    static BackupConfig FetchSelection(SgRoot root, BackupCatalog catalog, BackupReference item)
+    {
+        var cfg = Require(root);
+        if (catalog.Root != root.RootPath || catalog.Url != cfg.Url || catalog.Prefix != cfg.Prefix || !catalog.Items.Contains(item))
+            throw new SgException("The backup destination changed. Refresh the backup list before opening a preview.");
+        var remoteRef = RemoteRef(cfg, item.Kind, item.Name);
+        var localRef = FetchedRef(item.Kind, item.Name);
+        root.Git.FetchRefs(cfg.Url, ["+" + remoteRef + ":" + localRef]);
+        if (root.Git.RefSha(localRef) != item.Sha)
+            throw new SgException("This backup changed since the list was read. Refresh the list to preview its current version.");
+        return cfg;
     }
 }

@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="review-threads.css">
 <style>
 html,body{margin:0;height:100%;overflow:hidden}
 #c,#t{height:100%}
@@ -89,6 +90,7 @@ body.sg-flat .monaco-component {
 </style>
 </head>
 <body><div id="c"></div><div id="t"></div>
+<script src="review-threads.js"></script>
 <script>
 (function () {
   var post = function (m) { if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(m); };
@@ -102,7 +104,7 @@ body.sg-flat .monaco-component {
         { type: 'text/javascript' }));
     }
   };
-  var diffEditor = null, textEditor = null, pending = null, layoutSideBySide = true, collapsed = false, textShowing = false;
+  var diffEditor = null, textEditor = null, pending = null, layoutSideBySide = true, collapsed = false, textShowing = false, reviews = null;
   /* The modified side is the file on disk, so a window that can write it lets the reader edit it here.
      contentGuard stops the change the app itself makes from reading back as an edit by the reader. */
   var editable = false, contentGuard = false, contentSub = null, registered = [];
@@ -118,6 +120,7 @@ body.sg-flat .monaco-component {
   /* What the unified view last parsed: one fold per file, and the lines F7 walks. */
   var folds = [], navLines = [];
   function showDiff(m) {
+    if (reviews) reviews.clear();
     textShowing = false;
     document.getElementById('t').style.display = 'none';
     document.getElementById('c').style.display = 'block';
@@ -236,6 +239,7 @@ body.sg-flat .monaco-component {
     return { text: out.join('\n'), language: best || 'plaintext', folds: folds, nav: nav, deco: deco };
   }
   function showText(m) {
+    if (reviews) reviews.clear();
     textShowing = true;
     editable = false;
     if (contentSub) { contentSub.dispose(); contentSub = null; }
@@ -285,6 +289,8 @@ body.sg-flat .monaco-component {
      the strong wash would turn the screen into a field of green, so those two fall back to something
      between the two. */
   function defineTheme(t) {
+    document.documentElement.style.setProperty('--sg-review-open', '#' + t.modified);
+    document.documentElement.style.setProperty('--sg-review-resolved', '#' + t.added);
     monaco.editor.defineTheme('sg-custom', {
       base: t.dark ? 'vs-dark' : 'vs',
       inherit: true,
@@ -359,11 +365,14 @@ body.sg-flat .monaco-component {
   }
 
   function show(m) {
+    if (m && m.command === 'reviews') { if (reviews) reviews.set(m); return; }
+    if (m && m.command === 'review-reveal') { if (reviews) reviews.reveal(m); return; }
     if (m && m.command === 'goto') {
       goTo(!!m.next);
       return;
     }
     if (m && m.command === 'layout') {
+      if (reviews) reviews.close();
       layoutSideBySide = !!m.sideBySide;
       document.body.classList.toggle('sg-inline', !layoutSideBySide);
       collapsed = !!m.collapsed;
@@ -420,6 +429,7 @@ body.sg-flat .monaco-component {
         useInlineViewWhenSpaceIsLimited: false, ignoreTrimWhitespace: ignoreWhitespace, theme: theme, minimap: { enabled: false },
         hideUnchangedRegions: hiddenRegions()
       });
+      reviews = window.createReviewThreads(diffEditor, post);
       diffEditor.getModifiedEditor().onDidChangeCursorSelection(reportSelection);
       diffEditor.onDidUpdateDiff(function () { reportSelection(); post('shown'); });
       textEditor = monaco.editor.create(document.getElementById('t'), {

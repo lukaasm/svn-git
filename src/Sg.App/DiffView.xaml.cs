@@ -93,6 +93,7 @@ public sealed partial class DiffView : UserControl
                 else if (msg.StartsWith("error:")) UseFallback(msg[6..]);
                 else if (msg.StartsWith("sel:")) OnSelection(msg[4..]);
                 else if (msg.StartsWith("act:")) ActionInvoked?.Invoke(msg[4..]);
+                else if (msg.StartsWith("review:")) OnReviewAction(msg[7..]);
                 else if (msg == "dirty") SetDirty(true);
                 else if (msg == "shown")
                 {
@@ -151,6 +152,7 @@ public sealed partial class DiffView : UserControl
     /// <summary>The window is reading the two sides. The bar under the header runs until Show arrives.</summary>
     public void BeginLoading(string? title = null)
     {
+        ClearReviews();
         ++_fileRequest;
         if (title != null) TitleText.Text = title;
         _clock.Restart();
@@ -259,6 +261,7 @@ public sealed partial class DiffView : UserControl
 
     void Present()
     {
+        ClearReviews();
         if (!_clock.IsRunning) _clock.Restart();
         _readMs = _clock.ElapsedMilliseconds;
         _selection = null;
@@ -289,6 +292,8 @@ public sealed partial class DiffView : UserControl
     void Flush()
     {
         if (_pendingJson != null) Post(_pendingJson);
+        SendReviews();
+        FlushReviewReveal();
     }
 
     /// <summary>Jump to the next or previous change in the open diff.</summary>

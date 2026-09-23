@@ -1,0 +1,25 @@
+.sg-review-glyph { cursor: pointer; }
+.sg-review-glyph::before { content: '\25cf'; font: 16px 'Segoe UI', sans-serif; }
+.sg-review-open { color: var(--sg-review-open, #d7aa29); }
+.sg-review-resolved { color: var(--sg-review-resolved, #3fb950); }
+.sg-review-resolved::before { content: '\2713'; }
+/* Monaco's line layers cover the zone's empty space unless interactive content is above them. */
+.sg-review-zone { box-sizing: border-box; overflow: hidden; padding: 8px 0; z-index: 10; }
+.sg-review-panel {
+  box-sizing: border-box; max-width: 100%; border: 1px solid var(--vscode-editorLineNumber-foreground, #777);
+  border-left: 3px solid var(--sg-review-open, #d7aa29); border-radius: 6px;
+  background: var(--vscode-editor-background, #202020); color: var(--vscode-editor-foreground, #eee);
+  font: 13px/1.5 'Segoe UI', sans-serif; white-space: normal;
+}
+.sg-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; }
+.sg-review-history { max-height: 280px; overflow: auto; overscroll-behavior: contain; padding: 0 12px 12px; }
+.sg-review-thread + .sg-review-thread { border-top: 1px solid var(--vscode-editorLineNumber-foreground, #777); margin-top: 12px; padding-top: 12px; }
+.sg-review-status { display: inline-block; font-weight: 600; margin: 4px 8px 8px 0; }
+.sg-review-status.open { color: var(--sg-review-open, #d7aa29); }
+.sg-review-status.resolved { color: var(--sg-review-resolved, #3fb950); }
+.sg-review-meta, .sg-review-range { opacity: .8; font-size: 12px; overflow-wrap: anywhere; }
+.sg-review-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 12px; user-select: text; }
+.sg-review-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sg-review-button { font: inherit; color: inherit; border: 1px solid var(--vscode-editorLineNumber-foreground, #777); border-radius: 4px; padding: 4px 10px; background: transparent; cursor: pointer; }
+.sg-review-button:hover { background: var(--vscode-editor-selectionBackground, #333); }
+.sg-review-button:focus-visible { outline: 2px solid var(--vscode-focusBorder, #48bfff); outline-offset: 2px; }

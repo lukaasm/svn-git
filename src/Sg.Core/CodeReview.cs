@@ -42,6 +42,7 @@ public sealed class CodeReviewData
 }
 public sealed record ReviewFile(string File, string Original, string Modified, string Version, string Head, string Snapshot);
 public sealed record ReviewContext(CodeThread Thread, string Original, string? Current, string Location, int? CurrentLine, string Version);
+public sealed record ReviewLocation(string State, int? First, int? Last);
 
 /// <summary>Durable worktree annotations shared by the UI, CLI, MCP and backup. Source files are never written.</summary>
 public static class CodeReview
@@ -213,19 +214,30 @@ public static class CodeReview
         var thread = data.Threads.SingleOrDefault(t => t.Id == id) ?? throw new SgException("Unknown review thread.");
         var original = data.Contents[thread.Anchor.Content];
         var current = CurrentText(DiskPath(path, thread.Anchor.File));
-        var location = current == null ? "missing" : current == original ? "current" : "changed";
-        int? line = location == "current" ? thread.Anchor.First : null;
-        if (location == "changed" && thread.Anchor.First > 0)
+        var location = Locate(thread.Anchor, original, current);
+        return new(thread, original, current, location.State, location.First, Version(current));
+    }
+    /// <summary>Maps saved feedback onto a displayed version only when its context has a unique match.</summary>
+    public static ReviewLocation Locate(CodeAnchor anchor, string saved, string? displayed)
+    {
+        if (displayed == null) return new("missing", null, null);
+        if (displayed == saved) return new("current", anchor.First, anchor.Last);
+        if (anchor.First > 0)
         {
-            var oldLines = original.Replace("\r\n", "\n").Split('\n');
-            var newLines = current!.Replace("\r\n", "\n").Split('\n');
-            var start = Math.Max(0, thread.Anchor.First - 3);
-            var block = oldLines.Skip(start).Take(thread.Anchor.Last - start + 2).ToArray();
-            var matches = Enumerable.Range(0, Math.Max(0, newLines.Length - block.Length + 1)).Where(i => newLines.Skip(i).Take(block.Length).SequenceEqual(block)).Take(2).ToArray();
-            if (matches.Length == 1) { location = "relocated"; line = matches[0] + thread.Anchor.First - start; }
-            else if (matches.Length > 1) location = "ambiguous";
+            var oldLines = saved.Replace("\r\n", "\n").Split('\n');
+            var newLines = displayed.Replace("\r\n", "\n").Split('\n');
+            var start = Math.Max(0, anchor.First - 3);
+            var block = oldLines.AsSpan(start, Math.Min(oldLines.Length - start, anchor.Last - start + 2));
+            int? found = null;
+            for (var i = 0; i <= newLines.Length - block.Length; i++)
+            {
+                if (!newLines.AsSpan(i, block.Length).SequenceEqual(block)) continue;
+                if (found != null) return new("ambiguous", null, null);
+                found = i + anchor.First - start;
+            }
+            if (found != null) return new("relocated", found, found + anchor.Last - anchor.First);
         }
-        return new(thread, original, current, location, line, Version(current));
+        return new("changed", null, null);
     }
     public static CodeThread Address(SgRoot root, string worktree, string id, string action, string body, string expectedRevision, string actor = "User", string? version = null, string? requestId = null)
     {

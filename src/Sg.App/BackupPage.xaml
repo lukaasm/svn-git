@@ -3,22 +3,15 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Sg.App">
-    <!-- What the backup repository holds, read before anything is made. A branch is picked from the
-         list, its commits and the revisions it was cut from are shown beside what this checkout is at,
-         and only then is the button offered - the same shape as importing a file, because it is the
-         same question: how far has this checkout moved from where the branch was cut. -->
+    <!-- The overview groups local and remote work by worktree. A focused page loads only the selected
+         backup and offers the same destination and replay options as importing a file. -->
     <Grid RowDefinitions="Auto,*,Auto,Auto,Auto" RowSpacing="8">
 
         <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
-        <!-- One scrolling column: how the last backup went, then what the remote holds. The report used to sit
-             above the scroller, and a report of a few rows pushed the list under it out of reach. -->
+        <!-- Keep worktrees first; reports and scheduling stay in the same scrolling column. -->
         <ScrollViewer x:Name="ContentScroll" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
-                <local:BackupStatusView />
-
-                <!-- How the last backup went, whoever ran it: the timer, this page, or sg backup in a terminal. -->
-                <local:ReportCard x:Name="LastReport" />
                 <local:ReportCard x:Name="ReadingBackup" AutomationProperties.AutomationId="BackupReading" />
                 <InfoBar x:Name="ReadError" AutomationProperties.AutomationId="BackupReadError" Severity="Error"
                          Title="Could not read the backup repository" Message="Your last backup report is still available. Retry, or open the log for details."
@@ -40,11 +33,11 @@
                 </local:EmptyState>
 
                 <local:EmptyState x:Name="Nothing" Visibility="Collapsed" Glyph="&#xE74E;" Title="Nothing of sg's is there yet"
-                                  Text="The first backup puts every branch there. Press Back up now, or wait for the timer.">
+                                  Text="Create a local worktree or connect a repository containing backups. Back up all worktrees sends every included branch.">
                     <local:EmptyState.Action>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <local:TaskGate>
-                                <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" Style="{StaticResource AccentButtonStyle}" />
+                                <local:IconButton Glyph="&#xE74E;" Text="Back up all worktrees" Click="BackupAll_Click" Style="{StaticResource AccentButtonStyle}" />
                             </local:TaskGate>
                             <Button Content="Close" Click="Close_Click" />
                         </StackPanel>
@@ -63,31 +56,22 @@
                         </Grid>
                     </Border>
 
-                    <TextBox x:Name="BackupSearch" PlaceholderText="Search backup names"
-                             AutomationProperties.Name="Search backup names" TextChanged="Search_Changed" />
+                    <TextBox x:Name="BackupSearch" PlaceholderText="Search local and remote worktrees"
+                             AutomationProperties.Name="Search backup worktrees" TextChanged="Search_Changed" />
                     <TextBlock x:Name="BackupMatches" Style="{StaticResource Secondary}" TextWrapping="Wrap"
                                AutomationProperties.LiveSetting="Polite" />
-                    <TextBlock x:Name="BranchesHeader" Text="Branches" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                    <TextBlock x:Name="SelectionHint" Text="Select an item to load its saved commits and revisions. Branches also show restore options."
+                    <TextBlock x:Name="BranchesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
+                    <TextBlock x:Name="SelectionHint" Text="Each card manages one worktree and its backup. Open it for restore options."
                                Style="{StaticResource Secondary}" TextWrapping="Wrap" />
-                    <Border Style="{StaticResource Card}" Padding="4">
-                        <local:RowListView x:Name="Branches" MaxHeight="320" SelectionMode="Single" SelectionChanged="Branch_Changed">
-                            <local:RowListView.ItemTemplate>
-                                <DataTemplate x:DataType="local:BackupRow">
-                                    <Grid ColumnDefinitions="220,140,*,Auto" ColumnSpacing="{StaticResource RowSpacing}"
-                                          ToolTipService.ToolTip="{x:Bind Tip, Mode=OneWay}">
-                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource RowText}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind What, Mode=OneWay}" Style="{StaticResource RowMonoDim}" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind From, Mode=OneWay}" Style="{StaticResource RowTextDim}" />
-                                        <TextBlock Grid.Column="3" Text="{x:Bind Note, Mode=OneWay}" Style="{StaticResource RowTextDim}" Foreground="{x:Bind NoteBrush, Mode=OneWay}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </local:RowListView.ItemTemplate>
-                        </local:RowListView>
-                    </Border>
+                    <StackPanel x:Name="Branches" Spacing="4" />
 
-                    <TextBlock x:Name="OthersHeader" Text="Also there" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
-                    <Border x:Name="OthersCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
+                    <Expander x:Name="OthersCard" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="Collapsed">
+                        <Expander.Header>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE7B8;" FontSize="16" />
+                                <TextBlock Text="Other saved edits and shelves" />
+                            </StackPanel>
+                        </Expander.Header>
                         <local:RowListView x:Name="Others" MaxHeight="240" SelectionMode="Single" SelectionChanged="Branch_Changed">
                             <local:RowListView.ItemTemplate>
                                 <DataTemplate x:DataType="local:BackupRow">
@@ -99,7 +83,7 @@
                                 </DataTemplate>
                             </local:RowListView.ItemTemplate>
                         </local:RowListView>
-                    </Border>
+                    </Expander>
 
                     <TextBlock x:Name="PreviewTitle" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" />
                     <local:ReportCard x:Name="PreviewLoading" AutomationProperties.AutomationId="BackupPreviewLoading" />
@@ -153,6 +137,17 @@
                         </local:RowListView>
                     </Border>
                 </StackPanel>
+
+                <Expander x:Name="HistoryDetails" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="Collapsed">
+                    <Expander.Header>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE81C;" FontSize="16" />
+                            <TextBlock Text="Last backup result" />
+                        </StackPanel>
+                    </Expander.Header>
+                    <local:ReportCard x:Name="LastReport" />
+                </Expander>
+                <local:BackupStatusView x:Name="ScheduleOverview" />
             </StackPanel>
         </ScrollViewer>
 
@@ -177,12 +172,26 @@
 
         <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
             <local:TaskGate>
-                <local:IconButton Glyph="&#xE74E;" Text="Back up now" Click="BackupNow_Click" x:Name="BackupNowButton"
-                                  ToolTipService.ToolTip="Send every branch, the uncommitted changes and the shelves to the backup repository now, rather than waiting for the timer." />
+                <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
+                                  ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
             </local:TaskGate>
             <local:TaskGate Grid.Column="1">
-                <local:IconButton Glyph="&#xE74D;" Text="Prune" Click="Prune_Click" x:Name="PruneButton"
-                                  ToolTipService.ToolTip="Delete from the backup what is not here any more: branches removed, shelves dropped. Asks first, with the list." />
+                <local:IconButton Glyph="&#xE74D;" Text="Prune worktree" Click="Prune_Click" x:Name="PruneButton"
+                                  ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting." />
+            </local:TaskGate>
+            <local:TaskGate Grid.Column="1">
+                <local:IconButton x:Name="AllWorktreesButton" Text="All worktrees…" Glyph="&#xE712;" AutomationProperties.Name="All worktrees actions">
+                    <Button.Flyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem Text="Back up all worktrees" AutomationProperties.AutomationId="BackupAll" Click="BackupAll_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Prune all stale backups" AutomationProperties.AutomationId="PruneAll" Click="PruneAll_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </local:IconButton>
             </local:TaskGate>
             <Button Grid.Column="2" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             <StackPanel Grid.Column="3" Spacing="4" VerticalAlignment="Center" Margin="8,0">

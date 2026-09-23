@@ -1,7 +1,7 @@
 namespace Sg.Core;
 
 public enum TaskTargetKind { Folder, Replay, Update, Backup, Activity }
-public sealed record TaskFollowUp(TaskTargetKind Kind, string Path = "")
+public sealed record TaskFollowUp(TaskTargetKind Kind, string Path = "", string? Worktree = null)
 {
     public string Label => Kind switch
     {

@@ -78,6 +78,13 @@ function Invoke-Ui([string]$value, [switch]$Name) {
 function Set-Ui([string]$id, [string]$value) {
     (Wait-For $id { Find-Ui $id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
 }
+function Expand-Worktree([string]$name) {
+    $card = Wait-For 'worktree card' { Find-Ui ('BackupWorktree_' + $name) -IncludeOffscreen }
+    $expander = $card.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true))
+    if (!$expander) { throw "Worktree card has no accessible expander: $name" }
+    $expander.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+}
 function Assert-Blocked([string]$buttonId, [string]$explanation) {
     $null = Wait-For "validation: $explanation" {
         $button = Find-Ui $buttonId
@@ -172,6 +179,10 @@ try {
     $null = Sg @('export', (Join-Path $root 'source'), '--out', $export)
     $sourceMoved = Join-Path $root 'source-moved'
     $store = (Run 'git' @('-C', (Join-Path $root 'source'), 'rev-parse', '--path-format=absolute', '--git-common-dir')).Trim()
+    # Windows can reject Git's rewrite of a hidden .git link during worktree move.
+    # Change only this disposable fixture's link, without changing the user's Git configuration.
+    $sourceLink = Get-Item -Force -LiteralPath (Join-Path $root 'source/.git')
+    $sourceLink.Attributes = $sourceLink.Attributes -band (-bnot [IO.FileAttributes]::Hidden)
     $null = Run 'git' @('--git-dir', $store, 'worktree', 'move', (Join-Path $root 'source'), $sourceMoved)
     $null = Run 'git' @('-C', $sourceMoved, 'branch', 'unattached', 'HEAD')
 
@@ -270,7 +281,8 @@ try {
     # Back up via GUI to a local bare repository, checking content rather than just a success label.
     Start-UiScenario 'Create backup'
     Start-App 'backup' $root
-    Invoke-Ui 'BackupNowButton'
+    Invoke-Ui 'AllWorktreesButton'
+    Invoke-Ui 'BackupAll'
     Wait-Receipt
     # Backups rewrite history, so verify the tree content rather than comparing commit IDs.
     $remoteFeature = Run 'git' @('--git-dir', $backup, 'show', 'refs/heads/imported:feature.txt')
@@ -278,19 +290,7 @@ try {
     Write-Host 'PASS: backup task publishes branch content to the local backup repository.'
 
     Start-UiScenario 'Restore backup and retry'
-    $branches = Wait-For 'backed-up branches' { Find-Ui 'Branches' }
-    $item = Wait-For 'imported backup entry' {
-        $text = $branches.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'imported'))
-        if ($text) {
-            $node = $text
-            while ($node -and $node.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) {
-                $node = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($node)
-            }
-            $node
-        }
-    }
-    $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Invoke-Ui 'BackupWorktreeOpen_imported'
     $null = Wait-For 'checkout precedes restore branch name' { (Find-Ui 'IntoBox').Current.BoundingRectangle.Left -lt (Find-Ui 'NameBox').Current.BoundingRectangle.Left }
     Set-Ui 'NameBox' 'imported'
     Assert-Blocked 'RestoreButton' '*already a branch*'
@@ -312,14 +312,14 @@ try {
     Assert-Blocked 'RestoreButton' '*destination folder already exists*'
     Set-Ui 'NameBox' 'invalid name'
     Set-Ui 'NameBox' 'restored-backup'
-    Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry restore' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox', 'Branches') 2
+    Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry restore' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox') 2
     Set-Ui 'NameBox' 'imported'
     $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     $null = Wait-For 'replacement keeps an explicit overwrite label after a cancelled restore' {
         $button = Find-Ui 'RestoreButton'
         $button -and $button.Current.IsEnabled -and $button.Current.Name -like 'Overwrite with*' -and $button.Current.Name -eq (Find-Ui 'RestoreLabel').Current.Name
     }
-    Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry overwrite with 1 commit(s)' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox', 'Branches') 3
+    Cancel-QueuedForm 'RestoreButton' 'RestoreLabel' 'Retry overwrite with 1 commit(s)' @('NameBox', 'IntoBox', 'WipBox', 'ForceBox') 3
     $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     Set-Ui 'NameBox' 'restored-backup'
     Invoke-Ui 'RestoreButton'
@@ -343,11 +343,11 @@ try {
     $backupTask = Wait-For 'backup receipt' {
         $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)) |
-            Where-Object { $_.Current.AutomationId -like 'Task_*' -and $_.Current.Name -like '*Completed · backup ·*' } | Select-Object -First 1
+            Where-Object { $_.Current.AutomationId -like 'Task_*' -and $_.Current.Name -like '*Completed · backup all worktrees ·*' } | Select-Object -First 1
     }
     $backupTask.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Invoke-Ui ('TaskResult_' + $backupTask.Current.AutomationId.Substring(5))
-    $null = Wait-For 'backup page reopened from receipt' { Find-Ui 'BackupNowButton' }
+    $null = Wait-For 'backup page reopened from receipt' { Find-Ui 'AllWorktreesButton' }
     Write-Host 'PASS: retained task action reopens Backup after navigation.'
     Stop-App
     # A real add/add conflict keeps the import resumable, even after editing the destination form.
@@ -391,6 +391,53 @@ try {
     if ((Run 'git' @('-C', $paused, 'diff', '--name-only', '--diff-filter=U')).Trim()) { throw 'Import still has unmerged files after Skip.' }
     if (Test-Path -LiteralPath (Join-Path $root 'different-form-name')) { throw 'Resume used the edited destination.' }
     Write-Host 'PASS: paused import keeps shared replay guidance and resumes its original destination.'
+
+    Start-UiScenario 'Back up one local worktree without sending unrelated changes'
+    Stop-App
+    $null = Sg @('branch', 'scoped-local', '--from', 'checkout')
+    Commit-File 'scoped-local' 'scoped.txt' "selected worktree`n"
+    Commit-File 'imported' 'unsent.txt' "another worktree stays local`n"
+    $beforeOther = (Run 'git' @('--git-dir', $backup, 'rev-parse', 'refs/heads/imported')).Trim()
+    Start-App 'backup' $root
+    Set-Ui 'BackupSearch' 'scoped-local'
+    $null = Wait-For 'local worktree search finishes' { (Find-Ui 'BackupMatches').Current.Name -like '1 of *' }
+    Expand-Worktree 'scoped-local'
+    $null = Wait-For 'local-only restore is unavailable' { $b = Find-Ui 'BackupWorktreeRestore_scoped-local' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
+    Invoke-Ui 'BackupWorktreeSend_scoped-local'
+    Wait-Receipt
+    if ((Run 'git' @('--git-dir', $backup, 'show', 'refs/heads/scoped-local:scoped.txt')).Trim() -ne 'selected worktree') { throw 'Scoped backup did not publish its worktree.' }
+    if ((Run 'git' @('--git-dir', $backup, 'rev-parse', 'refs/heads/imported')).Trim() -ne $beforeOther) { throw 'Scoped backup sent unrelated work.' }
+    if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'worktree-backups.png') }
+    Invoke-Ui 'TaskQueueToggle'
+    $task = Wait-For 'scoped backup receipt' {
+        $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.AutomationId -like 'Task_*' -and $_.Current.Name -like '*Completed · backup scoped-local ·*' } | Select-Object -First 1
+    }
+    $task.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Invoke-Ui ('TaskResult_' + $task.Current.AutomationId.Substring(5))
+    $null = Wait-For 'receipt returns to selected worktree options' { $field = Find-Ui 'NameBox'; $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'scoped-local' }
+    if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'selected-backup.png') }
+
+    Start-UiScenario 'Prune one remote worktree with an exact confirmation'
+    Stop-App
+    $tip = (Run 'git' @('--git-dir', $backup, 'rev-parse', 'refs/heads/scoped-local')).Trim()
+    $null = Run 'git' @('--git-dir', $backup, 'update-ref', 'refs/heads/remote-selected', $tip)
+    $null = Run 'git' @('--git-dir', $backup, 'update-ref', 'refs/heads/remote-untouched', $tip)
+    Start-App 'backup' $root
+    Set-Ui 'BackupSearch' 'remote-selected'
+    $null = Wait-For 'remote worktree search finishes' { (Find-Ui 'BackupMatches').Current.Name -like '1 of *' }
+    Expand-Worktree 'remote-selected'
+    $null = Wait-For 'remote-only backup is unavailable' { $b = Find-Ui 'BackupWorktreeSend_remote-selected' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
+    Invoke-Ui 'BackupWorktreePrune_remote-selected'
+    $null = Wait-For 'selected prune confirmation' { Find-Ui 'PrimaryButton' }
+    $texts = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        Where-Object { !$_.Current.IsOffscreen -and $_.Current.Name -like 'Delete these*' } | ForEach-Object { $_.Current.Name }
+    if (($texts -join '') -notlike '*refs/heads/remote-selected*' -or ($texts -join '') -like '*refs/heads/remote-untouched*') { throw 'Prune confirmation does not isolate the selected backup.' }
+    if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'selected-prune.png') }
+    Invoke-Ui 'PrimaryButton'
+    Wait-Receipt
+    $refs = Run 'git' @('--git-dir', $backup, 'for-each-ref', '--format=%(refname)')
+    if ($refs.Contains('refs/heads/remote-selected') -or !$refs.Contains('refs/heads/remote-untouched')) { throw 'Prune changed the wrong remote worktree.' }
     Complete-UiScenario
     Write-Output "All workflow UI Automation checks passed. Fixture retained at $fixture"
 }

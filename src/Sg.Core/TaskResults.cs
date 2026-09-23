@@ -13,7 +13,7 @@ public static class TaskResults
         OperationRecord r => (r.Phase == OperationPhase.Completed ? TaskState.Succeeded : r.Phase == OperationPhase.Cancelled ? TaskState.Cancelled : TaskState.NeedsAttention,
             r.Branch + ": " + r.PhaseLabel + Note(r.Detail) + (r.Terminal ? "" : "\nOpen Activity to resume or review saved edits.")),
         BackupResult r => (r.Error != null ? TaskState.Failed : !r.Ok || r.Behind > 0 ? TaskState.NeedsAttention : TaskState.Succeeded,
-            $"{r.Pushed} sent, {r.Rejected} rejected, {r.Behind} newer on backup, {r.Items.Count(i => i.Failed)} failed." + Note(r.Error)
+            (r.Worktree == null ? "" : r.Worktree + ": ") + $"{r.Pushed} sent, {r.Rejected} rejected, {r.Behind} newer on backup, {r.Items.Count(i => i.Failed)} failed." + Note(r.Error)
             + string.Concat(r.Items.Where(i => i.Failed || i.Rejected || i.Behind).Select(i => Note(i.Name + ": " + i.Why)))),
         PushResult r => (r.AllCommitted && r.Warnings.Count == 0 || r.AppliedOnly ? TaskState.Succeeded : TaskState.NeedsAttention,
             r.AppliedOnly ? "Changes applied to the checkout; nothing committed to SVN."
@@ -49,7 +49,7 @@ public static class TaskResults
         BranchResult r => new(TaskTargetKind.Folder, r.Path),
         CheckoutResult r => new(TaskTargetKind.Folder, r.Checkout.Path),
         OperationRecord r => new(r.Terminal ? TaskTargetKind.Folder : TaskTargetKind.Update, r.Path),
-        BackupResult => new(TaskTargetKind.Backup),
+        BackupResult r => new(TaskTargetKind.Backup, Worktree: r.Worktree),
         ResolveResult r when r.Backup != null => FollowUp(r.Backup),
         ResolveResult r when r.Operation != null => FollowUp(r.Operation),
         ResolveResult r when !r.Ok => new(TaskTargetKind.Activity),

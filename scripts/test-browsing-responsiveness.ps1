@@ -113,6 +113,7 @@ try {
     # Expansion can finish a bring-into-view request after UIA returns; wait for the requested scroll.
     $null = Wait-For 'activity scrolled before leaving' {
         $scroll.SetScrollPercent(-1, 60)
+        Start-Sleep -Milliseconds 500 # Confirm the position survives the expander's deferred bring-into-view.
         $scroll.Current.VerticalScrollPercent -gt 50
     }
     $beforeScroll = $scroll.Current.VerticalScrollPercent
@@ -150,7 +151,11 @@ try {
     $null = Wait-For 'backup search retained on return' { $field = Find 'BackupSearch'; $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'no-backup-matches-this-search' }
     $null = Wait-For 'backup results retain search' { $count = Find 'BackupMatches'; $count -and $count.Current.Name -like 'No matching*' }
     Set-Field 'BackupSearch' ''
-    $null = Wait-For 'backup search cleared' { (Find 'BackupMatches').Current.Name -like '*backup items' }
+    $null = Wait-For 'backup search cleared' { (Find 'BackupMatches').Current.Name -like '*worktrees*saved edits*' }
+    $card = Find 'BackupWorktree_source'
+    $expandable = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
+    $card.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    $null = Wait-For 'worktree actions expand' { Find 'BackupWorktreeSend_source' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-search.png')
     $backupScroll = (Find 'ContentScroll').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     $null = Wait-For 'backup scrolled before leaving' { $backupScroll.SetScrollPercent(-1, 50); $backupScroll.Current.VerticalScrollPercent -gt 40 }
@@ -160,15 +165,24 @@ try {
         $scroller = Find 'ContentScroll'
         $scroller -and $scroller.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).Current.VerticalScrollPercent -gt 40
     }
+    $null = Wait-For 'expanded backup worktree retained' { Find 'BackupWorktreeSend_source' }
 
     Start-UiScenario 'Backup previews reject changed versions and retry only the selected item'
-    & git -C $localRemote update-ref $previewRef ($tip + '^')
-    if ($LASTEXITCODE -ne 0) { throw 'Could not move the disposable preview ref.' }
+    (Find 'ContentScroll').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).SetScrollPercent(-1, 0)
     Set-Field 'BackupSearch' $previewName
     $null = Wait-For 'one matching preview branch' { (Find 'BackupMatches').Current.Name -like '1 of *' }
-    $branch = (Find 'Branches').FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))
-    Select-Element $branch
+    # Hold the fixture lock so the selected catalog version is captured before its history is fetched.
+    $previewLock = [IO.File]::Open((Join-Path $FixtureRoot '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    try {
+        Invoke-Element (Find ('BackupWorktreeOpen_' + $previewName))
+        $null = Wait-For 'selected preview starts' {
+            $loading = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Loading saved version…'))
+            $loading -and !$loading.Current.IsOffscreen
+        }
+        & git -C $localRemote update-ref $previewRef ($tip + '^')
+        if ($LASTEXITCODE -ne 0) { throw 'Could not move the disposable preview ref.' }
+    } finally { $previewLock.Dispose() }
     $null = Wait-For 'changed preview error' { $button = Find 'BackupRetryPreview'; $button -and !$button.Current.IsOffscreen }
     if ((Find 'NameBox') -and !(Find 'NameBox').Current.IsOffscreen) { throw 'Changed backup enabled a restore form.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-preview-error.png')
@@ -179,6 +193,8 @@ try {
     $null = Wait-For 'selected preview validates restore' { (Find 'RestoreButton').Current.IsEnabled }
     if ((Find 'BackupRetryPreview') -and !(Find 'BackupRetryPreview').Current.IsOffscreen) { throw 'Successful preview retained its error.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-preview.png')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'worktree list returns' { $field = Find 'BackupSearch'; $field -and !$field.Current.IsOffscreen }
     Set-Field 'BackupSearch' 'no-backup-matches-this-search'
     $null = Wait-For 'search clears selected preview' { $field = Find 'NameBox'; !$field -or $field.Current.IsOffscreen }
 

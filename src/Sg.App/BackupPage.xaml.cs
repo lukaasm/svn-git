@@ -45,6 +45,13 @@ public sealed class BackupRow : System.ComponentModel.INotifyPropertyChanged
 public sealed partial class BackupPage : SgPage
 {
     readonly OperationForm<RestoreRequest> _form;
+    readonly string? _itemName;
+    readonly string _itemKind;
+    readonly bool _separate;
+    bool Overview => _itemName == null;
+    string? Worktree => _itemKind == "branch" ? _itemName : null;
+    IReadOnlyList<BackupWorktree> _worktrees = [];
+    readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
     List<BackupRow> _entries = new();
     BackupCatalog? _catalog;
     BackupPreview? _preview;
@@ -56,27 +63,33 @@ public sealed partial class BackupPage : SgPage
     readonly UiRefresh _searchRefresh;
     bool _hidden;
     readonly BranchTargetValidation _targetValidation = new();
-    sealed record ViewState(string Destination, string Query, double Offset);
+    sealed record ViewState(string Destination, string Query, double Offset, string[] Expanded);
     ViewState? _returning;
     bool _restoring;
 
-    public BackupPage()
+    public BackupPage(string? itemName = null, string itemKind = "branch", bool separate = false)
     {
+        _itemName = itemName; _itemKind = itemKind; _separate = separate;
         InitializeComponent();
         _searchRefresh = new(DispatcherQueue, () => { if (IsLoaded) FilterEntries(); }, TimeSpan.FromMilliseconds(150));
-        _form = new(NameBox, IntoBox, ForceBox, WipBox, Branches, Others, BackupSearch);
+        _form = new(NameBox, IntoBox, ForceBox, WipBox);
         Unloaded += (_, _) => OnHidden();
         Title = "Backup";
+        Branch = Worktree;
+        var overview = Overview ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleOverview.Visibility = BackupSearch.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = AllWorktreesButton.Visibility = overview;
+        BackupNowButton.Visibility = PruneButton.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         Session.Log.Sink = Pane;
     }
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
     string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
-    internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, _returning?.Offset ?? ContentScroll.VerticalOffset);
+    internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray());
     internal override void RestoreViewState(object? state)
     {
         if (state is not ViewState view || view.Destination != Destination) return;
         _returning = view; _restoring = true;
         BackupSearch.Text = view.Query;
+        _expanded.UnionWith(view.Expanded);
         _restoring = false;
     }
 
@@ -103,7 +116,8 @@ public sealed partial class BackupPage : SgPage
         NoBackup.Visibility = configured ? Visibility.Collapsed : Visibility.Visible;
         Filled.Visibility = Nothing.Visibility = Visibility.Collapsed;
         RestoreRow.Visibility = Visibility.Collapsed;
-        BackupNowButton.IsEnabled = PruneButton.IsEnabled = configured;
+        BackupNowButton.IsEnabled = false;
+        PruneButton.IsEnabled = AllWorktreesButton.IsEnabled = configured;
         RestoreButton.IsEnabled = false;
         if (!configured)
         {
@@ -121,40 +135,46 @@ public sealed partial class BackupPage : SgPage
         UrlText.Text = string.Join(". ", notes);
         UrlText.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
-        ShowReport(LastReport, Backup.Last(root), ActFor);
+        ShowPageReport(root);
         ReadingBackup.Running("Reading the backup repository…", "You can keep browsing. The saved report above remains available.");
 
-        var catalog = await read.Run(Pane, () => Backup.Browse(root));
+        var data = await read.Run(Pane, () => { var catalog = Backup.Browse(root); return new { Catalog = catalog, Worktrees = Backup.Worktrees(root, catalog) }; });
         if (!read.Current || root.RootPath != Session.Root?.RootPath) return;
         ReadingBackup.Hide();
-        if (catalog == null)
+        if (data == null)
         {
             ReadError.IsOpen = true;
             return;
         }
-        _catalog = catalog;
-        _entries = catalog.Items.Select(e => new BackupRow { Reference = e }).ToList();
-        var branches = _entries.Where(e => e.Reference.Kind == "branch").ToList();
+        _catalog = data.Catalog;
+        _worktrees = data.Worktrees;
+        _entries = data.Catalog.Items.Select(e => new BackupRow { Reference = e }).ToList();
         var others = _entries.Where(e => e.Reference.Kind != "branch").ToList();
-        if (_entries.Count == 0)
+        if (Overview && _entries.Count == 0 && _worktrees.Count == 0)
         {
             Nothing.Visibility = Visibility.Visible;
             Summary.Text = "";
             return;
         }
         Filled.Visibility = Visibility.Visible;
-        Headline.Text = $"{branches.Count} branches · {others.Count(o => o.Reference.Kind == "shelf")} shelves · "
-                        + $"{others.Count(o => o.Reference.Kind is "wip" or "edits")} saved edits";
-        FilterEntries();
+        var local = _worktrees.FirstOrDefault(w => w.Name == Worktree);
+        BackupNowButton.IsEnabled = local?.CanBackUp == true;
+        TaskGate.SetHelp(BackupNowButton, local?.CanBackUp == true ? $"Back up only {Worktree}, including its shelves and enabled uncommitted changes."
+            : local?.Excluded == true ? "This worktree is excluded from backup. Include it in its worktree settings first." : "No local worktree folder is available to back up.");
+        Headline.Text = Overview ? $"{_worktrees.Count} worktrees · {others.Count(o => o.Reference.Kind == "shelf")} shelves" : _itemName!;
 
         _binding = true;
         IntoBox.ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList();
         _binding = false;
 
-        // Browsing the backup is not yet a restore. Wait for an explicit selection before showing
-        // destination validation; auto-selecting an existing branch greeted users with a conflict.
-        Branches.SelectedItem = null;
         Show(null);
+        if (Overview) FilterEntries();
+        else
+        {
+            var selected = _entries.FirstOrDefault(e => e.Reference.Kind == _itemKind && e.Name == _itemName);
+            if (selected != null) { await PreviewAsync(selected); if (_separate) await SuggestSeparateNameAsync(); }
+            else SelectionHint.Text = "No remote backup of this worktree is available. Back it up to create the first copy.";
+        }
         if (_returning is { } view) { BrowseScroll.Restore(ContentScroll, view.Offset); _returning = null; }
     }
 
@@ -165,31 +185,28 @@ public sealed partial class BackupPage : SgPage
     void Search_Changed(object sender, TextChangedEventArgs e) { if (!_restoring) _searchRefresh?.Request(); }
     void FilterEntries()
     {
+        if (!Overview) return;
         var query = BackupSearch.Text.Trim();
         _previewReads.Cancel(); _preview = null; _selectedRow = null;
         PreviewLoading.Hide(); PreviewError.IsOpen = false; PreviewTitle.Visibility = Visibility.Collapsed;
         var matches = _entries.Where(e => query.Length == 0 || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
-        var branches = matches.Where(e => e.Reference.Kind == "branch").ToList();
-        var others = matches.Where(e => e.Reference.Kind != "branch").ToList();
-        BranchesHeader.Text = branches.Count == 1 ? "Branch" : $"Branches ({branches.Count})";
-        Branches.ItemsSource = branches;
+        var worktrees = _worktrees.Where(w => query.Length == 0 || w.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        var others = matches.Where(e => e.Reference.Kind != "branch" && !(e.Reference.Kind == "wip" && _worktrees.Any(w => w.Remote?.Name == e.Name))).ToList();
+        BranchesHeader.Text = $"Worktrees ({worktrees.Count})";
+        RenderWorktrees(worktrees);
         Others.ItemsSource = others;
-        OthersHeader.Visibility = OthersCard.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        BackupMatches.Text = matches.Count == 0 ? "No matching backup items. Try another search."
-            : $"{matches.Count} of {_entries.Count} backup items";
-        Branches.SelectedItem = null;
+        OthersCard.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        BackupMatches.Text = worktrees.Count + others.Count == 0 ? "No matching backup items. Try another search."
+            : $"{worktrees.Count} of {_worktrees.Count} worktrees · {others.Count} saved edits and shelves";
         Show(null);
     }
 
-    async void Branch_Changed(object sender, SelectionChangedEventArgs e)
+    void Branch_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_binding) return;
         var row = (sender as ListView)?.SelectedItem as BackupRow;
         if (row == null) return;
-        _binding = true;
-        if (ReferenceEquals(sender, Branches)) Others.SelectedItem = null; else Branches.SelectedItem = null;
-        _binding = false;
-        await PreviewAsync(row);
+        Go(() => new BackupPage(row.Name, row.Reference.Kind), "backup:" + row.Reference.Kind + ":" + row.Name);
     }
     async void RetryPreview_Click(object sender, RoutedEventArgs e) { if (_selectedRow is { } row) await PreviewAsync(row); }
     async Task PreviewAsync(BackupRow row)
@@ -202,20 +219,18 @@ public sealed partial class BackupPage : SgPage
         Show(null);
         SelectionHint.Visibility = Visibility.Collapsed;
         PreviewTitle.Text = row.Name;
-        PreviewTitle.Visibility = Visibility.Visible;
+        PreviewTitle.Visibility = Overview ? Visibility.Visible : Visibility.Collapsed;
         PreviewError.IsOpen = false;
         PreviewLoading.Running("Loading saved version…", "Commits and SVN revisions are read only for the item you select.");
-        BrowseScroll.Reveal(PreviewTitle);
         var preview = await read.Run(Pane, () => Backup.Preview(root, catalog, row.Reference),
             error => PreviewError.Message = error);
         if (!read.Current || _hidden || !ReferenceEquals(_catalog, catalog) || root.RootPath != Session.Root?.RootPath) return;
         PreviewLoading.Hide();
-        if (preview == null) { PreviewError.IsOpen = true; BrowseScroll.Reveal(PreviewTitle); return; }
+        if (preview == null) { PreviewError.IsOpen = true; return; }
         _preview = preview;
         row.Loaded(preview.Entry);
         if (preview.Entry.Unreadable != null) { PreviewError.Message = preview.Entry.Unreadable; PreviewError.IsOpen = true; }
         Show(preview.Entry);
-        BrowseScroll.Reveal(PreviewTitle);
     }
 
     /// <summary>One branch on screen: its commits, its bases beside the ones here, and the restore controls filled for it.</summary>
@@ -298,7 +313,7 @@ public sealed partial class BackupPage : SgPage
         RestoreLabel.Text = entry == null ? "Restore"
             : force && taken ? $"{(retry ? "Retry overwrite" : "Overwrite")} with {entry.Commits} commit(s)"
             : retry ? "Retry restore" : $"Restore {entry.Commits} commit(s)";
-        ExplainTarget(entry == null ? "Select a branch to preview a restore."
+        ExplainTarget(entry == null ? ""
             : entry.Unreadable != null ? entry.Unreadable
             : Into == null && entry.Checkout.Length == 0 ? $"No checkout here points at {entry.Url}. Pick one only if you know it is the same repository."
             : Into == null ? "Pick the checkout to build it on."
@@ -384,18 +399,7 @@ public sealed partial class BackupPage : SgPage
             : res.Waiting ? "Resume the operation to finish, skip a commit, or cancel." : "Review the result above for saved work or edits that need attention.");
     }
 
-    async void BackupNow_Click(object sender, RoutedEventArgs e)
-    {
-        var root = Session.Require();
-        ResultBar.IsOpen = false;
-        LastReport.Running("Backing up...", root.Config.Backup?.Url ?? "");
-        var res = await Busy.During(sender, () => Runner.Run(Pane, "backup", () => Backup.Run(root)));
-        // The run kept its result, a failed one too, so the report reads it back rather than being handed it.
-        ShowReport(LastReport, Backup.Last(root), ActFor);
-        if (res == null) return;
-        foreach (var i in res.Items.Where(i => i.Failed || i.Rejected)) Pane.Append($"{i.Kind} {i.Name}: {i.Why}");
-        await LoadAsync();
-    }
+    async void BackupNow_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => BackUpAsync(Worktree));
 
     /// <summary>
     /// A backup as a report: a chip per outcome with its count, and a row for every item that did not simply
@@ -417,17 +421,13 @@ public sealed partial class BackupPage : SgPage
 
     async Task RestoreSeparatelyAsync(BackupItem item)
     {
+        if (Overview) { OpenWorktree(item.Name, separate: true); return; }
         await LoadAsync();
         if (_hidden) return;
         var row = _entries.FirstOrDefault(e => e.Reference.Kind == "branch" && e.Name == item.Name);
         if (row == null) return;
         await PreviewAsync(row);
-        if (_picked == null || _picked.Unreadable != null || _hidden) return;
-        ForceBox.IsChecked = false;
-        var name = item.Name + "-backup";
-        for (var n = 2; Session.Require().Git.RefSha("refs/heads/" + name) != null; n++) name = item.Name + "-backup-" + n;
-        NameBox.Text = name;
-        NameBox.Focus(FocusState.Programmatic);
+        await SuggestSeparateNameAsync();
     }
 
     void SetResumeAction(RestoreResult result)
@@ -464,8 +464,8 @@ public sealed partial class BackupPage : SgPage
             return;
         var root = Session.Require();
         LastReport.Running("Backing up " + item.Name + "...");
-        var res = await Runner.Run(Pane, "backup " + item.Name, () => Backup.Run(root, force: true, only: [item.Kind + "/" + item.Name]));
-        ShowReport(LastReport, Backup.Last(root), ActFor);
+        var res = await Runner.Run(Pane, "backup " + item.Name, () => Backup.Run(root, force: true, only: [item.Kind + "/" + item.Name], worktree: item.Kind is "branch" or "wip" ? item.Name : null));
+        ShowPageReport(root);
         if (res != null) await LoadAsync();
     }
 
@@ -480,7 +480,7 @@ public sealed partial class BackupPage : SgPage
         var when = res.When is { } t ? $"{t.LocalDateTime:yyyy-MM-dd HH:mm},{WorktreeRow.Ago(t)}" : "";
         if (res.Error != null)
         {
-            card.Show(ChipSeverity.Critical, "", "The last backup could not run", res.Error + (when.Length > 0 ? "\n" + when : ""));
+            card.Show(ChipSeverity.Critical, "", "The last backup could not run" + (res.Worktree == null ? "" : " · " + res.Worktree), res.Error + (when.Length > 0 ? "\n" + when : ""));
             return;
         }
         var failed = res.Items.Count(i => i.Failed);
@@ -490,6 +490,7 @@ public sealed partial class BackupPage : SgPage
         var headline = res.Items.Count == 0 ? "The last backup found nothing to send"
             : bad == 0 ? "Backed up"
             : $"The last backup did not send {bad} of {res.Items.Count}";
+        if (res.Worktree != null) headline += " · " + res.Worktree;
         var detail = when + (res.RemoteOnly.Count > 0 ? $"   {res.RemoteOnly.Count} ref(s) there answer to nothing here: Prune" : "");
         ReportCount[] counts =
         [
@@ -549,28 +550,7 @@ public sealed partial class BackupPage : SgPage
         return "Backup: " + string.Join(", ", parts) + ".";
     }
 
-    async void Prune_Click(object sender, RoutedEventArgs e)
-    {
-        var root = Session.Require();
-        var gone = await Busy.During(sender, () => Runner.Run(Pane, "prune", () => Backup.Prune(root, delete: false)));
-        if (gone == null) return;
-        if (gone.Count == 0)
-        {
-            await Dialogs.Info(this, "Nothing to prune", "Everything on the backup answers to something here.");
-            return;
-        }
-        if (!await Dialogs.Confirm(this, "Delete from the backup",
-                $"{gone.Count} ref(s) on the backup answer to nothing this machine backs up any more - removed, dropped, or left out:\n\n" + string.Join("\n", gone.Take(20))
-                + (gone.Count > 20 ? $"\nand {gone.Count - 20} more" : "") + "\n\nDelete them there? What is here is not touched.",
-                "Delete"))
-            return;
-        var deleted = await Busy.During(sender, () => Runner.Run(Pane, "prune", () => Backup.Prune(root, delete: true)));
-        if (deleted == null) return;
-        ResultBar.Severity = InfoBarSeverity.Success;
-        ResultBar.Message = $"{deleted.Count} ref(s) deleted from the backup.";
-        ResultBar.IsOpen = true;
-        await LoadAsync();
-    }
+    async void Prune_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => PruneAsync(Worktree));
 
     void Settings_Click(object sender, RoutedEventArgs e)
     {

@@ -22,7 +22,7 @@ internal static class TaskNavigation
             case TaskTargetKind.Update when Directory.Exists(link.Path):
                 navigation.Go(() => new UpdateBranchPage(link.Path), "update-branch:" + link.Path); break;
             case TaskTargetKind.Backup:
-                navigation.Go(() => new BackupPage(), "backup"); break;
+                navigation.Go(() => new BackupPage(link.Worktree), link.Worktree == null ? "backup" : "backup:branch:" + link.Worktree); break;
             default:
                 navigation.Go(() => new ActivityPage(), "activity"); break;
         }

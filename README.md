@@ -18,7 +18,7 @@ Unfinished updates and paused replays are rediscovered when a root opens. A reco
 
 Activity initially displays 20 operations, with **Show more**, full-history search, and **Needs attention** / **Finished** filters. Steps and checkpoint controls load when expanded. Returning through navigation retains search, filters, loaded rows, expanded details, and scroll position while reading fresh data. Backup retains its name search and page scroll position; restore selection stays explicit.
 
-Backup opens with a catalog of names and types without downloading every saved history. Selecting a branch, shelf, or saved-edits item loads its commits and SVN revisions, with loading, error, and retry feedback. Search matches backup names; metadata appears in the selected preview. A restore checks that the branch and saved-edits versions still match the preview before creating or replacing work. Leaving Backup or a workflow preview cancels its background read, including Git processes and storage scans. Submitted operations continue in Tasks.
+Backup opens with expandable worktree cards joining local folders and remote copies by name, without downloading every saved history. Each card offers **Back up**, **Restore**, and **Prune** for that worktree; **Manage** opens its focused restore options. Search includes local worktrees that have never been backed up. Saved edits and shelves outside the cards are under an expandable section. Selecting an item loads only its commits and SVN revisions, with loading, error, and retry feedback. A restore checks that the branch and saved-edits versions still match the preview before creating or replacing work. Leaving Backup or a workflow preview cancels its background read, including Git processes and storage scans. Submitted operations continue in Tasks, with results linking back to the selected worktree.
 
 Finished tasks offer **View output**, with the same literal search, match navigation, and Ctrl+F shortcut as review-check output. The view keeps the task's original repository and status, including when no output was captured. Running tasks keep live output in the task pane.
 
@@ -40,7 +40,7 @@ The Debug app uses a separate instance key, settings, monitor data, crash log, u
 
 For direct Windows UI Automation testing on your visible desktop, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected. Add `-CheckRecovery` to verify startup discovery, recovery navigation, and notice removal after reconciliation.
 
-For full workflow checks, also build the Debug CLI and run `scripts/test-workflows-ui.ps1`. It creates a fresh local SVN repository and bare Git backup, then automates export import, update from fresh SVN, empty-commit skip, backup, and restore onto a newer snapshot. Git/SVN assertions verify the resulting files and history. Git, SVN, and `svnadmin` must be on PATH. Fixtures are retained under the temporary directory for inspection; `-FixtureParent` selects another parent folder. The scripts stop only their own Debug app, temporarily disable scheduled backups for deterministic runs, and restore the backup interval and navigation preferences.
+For full workflow checks, also build the Debug CLI and run `scripts/test-workflows-ui.ps1`. It creates a fresh local SVN repository and bare Git backup, then automates export import, update from fresh SVN, empty-commit skip, backup, and restore onto a newer snapshot. It also verifies local-only and remote-only backup cards, scoped backup without publishing unrelated changes, scoped result navigation, and pruning exactly the confirmed worktree. Git/SVN assertions verify the resulting files and history. Git, SVN, and `svnadmin` must be on PATH. Fixtures are retained under the temporary directory for inspection; `-FixtureParent` selects another parent folder. The scripts stop only their own Debug app, temporarily disable scheduled backups for deterministic runs, and restore the backup interval and navigation preferences.
 
 Import and backup restore validate branch names and destination folders before enabling submission. Checks run after a short typing pause without blocking the UI; the full reason remains visible and available to screen readers.
 
@@ -469,11 +469,13 @@ log bursts update the visible progress at a bounded rate without refreshing unre
 Success history is recorded by this version onward and survives later failures; checks and runs with conflicts or omitted files do not count as complete success. Every worktree card
 says "backed up 3 min ago", "2 commits not backed up", "backup failed" with the reason, or "backing up...", and
 its Backup row has Exclude: the worktree stays out of every backup, the chip says "excluded from the backup", and
-Include puts it back. **Backup** on the checkout toolbar opens the page: how the last backup went - a chip per outcome and a row per item
-that was sent, failed, diverged or left files out - then what the remote holds, Restore, Back up now, Prune. When the
+Include puts it back. **Backup** on the checkout toolbar opens local and remote worktree cards first, with the schedule and last-run report below them.
+Successful reports start collapsed; results needing attention expand to show what failed, diverged, or left files out. When the
 last backup failed or could not run, the overview says so in a red bar above the worktrees, with Open backup on it.
 The Backup page retains that report while reading the remote and offers Retry if the read fails. Restore options
 appear after you choose a branch, keeping routine backup inspection free of premature destination errors.
+
+**Back up** on a worktree card sends only that branch, its enabled uncommitted changes, and its shelves. Other worktrees and checkout edits stay out of that run. A scoped run updates that worktree's status but never advances the last complete successful backup time. **Prune** previews stale refs for the selected worktree, including associated stale shelves; live local copies are kept. Confirmation lists the exact refs, and deletion checks their versions and local ownership again. Global backup and prune remain available under **All worktrees…**; scheduled backups still cover all included work. The CLI's existing `--only` option continues to limit forced overwrites, rather than selecting the scope of a run.
 
 ## Server branches
 

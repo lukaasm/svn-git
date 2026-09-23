@@ -70,6 +70,91 @@ public sealed class BackupTests : IDisposable
         r.Items.Single(i => i.Kind == kind && i.Name == name);
 
     [Fact]
+    public void Scoped_backup_sends_one_worktree_and_its_shelves_without_advancing_full_success()
+    {
+        f.Setup();
+        var first = MakeBranch("selected");
+        var other = MakeBranch("untouched");
+        Backup.Set(f.Root, Remote());
+        Fixture.Put(other, "draft.txt", "other saved edits\n");
+        Backup.Run(f.Root);
+        var before = f.Root.Git.LsRemote(_remote);
+        var complete = Backup.LastSuccess(f.Root);
+        File.Delete(Path.Combine(other, "draft.txt")); // A global backup would remove this remote WIP.
+        Fixture.Put(other, "another.txt", "must stay local\n");
+        f.Root.Git.Ok(other, "add", "another.txt");
+        f.Root.Git.Ok(other, "commit", "-qm", "unselected commit");
+        Fixture.Put(f.Co.Path, "checkout-draft.txt", "not part of the selected worktree\n");
+        Fixture.Put(first, "shelved.txt", "selected shelf\n");
+        var shelf = Shelf.Save(f.Root, first, null, "selected shelf").Shelf;
+        Fixture.Put(first, "draft.txt", "selected saved edits\n");
+        var result = Backup.Run(f.Root, worktree: "selected");
+        Assert.True(result.Ok);
+        Assert.Equal("selected", result.Worktree);
+        Assert.All(result.Items, i => Assert.True(i.Name == "selected" || i.Kind == "shelf" && i.Name == shelf.Id));
+        Assert.Contains(result.Items, i => i.Kind == "wip" && i.Name == "selected");
+        Assert.Contains(result.Items, i => i.Kind == "shelf" && i.Name == shelf.Id);
+        var after = f.Root.Git.LsRemote(_remote);
+        foreach (var pair in before.Where(p => p.Key.Contains("untouched"))) Assert.Equal(pair.Value, after[pair.Key]);
+        Assert.DoesNotContain(after.Keys, r => r.StartsWith("refs/sg/edits/"));
+        Assert.Equal(complete, Backup.LastSuccess(f.Root));
+        Assert.Equal("selected", Backup.Last(f.Root)!.Worktree);
+        Assert.Throws<SgException>(() => Backup.Run(f.Root, worktree: "missing"));
+        Assert.Throws<SgException>(() => Backup.Run(f.Root, worktree: ""));
+    }
+
+    [Fact]
+    public void Scoped_prune_confirms_exact_versions_and_leaves_other_worktrees_alone()
+    {
+        f.Setup();
+        var first = MakeBranch("selected");
+        MakeBranch("untouched");
+        Fixture.Put(first, "shelved.txt", "shelf to prune\n");
+        var shelf = Shelf.Save(f.Root, first, null, "selected shelf").Shelf;
+        Fixture.Put(first, "draft.txt", "saved edits\n");
+        Backup.Set(f.Root, Remote());
+        Backup.Run(f.Root);
+        Backup.Exclude(f.Root, "selected");
+        Backup.Exclude(f.Root, "untouched");
+        var plan = Backup.PlanPrune(f.Root, "selected");
+        Assert.Equal(3, plan.Refs.Count);
+        Assert.Contains("refs/sg/shelf/" + shelf.Id, plan.Refs.Keys);
+        Assert.DoesNotContain(plan.Refs.Keys, r => r.Contains("untouched"));
+        var branchRef = "refs/heads/selected";
+        RemoteGit("update-ref", branchRef, plan.Refs[branchRef] + "^");
+        Assert.Throws<SgException>(() => Backup.Prune(f.Root, plan));
+        Assert.Equal(4, f.Root.Git.LsRemote(_remote).Count); // No partial deletion before validating the plan.
+        RemoteGit("update-ref", branchRef, plan.Refs[branchRef]);
+        Backup.Exclude(f.Root, "selected", exclude: false);
+        Assert.Throws<SgException>(() => Backup.Prune(f.Root, plan));
+        Backup.Exclude(f.Root, "selected");
+        Backup.Prune(f.Root, plan);
+        var remaining = f.Root.Git.LsRemote(_remote);
+        Assert.Contains("refs/heads/untouched", remaining.Keys);
+        Assert.DoesNotContain(plan.Refs.Keys, r => remaining.ContainsKey(r));
+        Assert.True(Directory.Exists(first));
+    }
+
+    [Fact]
+    public void Worktree_catalog_joins_local_and_remote_copies_and_includes_unbacked_worktrees()
+    {
+        f.Setup();
+        MakeBranch("both");
+        MakeBranch("remote-only");
+        Backup.Set(f.Root, Remote());
+        Backup.Run(f.Root);
+        Ops.Remove(f.Root, "remote-only", force: true);
+        MakeBranch("local-only");
+        var rows = Backup.Worktrees(f.Root, Backup.Browse(f.Root));
+        Assert.True(rows.Single(r => r.Name == "both").CanBackUp);
+        Assert.NotNull(rows.Single(r => r.Name == "both").Remote);
+        Assert.Null(rows.Single(r => r.Name == "remote-only").Path);
+        Assert.NotNull(rows.Single(r => r.Name == "remote-only").Remote);
+        Assert.True(rows.Single(r => r.Name == "local-only").CanBackUp);
+        Assert.Null(rows.Single(r => r.Name == "local-only").Remote);
+    }
+
+    [Fact]
     public void Catalog_reads_names_without_fetching_histories_and_preview_fetches_only_the_selection()
     {
         f.Setup();

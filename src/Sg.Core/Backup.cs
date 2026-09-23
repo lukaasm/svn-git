@@ -231,6 +231,8 @@ public sealed class BackupItem
 public sealed class BackupResult
 {
     public string Url = "";
+    /// <summary>Null for a complete backup, otherwise the one worktree this result covers.</summary>
+    public string? Worktree;
     /// <summary>When it ran. Set on a run that is kept as the last one; null on a check.</summary>
     public DateTimeOffset? When;
     /// <summary>Why the run as a whole stopped - the remote could not be reached, say. Null when it ran.</summary>
@@ -428,25 +430,27 @@ public static partial class Backup
     /// the remote holds, and pushed under a lease unless check only asks. One branch the remote holds
     /// another version of is skipped and named; the rest still go.
     /// </summary>
-    /// <remarks>force with only writes over just the items it names - by name, kind/name, or remote ref - and the rest reconcile as usual.</remarks>
-    public static BackupResult Run(SgRoot root, bool check = false, bool force = false, IReadOnlyCollection<string>? only = null)
+    /// <remarks>worktree scopes the run to one branch, its enabled saved edits, and its shelves.
+    /// force with only writes over just the items it names - by name, kind/name, or remote ref - and the rest in scope reconcile as usual.</remarks>
+    public static BackupResult Run(SgRoot root, bool check = false, bool force = false, IReadOnlyCollection<string>? only = null, string? worktree = null)
     {
         var cfg = Require(root);
         // Keep the result and its success receipt in the same operation, including CLI runs.
         using var operation = root.Lock();
-        if (check) return RunOnce(root, check: true, force, only);
+        if (worktree != null && string.IsNullOrWhiteSpace(worktree)) throw new SgException("Choose a worktree to back up.");
+        if (check) return RunOnce(root, check: true, force, only, worktree);
         try
         {
-            var res = RunOnce(root, check: false, force, only);
+            var res = RunOnce(root, check: false, force, only, worktree);
             res.When = DateTimeOffset.Now;
             KeepLast(root, res);
-            if (res.Error == null && res.Items.All(i => i.State is "pushed" or "up to date" && i.LeftOut.Count == 0))
+            if (worktree == null && res.Error == null && res.Items.All(i => i.State is "pushed" or "up to date" && i.LeftOut.Count == 0))
                 KeepSuccess(root, new(cfg.Url, cfg.Prefix, res.When.Value));
             return res;
         }
         catch (SgException e)
         {
-            KeepLast(root, new BackupResult { Url = root.Config.Backup?.Url ?? "", When = DateTimeOffset.Now, Error = e.Message });
+            KeepLast(root, new BackupResult { Url = root.Config.Backup?.Url ?? "", Worktree = worktree, When = DateTimeOffset.Now, Error = e.Message });
             throw;
         }
     }
@@ -499,16 +503,18 @@ public static partial class Backup
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { root.Log.Warn("the backup result could not be kept: " + e.Message); }
     }
 
-    static BackupResult RunOnce(SgRoot root, bool check, bool force, IReadOnlyCollection<string>? only)
+    static BackupResult RunOnce(SgRoot root, bool check, bool force, IReadOnlyCollection<string>? only, string? worktree)
     {
         var cfg = Require(root);
         var git = root.Git;
         using var _ = root.Lock();
-        var res = new BackupResult { Url = cfg.Url };
+        var res = new BackupResult { Url = cfg.Url, Worktree = worktree };
         var remote = git.LsRemote(cfg.Url);
         var pending = new List<(BackupItem Item, string? Lease)>();
 
-        var sources = Sources(root, cfg);
+        var sources = Sources(root, cfg, worktree);
+        if (worktree != null && !sources.Any(s => s.Kind == "branch"))
+            throw new SgException($"{worktree} has no eligible local worktree to back up. Check its folder and backup exclusion setting.");
 
         // Uncommitted changes on the remote for a folder that has none here now: this root's old ones, since
         // committed or dropped, or another machine's work in progress. The loop after the items tells which.
@@ -517,6 +523,7 @@ public static partial class Backup
         var clean = new Dictionary<string, (string Kind, string Name)>(StringComparer.Ordinal);
         foreach (var r in remote.Keys)
             if (!sourceRefs.Contains(r) && Owned(cfg, r) is { } o
+                && (worktree == null || o.Kind == "wip" && o.Name == worktree)
                 && ((o.Kind == "wip" && here.Branches.Contains(o.Name)) || (o.Kind == "edits" && here.Checkouts.Contains(o.Name))))
                 clean[r] = o;
 
@@ -623,6 +630,7 @@ public static partial class Backup
         foreach (var r in remote.Keys)
         {
             if (mine.Contains(r) || Owned(cfg, r) is not { } o) continue;
+            if (worktree != null && !(o.Kind is "branch" or "wip" && o.Name == worktree)) continue;
             if (!clean.ContainsKey(r))
             {
                 res.RemoteOnly.Add(r);
@@ -768,7 +776,7 @@ public static partial class Backup
     sealed record Source(string Kind, string Name, string Tip, string Snapshot, string? Branch, List<string> LeftOut, string? Why = null);
 
     /// <summary>Everything a backup is made of, with the snapshot each one sits on.</summary>
-    static List<Source> Sources(SgRoot root, BackupConfig cfg)
+    static List<Source> Sources(SgRoot root, BackupConfig cfg, string? worktree = null)
     {
         var git = root.Git;
         var list = new List<Source>();
@@ -782,7 +790,7 @@ public static partial class Backup
         {
             if (w.Bare || coPaths.Contains(w.Path.TrimEnd('\\', '/'))) continue;
             var branch = w.Branch;
-            if (branch == null || IsExcluded(cfg, branch)) continue;
+            if (branch == null || IsExcluded(cfg, branch) || worktree != null && branch != worktree) continue;
             if (!bases.TryGetValue(branch, out var coName) || !snapshots.TryGetValue(coName, out var snap)) continue;
             var tip = git.RefSha("refs/heads/" + branch);
             if (tip == null) continue;
@@ -808,7 +816,7 @@ public static partial class Backup
             }
         }
 
-        if (cfg.Uncommitted)
+        if (cfg.Uncommitted && worktree == null)
             foreach (var co in root.Config.Checkouts)
             {
                 if (!snapshots.TryGetValue(co.Name, out var snap) || !Directory.Exists(co.Path)) continue;
@@ -826,6 +834,7 @@ public static partial class Backup
 
         foreach (var s in Shelf.List(root))
         {
+            if (worktree != null && (s.IsCheckout || s.Branch != worktree)) continue;
             // A shelf of a worktree left out is that worktree's work, put aside: it stays with the rest.
             if (!s.IsCheckout && IsExcluded(cfg, s.Branch)) continue;
             string? mb = null;
@@ -1154,34 +1163,8 @@ public static partial class Backup
     /// </summary>
     public static List<string> Prune(SgRoot root, bool delete)
     {
-        using var operation = root.Lock();
-        var cfg = Require(root);
-        var git = root.Git;
-        var remote = git.LsRemote(cfg.Url);
-        var here = LocalNames(root, cfg);
-        var orphans = new List<string>();
-        foreach (var r in remote.Keys.OrderBy(k => k, StringComparer.Ordinal))
-        {
-            if (Owned(cfg, r) is not { } o) continue;
-            var known = o.Kind switch
-            {
-                "branch" or "wip" => here.Branches.Contains(o.Name),
-                "edits" => here.Checkouts.Contains(o.Name),
-                _ => here.Shelves.Contains(o.Name),
-            };
-            if (!known) orphans.Add(r);
-        }
-        if (!delete || orphans.Count == 0) return orphans;
-        var answers = git.PushRefs(cfg.Url, orphans.Select(r => new PushRef(null, r, remote[r])), force: false);
-        var failed = orphans.Where(r => !(answers.TryGetValue(r, out var a) && a.Ok)).ToList();
-        foreach (var r in orphans.Except(failed))
-        {
-            var o = Owned(cfg, r)!.Value;
-            git.DeleteRef(PushedRef(o.Kind, o.Name));
-            git.DeleteRef(FetchedRef(o.Kind, o.Name));
-        }
-        if (failed.Count > 0) throw new SgException("not deleted: " + string.Join(", ", failed));
-        return orphans;
+        var plan = PlanPrune(root);
+        return delete ? Prune(root, plan) : plan.Refs.Keys.ToList();
     }
 
     // ---- status ----

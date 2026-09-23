@@ -80,6 +80,7 @@ public class TaskQueueTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(new TaskFollowUp(TaskTargetKind.Update, "feature"),
             TaskResults.FollowUp(new OperationRecord { Phase = OperationPhase.NeedsReview, Path = "feature" }));
         Assert.Equal(new TaskFollowUp(TaskTargetKind.Backup), TaskResults.FollowUp(new BackupResult { Error = "offline" }));
+        Assert.Equal(new TaskFollowUp(TaskTargetKind.Backup, Worktree: "selected"), TaskResults.FollowUp(new BackupResult { Worktree = "selected" }));
         Assert.Null(TaskResults.FollowUp("unstructured output mentioning a path"));
         var queue = new TaskQueue();
         var task = queue.TryStart("import", "root")!;

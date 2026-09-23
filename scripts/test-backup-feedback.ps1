@@ -85,7 +85,11 @@ try {
         if ($reason -notlike '*Replay:*') { throw 'Skipped backup does not name the blocking task.' }
         Invoke-Element (Find 'NavigationViewBackButton')
         Invoke-Element (Wait-For 'backup action on overview' { Find 'BackupButton' })
-        $null = Wait-For 'same skip visible on Backup' { $t = Find 'BackupSkippedReason'; if ($t -and !$t.Current.IsOffscreen -and $t.Current.Name -like '*Replay:*') { $t } }
+        $null = Wait-For 'same skip visible on Backup' {
+            $scroller = Find 'ContentScroll'; $scroll = $null
+            if ($scroller -and $scroller.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable) { $scroll.SetScrollPercent(-1, 100) }
+            $t = Find 'BackupSkippedReason'; if ($t -and !$t.Current.IsOffscreen -and $t.Current.Name -like '*Replay:*') { $t }
+        }
         Invoke-Element (Find 'BackupBlockingTask')
         $null = Wait-For 'blocking task details visible' { $b = Find ('CopyTask_' + $activeId); if ($b -and !$b.Current.IsOffscreen) { $b } }
         Start-Sleep -Milliseconds 400
@@ -131,11 +135,9 @@ try {
         & git clone --bare --quiet -- $localRemote $retryRemote
         if ($LASTEXITCODE -ne 0) { throw 'Could not create the local retry remote.' }
         Invoke-Element (Find 'BackupRetryRead')
-        $null = Wait-For 'retry loads branches' { $b = Find 'BranchesHeader'; if ($b -and !$b.Current.IsOffscreen -and $b.Current.Name -like 'Branch*') { $b } } 40
+        $null = Wait-For 'retry loads worktrees' { $b = Find 'BranchesHeader'; if ($b -and !$b.Current.IsOffscreen -and $b.Current.Name -like 'Worktree*') { $b } } 40
         if ((Find 'NameBox') -and !(Find 'NameBox').Current.IsOffscreen) { throw 'Backup selected a restore destination without an explicit choice.' }
-        $branch = (Find 'Branches').FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))
-        Select-Element $branch
+        Invoke-Element (Find 'BackupWorktreeOpen_source')
         $null = Wait-For 'restore form follows selection' { $b = Find 'NameBox'; if ($b -and !$b.Current.IsOffscreen) { $b } }
         if ((Find 'BackupRetryRead') -and !(Find 'BackupRetryRead').Current.IsOffscreen) { throw 'Retry error remained visible after a successful read.' }
     }

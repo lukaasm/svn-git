@@ -73,8 +73,12 @@ public static class Operations
         if (!Guid.TryParseExact(id, "N", out _)) throw new SgException("invalid operation id");
         return System.IO.Path.Combine(Folder(root), id + ".json");
     }
-    public static OperationRecord Read(SgRoot root, string id) => JsonSerializer.Deserialize<OperationRecord>(File.ReadAllText(FileFor(root, id)), SgConfig.JsonOptions)
-        ?? throw new SgException("invalid operation record: " + id);
+    public static OperationRecord Read(SgRoot root, string id)
+    {
+        Cancellation.ThrowIfRequested();
+        return JsonSerializer.Deserialize<OperationRecord>(File.ReadAllText(FileFor(root, id)), SgConfig.JsonOptions)
+            ?? throw new SgException("invalid operation record: " + id);
+    }
     public static List<OperationRecord> List(SgRoot root) => !Directory.Exists(Folder(root)) ? [] : Directory.EnumerateFiles(Folder(root), "*.json")
         .Select(p => Read(root, System.IO.Path.GetFileNameWithoutExtension(p))).OrderByDescending(x => x.Updated).ToList();
     public static OperationRecord? Pending(SgRoot root, string path) => List(root).FirstOrDefault(x => !x.Terminal && !string.IsNullOrEmpty(x.Path) && System.IO.Path.GetFullPath(x.Path).Equals(System.IO.Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));

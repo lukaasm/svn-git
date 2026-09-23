@@ -43,13 +43,17 @@ public sealed partial class BackupPage : SgPage
     List<BackupEntry> _entries = new();
     BackupEntry? _picked;
     bool _binding;
-    int _readGeneration;
+    readonly PageReads _reads = new();
+    readonly UiRefresh _searchRefresh;
+    bool _hidden;
     readonly BranchTargetValidation _targetValidation = new();
 
     public BackupPage()
     {
         InitializeComponent();
+        _searchRefresh = new(DispatcherQueue, () => { if (IsLoaded) FilterEntries(); }, TimeSpan.FromMilliseconds(150));
         _form = new(NameBox, IntoBox, ForceBox, WipBox, Branches);
+        Unloaded += (_, _) => OnHidden();
         Title = "Backup";
         Session.Log.Sink = Pane;
         _ = LoadAsync();
@@ -59,12 +63,15 @@ public sealed partial class BackupPage : SgPage
 
     async Task LoadAsync()
     {
-        var generation = ++_readGeneration;
+        if (_hidden) return;
+        using var read = _reads.Begin();
         ReadingBackup.Hide();
         ReadError.IsOpen = false;
         _targetValidation.Invalidate();
         ExistingDestination.Update(null, null);
         _picked = null;
+        Summary.Text = "";
+        RestoreButton.Visibility = Visibility.Collapsed;
         RestoreButton.IsEnabled = false;
         var root = Session.Require();
         var cfg = root.Config.Backup;
@@ -93,8 +100,8 @@ public sealed partial class BackupPage : SgPage
         ShowReport(LastReport, Backup.Last(root), ActFor);
         ReadingBackup.Running("Reading the backup repository…", "You can keep browsing. The saved report above remains available.");
 
-        var list = await Runner.Quiet(Pane, () => Backup.List(root));
-        if (generation != _readGeneration || root.RootPath != Session.Root?.RootPath) return;
+        var list = await read.Run(Pane, () => Backup.List(root));
+        if (!read.Current || root.RootPath != Session.Root?.RootPath) return;
         ReadingBackup.Hide();
         if (list == null)
         {
@@ -113,10 +120,7 @@ public sealed partial class BackupPage : SgPage
         Filled.Visibility = Visibility.Visible;
         Headline.Text = $"{branches.Count} branch(es), {others.Count(o => o.Entry.Kind == "shelf")} shelf/shelves, "
                         + $"{others.Count(o => o.Entry.Kind is "wip" or "edits")} folder(s) with uncommitted changes";
-        BranchesHeader.Text = branches.Count == 1 ? "Branch" : $"Branches ({branches.Count})";
-        Branches.ItemsSource = branches;
-        OthersHeader.Visibility = OthersCard.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        Others.ItemsSource = others;
+        FilterEntries();
 
         _binding = true;
         IntoBox.ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList();
@@ -128,9 +132,27 @@ public sealed partial class BackupPage : SgPage
         Show(null);
     }
 
-    public override void OnHidden() => _readGeneration++;
+    public override void OnHidden() { _hidden = true; _reads.Cancel(); _targetValidation.Invalidate(); }
     async void RetryRead_Click(object sender, RoutedEventArgs e) => await LoadAsync();
     void ReadLog_Click(object sender, RoutedEventArgs e) => OutputWindow.Show();
+
+    void Search_Changed(object sender, TextChangedEventArgs e) => _searchRefresh?.Request();
+    void FilterEntries()
+    {
+        var query = BackupSearch.Text.Trim();
+        var matches = _entries.Where(e => query.Length == 0 || string.Join('\n', e.Name, e.Branch, e.Checkout, e.Title)
+            .Contains(query, StringComparison.OrdinalIgnoreCase)).Select(e => new BackupRow { Entry = e }).ToList();
+        var branches = matches.Where(e => e.Entry.Kind == "branch").ToList();
+        var others = matches.Where(e => e.Entry.Kind != "branch").ToList();
+        BranchesHeader.Text = branches.Count == 1 ? "Branch" : $"Branches ({branches.Count})";
+        Branches.ItemsSource = branches;
+        Others.ItemsSource = others;
+        OthersHeader.Visibility = OthersCard.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        BackupMatches.Text = matches.Count == 0 ? "No matching backup items. Try another search."
+            : $"{matches.Count} of {_entries.Count} backup items";
+        Branches.SelectedItem = null;
+        Show(null);
+    }
 
     void Branch_Changed(object sender, SelectionChangedEventArgs e) => Show((Branches.SelectedItem as BackupRow)?.Entry);
 
@@ -333,6 +355,7 @@ public sealed partial class BackupPage : SgPage
     async Task RestoreSeparatelyAsync(BackupItem item)
     {
         await LoadAsync();
+        if (_hidden) return;
         var entry = _entries.FirstOrDefault(e => e.Kind == "branch" && e.Name == item.Name);
         if (entry == null) return;
         Show(entry);

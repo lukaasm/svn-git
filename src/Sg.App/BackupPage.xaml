@@ -63,11 +63,15 @@
                         </Grid>
                     </Border>
 
+                    <TextBox x:Name="BackupSearch" PlaceholderText="Search branches, shelves, and checkout edits"
+                             AutomationProperties.Name="Search backup contents" TextChanged="Search_Changed" />
+                    <TextBlock x:Name="BackupMatches" Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                               AutomationProperties.LiveSetting="Polite" />
                     <TextBlock x:Name="BranchesHeader" Text="Branches" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
                     <TextBlock x:Name="SelectionHint" Text="Choose a branch to review its commits and restore options."
                                Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                     <Border Style="{StaticResource Card}" Padding="4">
-                        <local:RowListView x:Name="Branches" SelectionMode="Single" SelectionChanged="Branch_Changed">
+                        <local:RowListView x:Name="Branches" MaxHeight="320" SelectionMode="Single" SelectionChanged="Branch_Changed">
                             <local:RowListView.ItemTemplate>
                                 <DataTemplate x:DataType="local:BackupRow">
                                     <Grid ColumnDefinitions="220,110,*,Auto" ColumnSpacing="{StaticResource RowSpacing}"
@@ -104,7 +108,7 @@
 
                     <TextBlock x:Name="CommitsHeader" Text="Commits" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
                     <Border x:Name="CommitsCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
-                        <local:RowListView x:Name="Subjects" SelectionMode="None">
+                        <local:RowListView x:Name="Subjects" MaxHeight="240" SelectionMode="None">
                             <local:RowListView.ItemTemplate>
                                 <DataTemplate x:DataType="x:String">
                                     <TextBlock Text="{x:Bind}" Style="{StaticResource RowText}" />
@@ -115,7 +119,7 @@
 
                     <TextBlock x:Name="OthersHeader" Text="Also there" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
                     <Border x:Name="OthersCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
-                        <local:RowListView x:Name="Others" SelectionMode="None">
+                        <local:RowListView x:Name="Others" MaxHeight="240" SelectionMode="None">
                             <local:RowListView.ItemTemplate>
                                 <DataTemplate x:DataType="local:BackupRow">
                                     <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="{StaticResource RowSpacing}" ToolTipService.ToolTip="{x:Bind Tip}">

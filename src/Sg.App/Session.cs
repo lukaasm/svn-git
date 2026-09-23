@@ -275,6 +275,8 @@ public static class Runner
         return line + "  (" + ex.GetType().Name + ")";
     }
 
+    internal static void ReadError(StatusStrip pane, Exception ex) => pane.Error(ex is SgException ? ex.Message : Unexpected(ex));
+
     public static async Task<bool> Run(StatusStrip pane, string title, Action work, Action<string>? failed = null)
     {
         var r = await Run(pane, title, () => { work(); return "ok"; }, failed);

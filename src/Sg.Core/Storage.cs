@@ -44,6 +44,7 @@ public static class Storage
         {
             foreach (var entry in Directory.EnumerateFileSystemEntries(dir).Order(StringComparer.Ordinal))
             {
+                Cancellation.ThrowIfRequested();
                 if (PathUtil.IsReparsePoint(entry)) { plan.Blockers.Add("Linked content: " + entry); continue; }
                 if (Directory.Exists(entry)) { content.Add("directory:" + entry); Visit(entry); }
                 else
@@ -85,6 +86,7 @@ public static class Storage
         {
             foreach (var entry in Directory.EnumerateFileSystemEntries(dir))
             {
+                Cancellation.ThrowIfRequested();
                 if (Path.GetFileName(entry) == ".git") continue;
                 var attrs = File.GetAttributes(entry);
                 if ((attrs & FileAttributes.ReparsePoint) != 0) { plan.Blockers.Add("Linked content is not archived: " + entry); continue; }

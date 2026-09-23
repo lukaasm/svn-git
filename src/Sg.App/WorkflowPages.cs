@@ -12,7 +12,7 @@ public abstract class WorkflowPage : SgPage
     protected readonly StatusStrip Pane = new();
     readonly ScrollViewer _scroll = new();
     bool _busy;
-    int _generation;
+    readonly PageReads _reads = new();
     protected WorkflowPage(string title)
     {
         Title = title;
@@ -23,12 +23,13 @@ public abstract class WorkflowPage : SgPage
         grid.Children.Add(_scroll);
         Grid.SetRow(Pane, 1); grid.Children.Add(Pane); Content = grid;
         Shortcuts.Add(this, VirtualKey.F5, () => _ = Reload());
+        Unloaded += (_, _) => OnHidden(); // Standalone window closure also ends disposable reads.
     }
     public override void OnShown(bool returning) => _ = Reload();
-    public override void OnHidden() => ++_generation;
+    public override void OnHidden() => _reads.Cancel();
     protected abstract Task Reload();
-    protected int BeginRead() => ++_generation;
-    protected bool Current(int generation) => generation == _generation;
+    private protected PageReads.Request BeginRead() => _reads.Begin();
+    private protected static bool Current(PageReads.Request read) => read.Current;
     protected void Text(string text, bool heading = false) => Body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = heading ? 20 : 14 });
     protected Button Action(string label, Func<Task> action, bool primary = false, bool enabled = true, bool mutates = false, string glyph = "")
     {
@@ -114,8 +115,8 @@ public sealed class UpdateBranchPage : WorkflowPage
     }
     protected override async Task Reload()
     {
-        var generation = BeginRead(); var root = Session.Require();
-        var state = await Runner.Quiet(Pane, () => (object?)Operations.Pending(root, _path) ?? (_lastResult != null ? (object)Operations.Read(root, _lastResult.Id) : Operations.Plan(root, _path)));
+        using var generation = BeginRead(); var root = Session.Require();
+        var state = await generation.Run(Pane, () => (object?)Operations.Pending(root, _path) ?? (_lastResult != null ? (object)Operations.Read(root, _lastResult.Id) : Operations.Plan(root, _path)));
         if (state == null || !Current(generation)) return;
         Body.Children.Clear(); _submit = null;
         if (state is OperationRecord record)
@@ -187,87 +188,6 @@ public sealed class UpdateBranchPage : WorkflowPage
     }
 }
 
-public sealed class ActivityPage : WorkflowPage
-{
-    public ActivityPage() : base("Activity and recovery") { }
-    protected override async Task Reload()
-    {
-        var generation = BeginRead(); var root = Session.Require();
-        Body.Children.Clear();
-        var loading = ReadNotice("Loading recorded operations and recovery checkpoints…", "ActivityLoading");
-        var data = await Runner.Quiet(Pane, () =>
-        {
-            var records = Operations.List(root);
-            var replays = root.Git.WorktreeList().Where(w => !w.Bare && Directory.Exists(w.Path) && Conflicts.HasPending(root.Git, w.Path) && records.All(r => r.Terminal || r.Path != w.Path)).ToList();
-            return new { Records = records, Replays = replays };
-        });
-        if (!Current(generation)) return;
-        if (data == null) { ReadFailed(loading, "Could not read the activity timeline. Retry or open the error log for details."); return; }
-        var records = data.Records.OrderByDescending(r => r.Updated).ToList();
-        Body.Children.Clear();
-        Status($"{records.Count(r => !r.Terminal) + data.Replays.Count} need attention · {records.Count(r => r.Terminal)} finished", ChipSeverity.Neutral, "\uE81C");
-        foreach (var replay in data.Replays)
-        {
-            var entryStart = Body.Children.Count;
-            Text("Existing replay · " + replay.Branch, true);
-            Status("Paused replay", ChipSeverity.Caution, "\uE7BA");
-            Details("Replay details", [replay.Path, "Paused before operation history was recorded"]);
-            Link("Review replay", "\uE90F", () => new ConflictPage(replay.Path), "resolve:" + replay.Path);
-            TimelineEntry(entryStart, "PausedReplay");
-        }
-        if (records.Count == 0 && data.Replays.Count == 0) Text("No recorded operations yet.");
-        DateTime? day = null;
-        foreach (var record in records)
-        {
-            if (day != record.Updated.LocalDateTime.Date) {
-                day = record.Updated.LocalDateTime.Date;
-                Text(day.Value.ToString("D"), true);
-            }
-            var entryStart = Body.Children.Count;
-            Text(OperationTitle(record) + " · " + record.Branch, true);
-            var severity = record.Phase == OperationPhase.Completed ? ChipSeverity.Success : record.Terminal ? ChipSeverity.Neutral : ChipSeverity.Caution;
-            Status(record.PhaseLabel, severity, record.Phase == OperationPhase.Completed ? "\uE73E" : record.Terminal ? "\uE81C" : "\uE7BA");
-            Text($"{record.Updated.LocalDateTime:g} · {record.Checkout}");
-            if (!string.IsNullOrWhiteSpace(record.Detail)) Text(record.Detail);
-            if (!record.Terminal) Link(record.Action, "\uE90F", () => new UpdateBranchPage(record.Path), "update-branch:" + record.Path);
-            if (Directory.Exists(record.Path)) Link("View branch history", "\uE81C", () => new LogPage(record.Path), "log:" + record.Path);
-            var detailsStart = Body.Children.Count;
-            foreach (var step in record.Steps) Body.Children.Add(Label(step, "\uE73E"));
-            if (record.Steps.Count == 0) Text("No completed steps recorded.");
-            Text("Branch checkpoint: " + (record.Before.Length > 0 ? record.Before : "Not recorded"));
-            Text(record.Path);
-            if (record.Before.Length > 0) Action("Restore commits to a separate branch", async () =>
-            {
-                var name = record.Branch + "-recovered-" + Guid.NewGuid().ToString("N")[..8];
-                if (!await Dialogs.Confirm(this, "Restore checkpoint to a new branch?",
-                    $"This will:\n• Create branch {name}.\n• Create its worktree at {root.WorktreePathFor(name)}.\n• Restore the recorded commits at {record.Before}.\n\nYour current branch, working files, and shelves stay in place. SVN and remote backups are unchanged.", "Create recovery branch")) return;
-                await Execute("Restore checkpoint", () => Operations.RestoreCheckpoint(root, record.Id, name),
-                    new(record.Checkout, name, root.WorktreePathFor(name)));
-            }, mutates: true, glyph: "\uE8A7");
-            CollapseActions(detailsStart, "Steps and checkpoint");
-            TimelineEntry(entryStart, "ActivityEntry_" + record.Id);
-        }
-        Action("Refresh", Reload, glyph: "\uE72C");
-    }
-
-    void TimelineEntry(int start, string id)
-    {
-        var content = new StackPanel { Spacing = 8 };
-        while (Body.Children.Count > start) {
-            var child = Body.Children[start]; Body.Children.RemoveAt(start); content.Children.Add(child);
-        }
-        var row = new Grid { ColumnSpacing = 12 };
-        row.ColumnDefinitions.Add(new() { Width = new GridLength(20) });
-        row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        row.Children.Add(new Border { Width = 2, Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] });
-        row.Children.Add(new FontIcon { Glyph = "\uE915", FontSize = 14, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 16, 0, 0) });
-        var card = new Border { Padding = new Thickness(16), CornerRadius = new CornerRadius(4),
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], Child = content };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(card, id);
-        Grid.SetColumn(card, 1); row.Children.Add(card); Body.Children.Add(row);
-    }
-}
-
 public sealed class ReviewPage : WorkflowPage
 {
     readonly string _path;
@@ -275,10 +195,10 @@ public sealed class ReviewPage : WorkflowPage
     public ReviewPage(string path) : base("Review readiness") { _path = path; Subtitle = path; }
     protected override async Task Reload()
     {
-        var generation = BeginRead(); var root = Session.Require();
-        var status = await Runner.Quiet(Pane, () => new[] { Review.Status(root, _path) });
+        using var generation = BeginRead(); var root = Session.Require();
+        var status = await generation.Run(Pane, () => new[] { Review.Status(root, _path) });
         if (status == null || !Current(generation)) return;
-        var records = await Runner.Quiet(Pane, () => new[] { Review.Read(root, _path) });
+        var records = await generation.Run(Pane, () => new[] { Review.Read(root, _path) });
         var record = records?.FirstOrDefault();
         if (!Current(generation)) return;
         Body.Children.Clear();
@@ -331,7 +251,7 @@ public sealed class CoveragePage : WorkflowPage
     public CoveragePage(string path) : base("Backup coverage and handoff") { _path = path; Subtitle = path; }
     protected override async Task Reload()
     {
-        var generation = BeginRead(); Body.Children.Clear(); var root = Session.Require();
+        using var generation = BeginRead(); Body.Children.Clear(); var root = Session.Require();
         Text("Check what the backup holds and whether restoration has been tested.");
         Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true, mutates: true, glyph: "\uE72C");
         Link("View branch history", "\uE81C", () => new LogPage(_path), "log:" + _path);
@@ -340,7 +260,7 @@ public sealed class CoveragePage : WorkflowPage
         {
             var receipt = _receipt;
             Text($"{receipt.Branch} · checked {receipt.Checked.LocalDateTime:g}", true);
-            var local = await Runner.Quiet(Pane, () => new[] { Backup.LocalReceiptStatus(root, _path, receipt) });
+            var local = await generation.Run(Pane, () => new[] { Backup.LocalReceiptStatus(root, _path, receipt) });
             if (!Current(generation)) return;
             if (local != null) Body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Informational, Message = local[0] });
             if (receipt.Coverage.Count == 0) Status("No covered items in this receipt", ChipSeverity.Caution, "\uE7BA");
@@ -398,13 +318,13 @@ public sealed class StoragePage : WorkflowPage
     public StoragePage() : base("Storage and archive") { }
     protected override async Task Reload()
     {
-        var generation = BeginRead(); var root = Session.Require();
+        using var generation = BeginRead(); var root = Session.Require();
         Body.Children.Clear();
         Text("Review worktree sizes, archive eligibility, and retained temporary data.");
         Link("View retained shelves", "\uE7B8", () => new ShelfPage(), "shelves");
         Link("View recovery checkpoints", "\uE81C", () => new ActivityPage(), "activity");
         var loading = ReadNotice("Scanning worktrees and measuring files. Large folders or another repository operation can take time. You can keep browsing.", "StorageLoading");
-        var plans = await Runner.Quiet(Pane, () => Storage.List(root));
+        var plans = await generation.Run(Pane, () => Storage.List(root));
         if (!Current(generation)) return;
         if (plans == null) { ReadFailed(loading, "Could not read storage information. Retry the scan or open the error log for details."); return; }
         Body.Children.Clear();
@@ -431,7 +351,7 @@ public sealed class StoragePage : WorkflowPage
             CollapseActions(archiveStart, "Archive options · " + plan.Branch);
         }
         var temporaryNotice = ReadNotice("Checking retained temporary data…", "StorageTemporaryLoading");
-        var temporary = await Runner.Quiet(Pane, () => Storage.TemporaryData(root));
+        var temporary = await generation.Run(Pane, () => Storage.TemporaryData(root));
         if (!Current(generation)) return;
         if (temporary == null) { ReadFailed(temporaryNotice, "Worktrees were loaded, but temporary data could not be read."); return; }
         Body.Children.Remove(temporaryNotice);

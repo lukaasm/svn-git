@@ -94,10 +94,12 @@ public sealed class MessageDialog : ContentDialog
     /// <summary>A question asked after the message and before the work, for what everyone can see. Null skips it.</summary>
     public Func<string>? Confirm { get; set; }
 
-    public string Text { get => _box.Text; set => _box.Text = value; }
+    // WinUI rewrites newlines to CR. Expose one form so callers can recognize their own generated
+    // message after it has passed through the editor, instead of mistaking it for a hand-edited draft.
+    public string Text { get => _box.Text.ReplaceLineEndings("\n"); set => _box.Text = value; }
 
     /// <summary>What actually gets committed: comment lines and trailing blanks stripped.</summary>
-    public string Clean => Push.CleanMessage(_box.Text);
+    public string Clean => Push.CleanMessage(Text);
 
     /// <summary>The text meets the minimum.</summary>
     public bool Ok => Clean.Length >= _minimum;

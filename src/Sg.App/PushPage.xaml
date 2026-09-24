@@ -9,6 +9,19 @@
         <StackPanel Grid.Row="0" Spacing="6">
             <Button x:Name="ReadinessButton" Content="Review readiness for this version" Click="ReviewReadiness_Click" />
             <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+            <InfoBar x:Name="ReadError" Title="Could not update the push preview. Any displayed files are from the last successful read."
+                     Severity="Error" IsClosable="False" IsOpen="False">
+                <InfoBar.ActionButton>
+                    <local:IconButton x:Name="RetryPreviewButton" Glyph="&#xE72C;" Text="Retry" Click="Refresh_Click" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+            <!-- Reserve the ring's space so pending feedback does not move the commit list. -->
+            <Grid ColumnDefinitions="*,20" ColumnSpacing="8" MinHeight="24">
+                <TextBlock x:Name="Header" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"
+                           AutomationProperties.LiveSetting="Polite" />
+                <ProgressRing x:Name="PreviewProgress" Grid.Column="1" Width="20" Height="20" MinWidth="20" MinHeight="20"
+                              IsActive="False" Opacity="0" AutomationProperties.Name="Updating push preview" />
+            </Grid>
         </StackPanel>
 
         <!-- A branch that equals its snapshot has no commits to list, no files, no message worth writing:
@@ -25,7 +38,6 @@
 
         <Grid x:Name="Filled" Grid.Row="1" RowDefinitions="Auto,*,Auto">
             <StackPanel Grid.Row="0" Spacing="8">
-                <TextBlock x:Name="Header" Style="{StaticResource BodyStrongTextBlockStyle}" />
                 <InfoBar x:Name="WarnBar" Severity="Warning" IsClosable="False" IsOpen="False" />
             </StackPanel>
 
@@ -46,6 +58,7 @@
                         <TextBox x:Name="CommitFilterBox" Grid.Column="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12" MinWidth="200"
                                  ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. It changes the list, never what gets pushed: the cut stays on the commit it was on." />
                         <Button x:Name="AllCommitsButton" Grid.Column="2" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
+                                IsEnabled="False"
                                 ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
                     </Grid>
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4" MaxHeight="260">
@@ -111,7 +124,7 @@
                 </ItemsControl>
                 <!-- The message is asked for on the press, in a dialog, not held open under the checks. -->
                 <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-                    <local:IconButton Glyph="&#xE72C;" Text="Refresh"
+                    <local:IconButton x:Name="RefreshPreviewButton" Glyph="&#xE72C;" Text="Refresh"
                         Click="Refresh_Click" ToolTipService.ToolTip="Read the branch again: commits, files, and the message." />
                     <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is sent." />
                     <!-- The same split the two commit pages have, and for the same reason: the left half is
@@ -120,7 +133,7 @@
                          wants reading first, and the shelf is where a change waits instead of going. -->
                     <local:TaskGate Grid.Column="3">
                         <local:AccentSplitButton AutomationProperties.Name="Push to SVN" x:Name="PushButton"
-                                                 Click="Push_Click"
+                                                 Click="Push_Click" IsEnabled="False"
                                                  ToolTipService.ToolTip="Write the message, then sync the checkout, rebase the branch, and make one svn commit per repository. Asks before it commits. Ctrl+Enter opens this too.">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon Glyph="&#xE898;" FontSize="14" />

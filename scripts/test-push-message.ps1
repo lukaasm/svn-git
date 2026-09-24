@@ -8,7 +8,7 @@ if (!$Worker) {
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-push-message-' + [Guid]::NewGuid().ToString('N')))
     try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(180)
+        $deadline = [DateTime]::UtcNow.AddSeconds(420)
         while (!$desktop.Wait(200)) { if ([DateTime]::UtcNow -ge $deadline) { throw 'Push message UI test timed out.' } }
         if ($desktop.ExitCode -ne 0) { throw "Push message UI failed. See $ArtifactDirectory/probe-error.txt" }
         Write-Output "PASS: Push message UI. Artifacts: $ArtifactDirectory"
@@ -46,11 +46,39 @@ function Wait-For([scriptblock]$read, [string]$message = 'Push message UI assert
 function Invoke-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Enter-Value($control, [string]$value) { $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Read-Value($control) { $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
-function Select-Range([int]$count) {
+function Choose-Range([int]$count) {
     $rows = (Find 'Commits').FindAll([System.Windows.Automation.TreeScope]::Children,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))
     $rows[3 - $count].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+}
+function Select-Range([int]$count) {
+    Choose-Range $count
     $null = Wait-For { (Find 'Header').Current.Name -like "Sending $count of 3 commit*" }
+}
+function Set-CommandGate([string]$mode = 'hold') {
+    $id = [Guid]::NewGuid().ToString('N')
+    [IO.File]::WriteAllText((Join-Path $env:SG_UI_COMMAND_GATE 'request.txt'), ($mode + ':' + $id))
+    Join-Path $env:SG_UI_COMMAND_GATE $id
+}
+function Wait-CommandGate([string]$marker) {
+    $null = Wait-For { Test-Path -LiteralPath ($marker + '.entered') } 'The preview did not reach the delayed Git read.'
+}
+function Release-CommandGate([string]$marker) {
+    Remove-Item -LiteralPath (Join-Path $env:SG_UI_COMMAND_GATE 'request.txt') -ErrorAction SilentlyContinue
+    [IO.File]::WriteAllText(($marker + '.release'), '')
+}
+function Assert-Cancelled([string]$marker) {
+    $childId = [int](Get-Content -LiteralPath ($marker + '.entered'))
+    $null = Wait-For { !(Get-Process -Id $childId -ErrorAction SilentlyContinue) } 'The obsolete preview kept its Git process running.'
+}
+function Assert-Pending {
+    if ((Find 'PushButton').Current.IsEnabled) { throw 'Push still accepts the previous preview while the new commit range is loading.' }
+    $null = Wait-For { Find 'Updating push preview…' -Name }
+    if ((Find 'PushButton').Current.HelpText -notlike '*preview*') { throw 'Disabled Push does not explain that its preview is loading.' }
+    $hint = Find 'DisabledHint_PushButton'
+    if (!$hint -or !$hint.Current.IsKeyboardFocusable -or $hint.Current.HelpText -notlike '*preview*') {
+        throw 'The loading explanation is not available to keyboard users.'
+    }
 }
 function Open-Message {
     $button = Wait-For { $b = Find 'PushButton'; if ($b -and $b.Current.IsEnabled) { $b } }
@@ -105,10 +133,77 @@ try {
         & git -C $worktree -c user.name=Fixture -c user.email=fixture@example.invalid commit -m "Change $i" -m "Details for change $i" | Out-File $setupLog -Append
         if ($LASTEXITCODE -ne 0) { throw 'Could not commit fixture file.' }
     }
+    $env:SG_UI_COMMAND_GATE = (New-Item -ItemType Directory -Path (Join-Path $ArtifactDirectory 'command-gate')).FullName
+    [IO.File]::WriteAllText((Join-Path $env:SG_UI_COMMAND_GATE 'executable.txt'), (Get-Command git).Source)
+    $source = [Security.SecurityElement]::Escape((Join-Path $PSScriptRoot 'UiCommandGate.cs'))
+    $project = Join-Path $env:SG_UI_COMMAND_GATE 'UiCommandGate.csproj'
+    [IO.File]::WriteAllText($project, "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Include=`"$source`" /></ItemGroup></Project>")
+    & dotnet build $project --nologo -v quiet -m:1 -nr:false | Out-File $setupLog -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not build the test command gate.' }
+    $configFile = Join-Path $fixture '.sg/sg.json'
+    $config = Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json
+    $config.gitExe = Join-Path $env:SG_UI_COMMAND_GATE 'bin/Debug/net10.0/UiCommandGate.exe'
+    $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configFile
     $process = Start-Process -FilePath $app -ArgumentList @('push', ('"' + $worktree + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For { Get-TestAppWindow $process }
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $null = Wait-For { $h = Find 'Header'; $h -and $h.Current.Name -like '3 commit*' }
+
+    Start-UiScenario 'A pending selection blocks Push until its preview is ready'
+    $before = (Find 'Commits').Current.BoundingRectangle
+    $gate = Set-CommandGate
+    Choose-Range 2
+    Wait-CommandGate $gate
+    Assert-Pending
+    $pending = (Find 'Commits').Current.BoundingRectangle
+    if ($before.Top -ne $pending.Top -or $before.Left -ne $pending.Left -or $before.Width -ne $pending.Width) { throw 'Loading feedback moved the commit list.' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'pending-preview.png')
+    Release-CommandGate $gate
+    $null = Wait-For { (Find 'Header').Current.Name -like 'Sending 2 of 3 commit*' }
+    Assert-Message (Open-Message) 2
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'A newer selection cancels the obsolete preview and wins'
+    $obsolete = Set-CommandGate
+    Choose-Range 1
+    Wait-CommandGate $obsolete
+    $latest = Set-CommandGate
+    Choose-Range 2
+    Wait-CommandGate $latest
+    Assert-Cancelled $obsolete
+    Assert-Pending
+    Release-CommandGate $latest
+    $null = Wait-For { (Find 'Header').Current.Name -like 'Sending 2 of 3 commit*' }
+    Assert-Message (Open-Message) 2
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'Refreshing blocks Push while rechecking the current range'
+    $gate = Set-CommandGate
+    Invoke-Control (Find 'RefreshPreviewButton')
+    Wait-CommandGate $gate
+    Assert-Pending
+    Release-CommandGate $gate
+    $null = Wait-For { (Find 'Header').Current.Name -like 'Sending 2 of 3 commit*' }
+    Assert-Message (Open-Message) 2
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'A failed preview keeps Push blocked and offers an inline retry'
+    $gate = Set-CommandGate 'fail'
+    Choose-Range 1
+    Wait-CommandGate $gate
+    $null = Wait-For { (Find 'Header').Current.Name -eq 'Push preview unavailable' }
+    if ((Find 'PushButton').Current.IsEnabled) { throw 'A failed read enabled Push with a stale preview.' }
+    if ((Find 'PushButton').Current.HelpText -notlike '*Retry*') { throw 'The disabled explanation does not offer recovery.' }
+    Release-CommandGate $gate
+    Invoke-Control (Find 'RetryPreviewButton')
+    $null = Wait-For { (Find 'Header').Current.Name -like 'Sending 1 of 3 commit*' }
+    Assert-Message (Open-Message) 1
+    Close-Message
+    if (Find 'RetryPreviewButton') { throw 'The stale error is still visible after a successful retry.' }
+    Complete-UiScenario
 
     Start-UiScenario 'Selecting two commits generates only those subjects and bodies'
     Select-Range 2
@@ -123,8 +218,13 @@ try {
     Complete-UiScenario
 
     Start-UiScenario 'Send all restores the full generated message'
+    $gate = Set-CommandGate
     Invoke-Control (Find 'AllCommitsButton')
+    Wait-CommandGate $gate
+    Assert-Pending
+    Release-CommandGate $gate
     $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
+    if ((Find 'AllCommitsButton').Current.IsEnabled) { throw 'Send all was re-enabled despite already selecting every commit.' }
     Assert-Message (Open-Message) 3
     Close-Message
     Complete-UiScenario
@@ -149,6 +249,16 @@ try {
     Select-Range 1
     Assert-Message (Open-Message) 1
     Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'Leaving the page cancels its pending preview'
+    $gate = Set-CommandGate
+    Choose-Range 2
+    Wait-CommandGate $gate
+    Remove-Item -LiteralPath (Join-Path $env:SG_UI_COMMAND_GATE 'request.txt')
+    Invoke-Control (Find 'ReadinessButton')
+    Assert-Cancelled $gate
+    $null = Wait-For { !(Find 'ReadinessButton') }
     if ((& svnlook youngest $repository) -ne '1') { throw 'Preview testing unexpectedly wrote to SVN.' }
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }

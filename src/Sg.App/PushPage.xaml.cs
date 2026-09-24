@@ -12,7 +12,9 @@ public sealed partial class PushPage : SgPage
     void ReviewReadiness_Click(object sender, RoutedEventArgs e) => Go(() => new ReviewPage(_worktree), "review:" + _worktree);
     readonly string _worktree;
     readonly ListFilter _filter;
+    readonly PageReads _reads = new();
     bool _canPush;
+    bool _reading, _hidden;
     PushPreview? _preview;
     List<PushRepoRow> _repos = new();
     /// <summary>The last push went through. The empty branch it left behind is the success, not a warning.</summary>
@@ -76,32 +78,71 @@ public sealed partial class PushPage : SgPage
                 : "";
             return $"This makes {p?.Groups.Count ?? 0} SVN commit(s) that everyone can see: {where}.{part} Continue?";
         };
-        _ = LoadAsync();
+        Unloaded += (_, _) => OnHidden();
+    }
+
+    public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
+    public override void OnHidden()
+    {
+        _hidden = true;
+        _scopeDebounce.Stop();
+        ++_generation;
+        _reads.Cancel();
+        _canPush = _reading = false;
+        PreviewProgress.IsActive = false;
+        SyncPushButton();
+    }
+
+    // Invalidate at selection time, before the debounce: an older read must never re-enable Push
+    // while the selected scope already describes a different set of commits.
+    void InvalidatePreview()
+    {
+        ++_generation;
+        _reads.Cancel();
+        _canPush = false;
+        _reading = true;
+        ReadError.IsOpen = false;
+        PreviewProgress.IsActive = true;
+        PreviewProgress.Opacity = 1;
+        Header.Text = "Updating push preview…";
+        ChecksHeader.Text = "Checking the selected commits…";
+        ChecksIcon.Glyph = "\uE946";
+        ChecksIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+        Checks.IsEnabled = WarnBar.IsEnabled = false;
+        AllCommitsButton.IsEnabled = _scope.Partial;
+        SyncPushButton();
     }
 
     async Task LoadAsync()
     {
+        if (_hidden) return;
+        _scopeDebounce.Stop();
+        InvalidatePreview();
         var root = Session.Require();
         Session.Log.Sink = Pane;
-        var gen = ++_generation;
+        var gen = _generation;
         var scope = _scope;
+        using var request = _reads.Begin();
         var first = _preview == null;
         if (first) { CommitsSkeleton.Show(); FilesSkeleton.Show(); }
         // Into a local, and published only once it is known to be both current and real. Assigned straight
         // into the field, a read that failed emptied it under a screen still showing a full preview, and an
         // older read that landed late left the field describing something the screen no longer showed.
-        var bundle = await Runner.Quiet(Pane, () => new { Preview = Push.Preview(root, _worktree, scope), Readiness = Review.Status(root, _worktree) });
+        var bundle = await request.Run(Pane, () => new { Preview = Push.Preview(root, _worktree, scope), Readiness = Review.Status(root, _worktree) },
+            error => ReadError.Message = error);
         var read = bundle?.Preview;
-        if (gen != _generation) return;
+        if (!request.Current || gen != _generation || _hidden || root != Session.Root) return;
+        _reading = false;
+        PreviewProgress.IsActive = false;
+        PreviewProgress.Opacity = 0;
         ReadinessButton.Content = "Full branch readiness: " + (bundle?.Readiness ?? "unavailable");
         CommitsSkeleton.Hide();
         FilesSkeleton.Hide();
         if (read == null)
         {
-            ResultBar.Severity = InfoBarSeverity.Error;
-            ResultBar.Message = "The branch could not be read. What is on screen is the last good read; the log says why.";
-            ResultBar.IsOpen = true;
-            _canPush = false;
+            Header.Text = "Push preview unavailable";
+            ChecksHeader.Text = "Refresh the preview before pushing";
+            ReadError.IsOpen = true;
             SyncPushButton();
             return;
         }
@@ -173,6 +214,7 @@ public sealed partial class PushPage : SgPage
         }).ToList();
         Repos.ItemsSource = _repos;
         ShowChecks(p);
+        Checks.IsEnabled = WarnBar.IsEnabled = true;
         _canPush = p.Ready;
         SyncPushButton();
         if (p.Commits.Count == 0) { Diff.ShowText("", "nothing to push"); return; }
@@ -209,6 +251,8 @@ public sealed partial class PushPage : SgPage
         var scope = sending >= _commitRows.Count ? PushScope.Whole : PushScope.First(sending);
         if (scope == _scope) return;
         _scope = scope;
+        _cut = index;
+        InvalidatePreview();
         // The preview is a git log, a git diff and an svn status over every path the branch changed.
         // Walking this list with the arrow keys used to start one of those per key press.
         _scopeDebounce.Stop();
@@ -238,7 +282,9 @@ public sealed partial class PushPage : SgPage
     {
         if (!_scope.Partial) return;
         _scope = PushScope.Whole;
-        await Busy.During(sender, () => LoadAsync());
+        _cut = _commitRows.Count > 0 ? 0 : -1;
+        ShowCommits();
+        await LoadAsync();
     }
 
     async void OnPicked(TreeNode node)
@@ -311,17 +357,23 @@ public sealed partial class PushPage : SgPage
     }
 
     /// <summary>
-    /// The button never explains a refusal; it is simply off until the push can run. The dialog's own
-    /// button follows that and the messages: the shared one, if any working copy still uses it, and
-    /// each one of their own.
+    /// Writes require a current preview. Disabled explanations also cover the debounce and read failure;
+    /// the message dialog adds validation of the shared and per-working-copy messages.
     /// </summary>
     void SyncPushButton()
     {
         PushButton.IsEnabled = _canPush;
-        ActionHint.SetHelp(PushButton, _canPush ? "Review the messages and push these commits to SVN." : _preview == null ? "Wait for the push preview to load." : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first." : _preview.Problems.Count > 0 ? string.Join("\n", _preview.Problems) : "No eligible changes to push. Review the checks above.");
+        var help = _reading ? "Wait for the selected commits' push preview to finish updating."
+            : ReadError.IsOpen ? "The push preview could not be read. Retry before pushing or applying changes."
+            : _canPush ? "Review the messages and push these commits to SVN."
+            : _preview == null ? "Wait for the push preview to load."
+            : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first."
+            : _preview.Problems.Count > 0 ? string.Join("\n", _preview.Problems)
+            : "No eligible changes to push. Review the checks above.";
+        ActionHint.SetHelp(PushButton, help);
         // The same checks gate both: what stops a push from writing stops an apply from writing too.
-        // Only the item is disabled, never the whole button: the menu still opens on the shelf.
         ApplyItem.IsEnabled = _canPush;
+        ActionHint.SetHelp(ApplyItem, _canPush ? "Write the selected changes into the checkout without committing to SVN." : help);
         Message.Ready = _canPush;
     }
 
@@ -344,15 +396,17 @@ public sealed partial class PushPage : SgPage
     async void Apply_Click(object sender, RoutedEventArgs e)
     {
         var p = _preview;
-        if (p == null) return;
+        if (!_canPush || !PushButton.IsEnabled || p == null) return;
+        var gen = _generation;
+        var scope = _scope;
         var where = string.Join(", ", p.Groups.Select(g => g.Wc.Length == 0 ? "root" : g.Wc));
         var what = p.Partial ? $"the oldest {p.Sending} of {p.Commits.Count} commits" : "the branch";
         if (!await Dialogs.Confirm(this, "Apply without committing",
             $"Write {what} into {p.Checkout} ({where}) and stop there? Nothing goes to the server, and {p.Branch} does not move. "
             + "They land as local changes to read and commit yourself.", "Apply")) return;
+        if (!_canPush || !PushButton.IsEnabled || gen != _generation) return;
 
         var root = Session.Require();
-        var scope = _scope;
         await Busy.During(PushButton, async () =>
         {
             ResultBar.IsOpen = false;
@@ -413,16 +467,16 @@ public sealed partial class PushPage : SgPage
         switch (fix)
         {
             case PushFix.Commit:
-                GoThen(() => new CommitPage(_worktree) { Checkout = Checkout, Branch = Branch }, "commit:" + _worktree, () => _ = LoadAsync());
+                Go(() => new CommitPage(_worktree) { Checkout = Checkout, Branch = Branch }, "commit:" + _worktree);
                 break;
             case PushFix.Resolve:
-                GoThen(() => new ConflictPage(_worktree) { Checkout = Checkout, Branch = Branch }, "resolve:" + _worktree, () => _ = LoadAsync());
+                Go(() => new ConflictPage(_worktree) { Checkout = Checkout, Branch = Branch }, "resolve:" + _worktree);
                 break;
             case PushFix.CheckoutChanges:
                 if (_preview != null)
                 {
                     var co = root.Checkout(_preview.Checkout);
-                    GoThen(() => new SvnCommitPage(co) { Checkout = Checkout }, "changes:" + co.Name, () => _ = LoadAsync());
+                    Go(() => new SvnCommitPage(co) { Checkout = Checkout }, "changes:" + co.Name);
                 }
                 break;
             case PushFix.Rebase:
@@ -430,7 +484,7 @@ public sealed partial class PushPage : SgPage
                 {
                     var r = await Runner.Run(Pane, "rebase", () => Ops.Rebase(root, _worktree));
                     // A rebase that stopped leaves the branch mid-flight; the resolver is the way on.
-                    if (r is { Ok: false }) GoThen(() => new ConflictPage(_worktree) { Checkout = Checkout, Branch = Branch }, "resolve:" + _worktree, () => _ = LoadAsync());
+                    if (r is { Ok: false }) Go(() => new ConflictPage(_worktree) { Checkout = Checkout, Branch = Branch }, "resolve:" + _worktree);
                     else await LoadAsync();
                 });
                 break;
@@ -467,11 +521,14 @@ public sealed partial class PushPage : SgPage
 
     async Task PushAsync()
     {
+        if (!_canPush || !PushButton.IsEnabled) return;
+        var gen = _generation;
+        var scope = _scope;
         if (!await Message.AskAsync()) return;
+        if (!_canPush || !PushButton.IsEnabled || gen != _generation) return;
         var root = Session.Require();
         var msg = Message.Clean;
         var own = _repos.Where(r => r.Custom).ToDictionary(r => r.Wc, r => r.Message, StringComparer.OrdinalIgnoreCase);
-        var scope = _scope;
         await Busy.During(PushButton, async () =>
         {
             ResultBar.IsOpen = false;

@@ -1,5 +1,6 @@
 namespace Sg.Core.Tests;
 
+[Collection(ReviewNotificationCollection.Name)]
 public sealed class ReviewSourceTests : IDisposable
 {
     readonly string root = Path.Combine(Path.GetTempPath(), "sg-review-source-" + Guid.NewGuid().ToString("N"));
@@ -27,14 +28,22 @@ public sealed class ReviewSourceTests : IDisposable
         Assert.Equal(WorkspaceVersion.Hash("restored\n"), source.ReadVersion());
     }
     [Fact]
-    public async Task Same_content_and_other_files_do_not_report_new_versions_and_disposal_stops_observation()
+    public async Task Same_content_can_notify_without_changing_the_version()
     {
         File.WriteAllText(FilePath, "same");
         using var source = new ReviewSource(root, "src/file.cs");
         var before = source.ReadVersion();
+        var changed = Signal(); source.Changed += () => changed.TrySetResult();
         File.WriteAllText(FilePath, "same");
+        await changed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(before, source.ReadVersion());
-        await Task.Delay(100);
+    }
+    [Fact]
+    public async Task Other_files_do_not_notify_and_disposal_stops_observation()
+    {
+        // Subscribe after setup, with no earlier write to the observed file still in flight.
+        File.WriteAllText(FilePath, "same");
+        using var source = new ReviewSource(root, "src/file.cs");
         var count = 0; source.Changed += () => Interlocked.Increment(ref count);
         AtomicFile.WriteAllText(Path.Combine(root, "src", "other.cs"), "another file");
         await Task.Delay(150);
@@ -54,10 +63,12 @@ public sealed class ReviewSourceTests : IDisposable
         await signal.Task.WaitAsync(TimeSpan.FromSeconds(10));
         source.Reconnect();
         Assert.Equal("missing", source.ReadVersion());
+        signal = Signal();
         Directory.CreateDirectory(Path.Combine(root, "src"));
+        await signal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        source.Reconnect();
         File.WriteAllText(FilePath, "replacement");
         // Reconnect after the ancestor's creation hint, then observe another atomic save.
-        await Task.Delay(100); source.Reconnect();
         Assert.Equal(WorkspaceVersion.Hash("replacement"), source.ReadVersion());
         signal = Signal(); AtomicFile.WriteAllText(FilePath, "next save");
         await signal.Task.WaitAsync(TimeSpan.FromSeconds(10));

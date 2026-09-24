@@ -1,5 +1,6 @@
 namespace Sg.Core.Tests;
 
+[Collection(ReviewNotificationCollection.Name)]
 public sealed class ReviewFeedTests : IDisposable
 {
     readonly string directory = Path.Combine(Path.GetTempPath(), "sg-review-feed-" + Guid.NewGuid().ToString("N"));

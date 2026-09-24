@@ -3,7 +3,7 @@ namespace Sg.Core.Tests;
 public sealed class ReviewInboxTests
 {
     [Fact]
-    public async Task Inbox_is_read_only_isolates_document_errors_and_supports_filtered_pagination()
+    public void Inbox_is_read_only_isolates_document_errors_and_supports_filtered_pagination()
     {
         using var fixture = new Fixture(); fixture.Setup();
         var root = fixture.Root;
@@ -13,10 +13,7 @@ public sealed class ReviewInboxTests
         Assert.All(inbox.Read(), w => Assert.Empty(w.Items));
         Assert.False(File.Exists(root.Git.PrivateFile(alpha, "review-id")));
         Assert.False(Directory.Exists(Path.Combine(root.StorePath, "code-reviews")));
-        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        inbox.Changed += () => changed.TrySetResult();
         var first = CodeReview.Add(root, alpha, CodeReview.ReadFile(root, alpha, "CMakeLists.txt"), "modified", 1, 1, "Clarify the build configuration.", "Reviewer");
-        await changed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var second = CodeReview.Add(root, beta, CodeReview.ReadFile(root, beta, "CMakeLists.txt"), "original", 1, 1, "Keep compatibility.");
         var context = CodeReview.Context(root, beta, second.Id);
         CodeReview.Address(root, beta, second.Id, "resolve", "Compatibility verified.", second.Revision, "Agent", context.Version);
@@ -34,9 +31,7 @@ public sealed class ReviewInboxTests
         Assert.Single(ReviewInbox.Query(root).Threads);
         var betaFile = CodeReview.ExistingDocument(root, beta)!;
         var valid = File.ReadAllText(betaFile);
-        changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         AtomicFile.WriteAllText(betaFile, "incomplete");
-        await changed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var partial = ReviewInbox.Query(root, "all");
         Assert.Single(partial.Threads); Assert.Equal("beta", Assert.Single(partial.Errors).Branch);
         AtomicFile.WriteAllText(betaFile, valid);

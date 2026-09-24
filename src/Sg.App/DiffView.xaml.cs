@@ -94,6 +94,7 @@ public sealed partial class DiffView : UserControl
                 else if (msg.StartsWith("error:")) UseFallback(msg[6..]);
                 else if (msg.StartsWith("sel:")) OnSelection(msg[4..]);
                 else if (msg.StartsWith("act:")) ActionInvoked?.Invoke(msg[4..]);
+                else if (msg.StartsWith("review-comment:")) OnReviewComment(msg[15..]);
                 else if (msg.StartsWith("review:")) OnReviewAction(msg[7..]);
                 else if (msg == "dirty") SetDirty(true);
                 else if (msg == "shown")

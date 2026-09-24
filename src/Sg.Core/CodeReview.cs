@@ -89,6 +89,12 @@ public static class CodeReview
         using var gate = Lock(root);
         return Path.GetFileNameWithoutExtension(FileFor(root, path, true))!;
     }
+    public static ReviewFeed Follow(SgRoot root, string worktree)
+    {
+        var path = Worktree(root, worktree);
+        using var gate = Lock(root);
+        return new(FileFor(root, path, true)!);
+    }
     public static CodeReviewData Read(SgRoot root, string worktree)
     {
         var path = Worktree(root, worktree);

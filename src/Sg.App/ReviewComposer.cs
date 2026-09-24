@@ -10,12 +10,12 @@ namespace Sg.App;
 internal static class ReviewComposer
 {
     internal sealed record Options(string Title, string Submit, string Header, string File, string Version,
-        ReviewFile? Code = null, DiffView.LineRange? Selection = null, bool CanSubmit = true);
+        ReviewFile? Code = null, DiffView.LineRange? Selection = null, bool CanSubmit = true, string Side = "modified");
 
     public static async Task<bool> Show(XamlRoot xamlRoot, ReviewDrafts store, string scope, string key, Options options, Func<ReviewDraft, Task> submit)
     {
         var saved = await Task.Run(() => store.Read(scope, key));
-        var draft = saved.Draft ?? new(Guid.NewGuid().ToString("N"), options.File, "", "modified", options.Selection?.First ?? 0, options.Selection?.Last ?? 0, options.Version);
+        var draft = saved.Draft ?? new(Guid.NewGuid().ToString("N"), options.File, "", options.Side, options.Selection?.First ?? 0, options.Selection?.Last ?? 0, options.Version);
         var side = new ComboBox { Header = "Code version", ItemsSource = new[] { "modified", "original" }, SelectedIndex = draft.Side == "original" ? 1 : 0 };
         var first = new NumberBox { Header = "First line (0 for whole file)", Value = draft.First ?? double.NaN, Minimum = 0, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
         var last = new NumberBox { Header = "Last line", Value = draft.Last ?? double.NaN, Minimum = 0, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };

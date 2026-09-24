@@ -164,9 +164,11 @@ body.sg-flat .monaco-component {
     for (var i = 0; i < registered.length; i++) { try { registered[i].dispose(); } catch (e) { } }
     registered = [];
     if (!diffEditor) return;
+    if (reviews) reviews.allowComments((list || []).some(function (a) { return a.id === 'comment'; }));
     var ed = diffEditor.getModifiedEditor();
     for (var j = 0; j < (list || []).length; j++) {
       (function (a, order) {
+        if (a.id === 'comment') return; // Review owns the selection and side on both editors.
         var keys = [];
         if (a.key === 'ctrl+s') keys.push(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS);
         else if (a.key === 'ctrl+shift+s') keys.push(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS);

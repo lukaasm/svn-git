@@ -16,8 +16,11 @@ public sealed class CodeReviewTests : IDisposable
     {
         var path = Setup();
         var identity = CodeReview.WorktreeIdentity(f.Root, path);
+        using var feed = CodeReview.Follow(f.Root, path);
+        Assert.Equal(identity, feed.Identity);
         var source = File.ReadAllText(Path.Combine(path, "CMakeLists.txt"));
         var thread = Comment(path);
+        Assert.Equal(thread.Id, Assert.Single(feed.Read().Data.Threads).Id);
         Assert.Equal(source, File.ReadAllText(Path.Combine(path, "CMakeLists.txt")));
         var context = CodeReview.Context(f.Root, path, thread.Id);
         Fixture.Put(path, "CMakeLists.txt", "project(renamed)\n");

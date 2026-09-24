@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Media;
 
 namespace Sg.App;
 
+public sealed record TreeBadge(string Text, string Glyph, ChipSeverity Severity);
+
 /// <summary>
 /// One line of a file tree: a folder, a file, or an SVN path that is both. Nothing outside this file
 /// builds one. Windows hand their rows to <see cref="FileTree"/> and bind to what comes back.
@@ -100,7 +102,7 @@ public sealed class TreeNode : INotifyPropertyChanged
     public string CodeTip => Row == null ? "" : StatusColors.Describe(Row.Code);
 
     /// <summary>A folder the tree invented has no status, so it wears no badge: the name follows the chevron.</summary>
-    public Visibility BadgeVisibility => Row == null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility BadgeVisibility => Code.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 
     bool _statsPending;
 
@@ -114,7 +116,7 @@ public sealed class TreeNode : INotifyPropertyChanged
         Raise(nameof(StatsPendingVisibility));
     }
 
-    public string Glyph => IsFolder ? "" : "";
+    public string Glyph => IsFolder ? "" : Code.Length == 0 ? "\uE8A5" : "";
     int _added, _removed;
     bool _hasStats;
 
@@ -140,11 +142,23 @@ public sealed class TreeNode : INotifyPropertyChanged
 
     internal (int Added, int Removed, bool Has) Stats => (_added, _removed, _hasStats);
 
-    public Visibility GlyphVisibility => IsFolder ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility GlyphVisibility => Glyph.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     public string CountText => IsFolder ? FileCount.ToString() : "";
 
     /// <summary>The whole path, which the line itself only shows the tail of.</summary>
     public string Tip => FullPath.Length == 0 ? Name : FullPath;
+
+    TreeBadge? _badge;
+    public string AnnotationText => _badge?.Text ?? "";
+    public string AnnotationGlyph => _badge?.Glyph ?? "";
+    public ChipSeverity AnnotationSeverity => _badge?.Severity ?? ChipSeverity.Neutral;
+    public Visibility AnnotationVisibility => _badge == null ? Visibility.Collapsed : Visibility.Visible;
+    internal void SetBadge(TreeBadge? badge)
+    {
+        if (_badge == badge) return;
+        _badge = badge;
+        Raise(nameof(AnnotationText)); Raise(nameof(AnnotationGlyph)); Raise(nameof(AnnotationSeverity)); Raise(nameof(AnnotationVisibility));
+    }
 
     /// <summary>Everything opens expanded: the compressor makes the tree shallow enough to read whole.</summary>
     public bool IsExpanded

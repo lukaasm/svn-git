@@ -29,6 +29,7 @@ public sealed class ListFilter
     List<TreeNode> _roots = new();
     ObservableCollection<TreeNode> _lines = new();
     IReadOnlyDictionary<string, DiffStats.Count>? _stats;
+    IReadOnlyDictionary<string, TreeBadge>? _badges;
 
     /// <summary>
     /// The page reads a patch after it sets the rows and hands the numbers over with SetStats. Until
@@ -45,6 +46,8 @@ public sealed class ListFilter
     /// line, so a click on the line already open does not read its diff again.
     /// </summary>
     public event Action<TreeNode>? Picked;
+    public event Action? Changed;
+    public int ShownCount { get; private set; }
 
     public ListFilter(TextBox box, ListView list, TextBlock header, Func<object, string> textOf, Func<object, string>? groupOf = null)
     {
@@ -75,13 +78,20 @@ public sealed class ListFilter
     public bool IsCurrent(TreeNode node) => ReferenceEquals(_picked, node);
 
     /// <summary>The rows the window built. label is the header word, for example "Changes".</summary>
-    public void SetItems<T>(IEnumerable<T> items, string label) where T : StatusRow
+    public void SetItems<T>(IEnumerable<T> items, string label, bool preserveView = false) where T : StatusRow
     {
         _all = items.Cast<StatusRow>().ToList();
         _label = label;
         _stats = null;   // new rows, a new patch: the old numbers would name the wrong files
         _debounce.Stop();   // new rows now; a keystroke still waiting would draw the old ones over them
-        Apply();
+        Apply(preserveView);
+    }
+
+    /// <summary>Refresh metadata in place, without rebuilding the tree or moving its selection.</summary>
+    public void SetBadges(IReadOnlyDictionary<string, TreeBadge> badges)
+    {
+        _badges = badges;
+        foreach (var node in Walk(_roots)) node.SetBadge(badges.GetValueOrDefault(node.FullPath));
     }
 
     public void Clear(string label) => SetItems(Array.Empty<StatusRow>(), label);
@@ -139,15 +149,25 @@ public sealed class ListFilter
     public T? Selected<T>() where T : StatusRow => (_list.SelectedItem as TreeNode)?.Row as T;
 
     /// <summary>Puts the selection back on one row after a reload, so an open diff survives it.</summary>
-    public bool Select(Func<StatusRow, bool> match)
+    public bool Select(Func<StatusRow, bool> match, bool reveal = true, bool clearFilter = false)
     {
         var node = Walk(_roots).FirstOrDefault(n => n.Row != null && match(n.Row));
+        if (node == null && clearFilter && _box.Text.Length > 0)
+        {
+            _box.Text = ""; _debounce.Stop(); Apply();
+            node = Walk(_roots).FirstOrDefault(n => n.Row != null && match(n.Row));
+        }
         if (node == null) return false;
         // A line inside a closed folder is not on the list yet; open the folders above it first.
         for (var p = node.Parent; p != null; p = p.Parent)
             if (!p.IsExpanded) p.IsExpanded = true;
         _list.SelectedItem = node;
-        _list.ScrollIntoView(node);
+        if (reveal) _list.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            // Clearing a filter replaces the items source. Wait for layout before revealing its row.
+            if (!_list.IsLoaded || !ReferenceEquals(_list.SelectedItem, node)) return;
+            _list.UpdateLayout(); _list.ScrollIntoView(node);
+        });
         Pick(node);
         return true;
     }
@@ -196,18 +216,26 @@ public sealed class ListFilter
         if (lost) _list.SelectedItem = node;
     }
 
-    void Apply()
+    void Apply(bool preserveView = false)
     {
+        var selected = preserveView ? _picked?.FullPath : null;
+        var collapsed = preserveView ? Walk(_roots).Where(n => !n.IsExpanded).Select(n => n.FullPath).ToHashSet(StringComparer.Ordinal) : [];
         var query = _box.Text.Trim();
         var shown = query.Length == 0
             ? _all
             : _all.Where(r => _textOf(r).Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        ShownCount = shown.Count;
 
         // The old tree holds a handler on every checkable row, and the rows outlive it.
         foreach (var n in _roots) n.Detach();
         _picked = null;
         // A tree of scattered matches reads worse than the list it came from, so a filter flattens it.
         _roots = query.Length == 0 ? FileTree.Build(shown, _groupOf) : FileTree.Flat(shown, _groupOf);
+        foreach (var node in Walk(_roots))
+        {
+            if (collapsed.Contains(node.FullPath)) node.IsExpanded = false;
+            node.SetBadge(_badges?.GetValueOrDefault(node.FullPath));
+        }
         foreach (var n in Walk(_roots)) n.Toggled = Toggled;
         if (_stats != null) foreach (var r in _roots) Fill(r);
         else if (ExpectStats) foreach (var r in _roots) Expect(r);
@@ -215,11 +243,17 @@ public sealed class ListFilter
         // push used to spend its first second on.
         _lines = new ObservableCollection<TreeNode>(_roots.SelectMany(r => new[] { r }.Concat(r.IsExpanded ? Visible(r) : Enumerable.Empty<TreeNode>())));
         _list.ItemsSource = _lines;
+        if (selected != null)
+        {
+            _picked = _lines.FirstOrDefault(n => n.FullPath == selected);
+            _list.SelectedItem = _picked;
+        }
 
         _box.Visibility = _all.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         _header.Text = _all.Count == 0 ? _label
             : shown.Count == _all.Count ? $"{_label} ({_all.Count})"
             : $"{_label}, showing {shown.Count} of {_all.Count}";
+        Changed?.Invoke();
     }
 
     /// <summary>Ctrl+F from anywhere in the window jumps to the box. It lives on the root, so the tree can hold focus.</summary>

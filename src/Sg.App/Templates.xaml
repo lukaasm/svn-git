@@ -157,7 +157,7 @@
          removed, and a folder's file count. TreeView drew these once, but it indents 16 pixels a
          level from code and keeps minimum heights of its own; the list does what it is told. -->
     <DataTemplate x:Key="FileTreeTemplate" x:DataType="local:TreeNode">
-        <Grid ColumnDefinitions="16,Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="6" Margin="{x:Bind Indent}" ToolTipService.ToolTip="{x:Bind Tip}">
+        <Grid ColumnDefinitions="16,Auto,Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="6" Margin="{x:Bind Indent}" ToolTipService.ToolTip="{x:Bind Tip}">
             <Button Visibility="{x:Bind ChevronVisibility}" Click="Chevron_Click" Background="Transparent" BorderThickness="0"
                     Padding="0" MinWidth="0" MinHeight="0" Width="16" Height="16" VerticalAlignment="Center"
                     AutomationProperties.Name="Open or close the folder">
@@ -178,6 +178,8 @@
             <TextBlock Grid.Column="4" Text="{x:Bind AddedText, Mode=OneWay}" Style="{StaticResource RowMono}" Foreground="{ThemeResource StatusAddedBrush}" />
             <TextBlock Grid.Column="5" Text="{x:Bind RemovedText, Mode=OneWay}" Style="{StaticResource RowMono}" Foreground="{ThemeResource StatusDeletedBrush}" />
             <TextBlock Grid.Column="6" Text="{x:Bind CountText}" Style="{StaticResource RowTextDim}" MinWidth="16" TextAlignment="Right" />
+            <local:StatusChip Grid.Column="7" Text="{x:Bind AnnotationText, Mode=OneWay}" Glyph="{x:Bind AnnotationGlyph, Mode=OneWay}"
+                              Severity="{x:Bind AnnotationSeverity, Mode=OneWay}" Visibility="{x:Bind AnnotationVisibility, Mode=OneWay}" />
         </Grid>
     </DataTemplate>
 

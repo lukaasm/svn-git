@@ -7,6 +7,7 @@ public sealed partial class DiffView
     public sealed record ReviewMessage(string Actor, string Action, string Body, string At);
     public sealed record ReviewAnnotation(string Id, string Side, int First, int Last, string State, bool Conflict, ReviewMessage[] Messages);
     public event Action<string, string>? ReviewActionInvoked;
+    public event Action<string, LineRange>? ReviewCommentInvoked;
     ReviewAnnotation[] _reviews = [];
     int _reviewDocument;
     string? _pendingReviewReveal;
@@ -66,6 +67,21 @@ public sealed partial class DiffView
             var action = root.GetProperty("action").GetString();
             if (id == null || !_reviews.Any(t => t.Id == id)) return;
             if (action is "select" or "reply" or "resolve" or "reopen") ReviewActionInvoked?.Invoke(id, action);
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
+        { /* Ignore malformed or obsolete browser messages. */ }
+    }
+
+    void OnReviewComment(string json)
+    {
+        try
+        {
+            using var message = JsonDocument.Parse(json);
+            var root = message.RootElement;
+            if (root.GetProperty("document").GetInt32() != _reviewDocument || !_actions.Any(a => a.Id == "comment")) return;
+            var side = root.GetProperty("side").GetString();
+            var first = root.GetProperty("first").GetInt32(); var last = root.GetProperty("last").GetInt32();
+            if (side is "original" or "modified" && first > 0 && last >= first) ReviewCommentInvoked?.Invoke(side, new(first, last));
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
         { /* Ignore malformed or obsolete browser messages. */ }

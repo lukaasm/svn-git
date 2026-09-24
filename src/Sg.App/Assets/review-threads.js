@@ -2,7 +2,7 @@
 window.createReviewThreads = function (diff, post) {
   var documentId = 0, threads = [], expanded = null;
   var editors = { original: diff.getOriginalEditor(), modified: diff.getModifiedEditor() };
-  var decorations = {}, subscriptions = [];
+  var decorations = {}, subscriptions = [], commentKeys = [];
 
   function element(tag, className, text) {
     var node = document.createElement(tag);
@@ -22,7 +22,7 @@ window.createReviewThreads = function (diff, post) {
     old.editor.changeViewZones(function (accessor) { accessor.removeZone(old.id); });
     if (focus) old.editor.focus();
   }
-  function reveal(id) {
+  function reveal(id, retained) {
     var thread = threads.find(function (t) { return t.id === id; });
     if (!thread) return;
     close(false);
@@ -73,11 +73,26 @@ window.createReviewThreads = function (diff, post) {
       }
     }
     var observer = new ResizeObserver(resize);
-    expanded = { id: zoneId, editor: editor, observer: observer, layout: editor.onDidLayoutChange(resize) };
+    expanded = { id: zoneId, thread: id, panel: panel, history: history, signature: JSON.stringify(group), editor: editor, observer: observer, layout: editor.onDidLayoutChange(resize) };
     observer.observe(panel); resize();
-    editor.revealLineNearTop(thread.first);
-    if (selected) selected.focus({ preventScroll: true });
-    post('review:' + JSON.stringify({ document: documentId, id: id, action: 'select' }));
+    if (retained) {
+      // Monaco attaches/measures a replacement view zone on its next render. Before that the
+      // history has no scroll range, so assigning scrollTop immediately silently clamps to zero.
+      requestAnimationFrame(function () {
+        if (!expanded || expanded.id !== zoneId) return;
+        history.scrollTop = retained.history;
+        if (retained.focus) {
+          var card = Array.from(panel.querySelectorAll('[data-thread-id]')).find(function (n) { return n.dataset.threadId === retained.focus.thread; });
+          var target = card && Array.from(card.querySelectorAll('[data-action]')).find(function (n) { return n.dataset.action === retained.focus.action; });
+          if (!target && card) { target = card.querySelector('.sg-review-status'); target.tabIndex = -1; }
+          if (target) target.focus({ preventScroll: true });
+        }
+      });
+    } else {
+      editor.revealLineNearTop(thread.first);
+      if (selected) selected.focus({ preventScroll: true });
+      post('review:' + JSON.stringify({ document: documentId, id: id, action: 'select' }));
+    }
   }
   function clear() {
     close(false); threads = [];
@@ -85,6 +100,19 @@ window.createReviewThreads = function (diff, post) {
   }
   Object.keys(editors).forEach(function (side) {
     var editor = editors[side];
+    var commentKey = editor.createContextKey('sgCanComment', false);
+    commentKeys.push(commentKey);
+    subscriptions.push(editor.addAction({
+      id: 'sg.comment', label: 'Comment on selected lines',
+      precondition: 'sgCanComment', contextMenuGroupId: 'sg', contextMenuOrder: 0,
+      run: function () {
+        var selection = editor.getSelection(), model = editor.getModel();
+        if (!selection || !model || !model.getValueLength()) return;
+        // A selection ending at column one excludes that final line, as in other editor commands.
+        var last = selection.endLineNumber - (selection.endColumn === 1 && selection.endLineNumber > selection.startLineNumber ? 1 : 0);
+        post('review-comment:' + JSON.stringify({ document: documentId, side: side, first: selection.startLineNumber, last: last }));
+      }
+    }));
     decorations[side] = editor.createDecorationsCollection();
     subscriptions.push(editor.onMouseDown(function (event) {
       if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || !event.target.position) return;
@@ -93,8 +121,22 @@ window.createReviewThreads = function (diff, post) {
     }));
   });
   return {
+    allowComments: function (enabled) { commentKeys.forEach(function (key) { key.set(enabled); }); },
     set: function (message) {
-      clear(); documentId = message.document; threads = message.threads;
+      var sameDocument = documentId === message.document, old = expanded, retained = null;
+      var views = sameDocument ? Object.keys(editors).map(function (side) { return [editors[side], editors[side].saveViewState()]; }) : [];
+      if (!sameDocument) clear();
+      documentId = message.document; threads = message.threads;
+      if (sameDocument && old) {
+        var next = threads.find(function (t) { return t.id === old.thread; });
+        var group = next && threads.filter(function (t) { return t.side === next.side && t.first === next.first; });
+        if (!next || JSON.stringify(group) !== old.signature) {
+          var active = document.activeElement, card = active && active.closest('[data-thread-id]');
+          retained = next ? { id: next.id, history: old.history.scrollTop,
+            focus: document.hasFocus() && old.panel.contains(active) && card ? { thread: card.dataset.threadId, action: active.dataset.action } : null } : null;
+          close(false);
+        }
+      }
       Object.keys(editors).forEach(function (side) {
         var groups = new Map(), editor = editors[side], model = editor.getModel();
         threads.filter(function (t) { return t.side === side && model && t.first > 0 && t.last <= model.getLineCount(); }).forEach(function (t) {
@@ -111,6 +153,8 @@ window.createReviewThreads = function (diff, post) {
           } };
         }));
       });
+      if (retained) reveal(retained.id, retained);
+      views.forEach(function (view) { view[0].restoreViewState(view[1]); });
     },
     reveal: function (message) { if (message.document === documentId) reveal(message.id); },
     close: function () { close(false); },

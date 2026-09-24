@@ -773,7 +773,7 @@ public sealed partial class MainWindow : Window
             item.Resources["NavigationViewItemOnLeftIconBoxHeight"] = CheckoutIcons.Size;
             AutomationProperties.SetName(item, c.Name);
             AutomationProperties.SetAutomationId(item, "CheckoutNav_" + c.Name);
-            ToolTipService.SetToolTip(item, c.Name + "\n" + c.Path);
+            ToolTipService.SetToolTip(item, c.Name + "\n" + CheckoutIcons.KindText(row.Config) + "\n" + c.Path);
             ApplyRemoteBadge(row, Remote.GetValueOrDefault(c.Name));
             ApplyLocalBadge(row, LocalEdits.TryGetValue(c.Name, out var known) ? known : null);
             Nav.MenuItems.Add(item);

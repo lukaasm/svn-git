@@ -5,6 +5,11 @@ static class ReviewCommands
 {
     public static object Run(SgRoot root, string path, string action, Args args)
     {
+        if (action == "inbox")
+        {
+            if (!int.TryParse(args.Get("--offset") ?? "0", out var inboxOffset)) throw new SgException("Offset must be a nonnegative integer.");
+            return ReviewInbox.Query(root, args.Get("--state") ?? "open", args.Get("--search") ?? "", args.Get("--worktree"), inboxOffset);
+        }
         path = CodeReview.Worktree(root, args.Get("--worktree") ?? path);
         string Body() => args.Get("--body-file") is { } file ? file == "-" ? Console.In.ReadToEnd() : File.ReadAllText(file)
             : args.Get("--body") ?? throw new SgException("Supply --body-file or --body.");

@@ -57,7 +57,7 @@ public sealed partial class CheckoutFields : UserControl
     void Later()
     {
         _check.Stop();
-        _check.Start();
+        if (base.IsEnabled) _check.Start();
     }
 
     /// <summary>The checkout is still to be made, from the URL.</summary>
@@ -116,6 +116,8 @@ public sealed partial class CheckoutFields : UserControl
     {
         set
         {
+            base.IsEnabled = value;
+            if (!value) _check.Stop();
             foreach (var c in new Control[] { Source, UrlBox, FolderBox, BrowseButton, NameBox })
                 c.IsEnabled = value;
             SkipPick.IsEnabled = value;
@@ -163,6 +165,12 @@ public sealed partial class CheckoutFields : UserControl
         if (!Directory.Exists(Path.Combine(folder, ".svn")))
             return ("This is not an SVN working copy: it has no .svn folder. Pick the folder svn checked out.", InfoBarSeverity.Error);
 
+        var root = Root;
+        var trimmed = folder.TrimEnd('\\', '/');
+        var already = root?.Config.Checkouts.FirstOrDefault(c =>
+            c.Path.TrimEnd('\\', '/').Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+        if (already != null) return ($"Already registered in this root as '{already.Name}'.", InfoBarSeverity.Informational);
+
         var git = Path.Combine(folder, ".git");
         if (File.Exists(git) || Directory.Exists(git))
         {
@@ -173,14 +181,8 @@ public sealed partial class CheckoutFields : UserControl
                 InfoBarSeverity.Error);
         }
 
-        var root = Root;
         if (root != null)
         {
-            var trimmed = folder.TrimEnd('\\', '/');
-            var already = root.Config.Checkouts.FirstOrDefault(c =>
-                c.Path.TrimEnd('\\', '/').Equals(trimmed, StringComparison.OrdinalIgnoreCase));
-            if (already != null) return ($"Already registered in this root as '{already.Name}'.", InfoBarSeverity.Informational);
-
             var name = Name.Length > 0 ? Name : Path.GetFileName(trimmed);
             if (root.Config.Checkouts.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 return ($"The name '{name}' is taken in this root. Give it another one below.", InfoBarSeverity.Error);

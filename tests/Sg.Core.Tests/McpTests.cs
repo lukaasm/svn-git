@@ -90,7 +90,8 @@ public sealed class McpTests
         var names = list.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
         foreach (var command in "init checkout sync branch branch-update activity review storage handoff rebase resolve push rm shelve shelf export import backup status server-branch server-checkout update version".Split(' '))
             Assert.Contains("sg_" + command.Replace('-', '_'), names);
-        Assert.Equal(31, names.Count);
+        Assert.Equal(32, names.Count);
+        Assert.Contains("sg_review_inbox", names);
         var version = await client.Tool("sg_version", new { workingDirectory = path });
         Assert.Equal(0, version.GetProperty("exitCode").GetInt32());
         await client.Tool("sg_status", new { workingDirectory = "relative" }, error: true);
@@ -107,6 +108,11 @@ public sealed class McpTests
         Assert.Equal("resolved", resolved.GetProperty("state").GetString());
         var threads = await client.Tool("sg_review_threads", new { worktree = path });
         Assert.Equal(0, threads.GetProperty("total").GetInt32());
+        var inbox = await client.Tool("sg_review_inbox", new { workingDirectory = fixture.RootDir, state = "resolved", query = "review", worktree = "mcp-review" });
+        Assert.Equal(id, Assert.Single(inbox.GetProperty("threads").EnumerateArray()).GetProperty("thread").GetProperty("id").GetString());
+        await client.Tool("sg_review_inbox", new { workingDirectory = fixture.RootDir, state = "invalid" }, error: true);
+        var inboxCli = await client.Tool("sg_review", new { workingDirectory = fixture.RootDir, arguments = new[] { "inbox", "--state", "resolved" } });
+        Assert.Contains(id, inboxCli.GetProperty("output").GetString());
         Assert.Equal("project(updated)\n", File.ReadAllText(Path.Combine(path, "CMakeLists.txt")));
         // The CLI family reaches the same store and keeps malformed user input a tool error.
         var cli = await client.Tool("sg_review", new { workingDirectory = path, arguments = new[] { "threads", "--state", "all" } });

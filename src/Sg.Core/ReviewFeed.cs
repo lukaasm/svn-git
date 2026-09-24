@@ -17,12 +17,13 @@ public sealed class ReviewFeed : IDisposable
     /// <summary>Retry an unavailable watcher on activation or explicit refresh. Reads remain usable without it.</summary>
     public void Reconnect() => _observation.Reconnect();
 
-    public ReviewSnapshot Read()
+    public ReviewSnapshot Read() => ReadSnapshot(_file);
+    internal static ReviewSnapshot ReadSnapshot(string file)
     {
         string text;
         try
         {
-            using var stream = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             if (stream.Length > CodeReview.MaxDataBytes) throw new SgException("Review data exceeds the 32 MB limit.");
             using var reader = new StreamReader(stream);
             text = reader.ReadToEnd();

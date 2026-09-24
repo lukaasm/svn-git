@@ -141,6 +141,7 @@ static class Cli
             sg branch-update [--yes]                 preview/save edits, sync SVN, replay, recover edits
             sg activity [resume|close|recover <id>]  durable operations and separate recovery branches
             sg review [status|run|ready]              version-bound checks and readiness; configure reviewChecks in .sg/sg.json
+            sg review inbox [--state open|resolved|all] [--search text] [--worktree name-or-path] [--offset N]
             sg review files|file <path>|threads|thread <id>
             sg review comment --file <path> --lines <first:last> --body-file <file>
             sg review reply|resolve|reopen <id> --body-file <file> --expected-revision <revision>

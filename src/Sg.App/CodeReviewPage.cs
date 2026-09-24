@@ -45,10 +45,11 @@ public sealed partial class CodeReviewPage : SgPage
     bool _loadingFiles, _writing;
     int _visibleThreads = 20;
     string? _selectedFile;
+    string? _initialThread;
 
-    public CodeReviewPage(string path)
+    public CodeReviewPage(string path, string? threadId = null)
     {
-        _path = path; Title = "Code review"; Subtitle = path;
+        _path = path; _initialThread = threadId; Title = "Code review"; Subtitle = path;
         _reads = new(active => { _reading = active; UpdateSourceAction(); if (active) _loading.Show("Loading review…", _file == null); else { _loading.Hide(); ScheduleFeedback(); } });
         InitializeSourceUpdates();
         _liveTimer.Tick += async (_, _) => { _liveTimer.Stop(); await RefreshFeedback(); };
@@ -186,6 +187,13 @@ public sealed partial class CodeReviewPage : SgPage
         _savedDrafts = result.Drafts;
         if (result.DraftError != null) Error(result.DraftError);
         UpdateFiles(); SetLiveStatus();
+        if (_initialThread is { } id)
+        {
+            _initialThread = null;
+            var thread = _data.Threads.FirstOrDefault(t => t.Id == id);
+            if (thread != null) { await OpenThread(thread); return; }
+            Error("This comment is no longer available in this worktree. The current feedback is shown below.");
+        }
         await LoadFile(preserve: true);
     }
     sealed record Inventory(IReadOnlyList<string> Files, ReviewSnapshot Snapshot, string Scope, IReadOnlyDictionary<string, ReviewDraft> Drafts, string? DraftError);
@@ -310,6 +318,11 @@ public sealed partial class CodeReviewPage : SgPage
         if (_writing) return;
         var thread = ReviewNavigation.Next(_data.Threads, _currentThread, _selectedFile, forward);
         if (thread == null) return;
+        await OpenThread(thread);
+    }
+    async Task OpenThread(CodeThread thread)
+    {
+        if (thread.State == "resolved") _filter.SelectedIndex = 1;
         var request = ++_navigationRequest; _currentThread = thread.Id;
         _selectedFile = thread.Anchor.File;
         _loadingFiles = true; _fileList.Select(row => row.TreePath == _selectedFile, clearFilter: true); _loadingFiles = false;

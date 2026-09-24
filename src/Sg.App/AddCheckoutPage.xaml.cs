@@ -10,6 +10,8 @@ namespace Sg.App;
 /// </summary>
 public sealed partial class AddCheckoutPage : SgPage
 {
+    readonly SgRoot? _root;
+    bool _running;
     /// <summary>True when a checkout was registered, so the overview knows to read the root again.</summary>
     public bool Added { get; private set; }
 
@@ -17,23 +19,24 @@ public sealed partial class AddCheckoutPage : SgPage
     public AddCheckoutPage(string? folder = null)
     {
         InitializeComponent();
+        _root = Session.Root;
         Session.Log.Sink = Pane;
         Title = "Add checkout";
         Subtitle = Session.Root?.RootPath ?? "no root open";
         Fields.Owner = this;
-        Fields.Root = Session.Root;
+        Fields.Root = _root;
         Fields.Changed += Sync;
         if (folder != null) Fields.SetFolder(folder);
         Fields.Revalidate();
     }
 
     /// <summary>A control that cannot do anything is disabled, never a dialog explaining why.</summary>
-    void Sync() => AddButton.IsEnabled = Session.Root != null && Fields.Ready;
+    void Sync() => AddButton.IsEnabled = !_running && !Added && _root != null && Session.Root == _root && Fields.Ready;
 
     async void Add_Click(object sender, RoutedEventArgs e)
     {
-        var root = Session.Root;
-        if (root == null) return;
+        var root = _root;
+        if (_running || Added || root == null || Session.Root != root || !Fields.Ready) return;
         // Read every field here: the work below runs on a thread pool thread, and touching a WinUI
         // control from there throws RPC_E_WRONG_THREAD.
         var fromUrl = Fields.FromUrl;
@@ -45,6 +48,7 @@ public sealed partial class AddCheckoutPage : SgPage
         var shared = Fields.Shared;
         var optional = Fields.Optional;
 
+        _running = true;
         AddButton.IsEnabled = false;
         Fields.IsEnabled = false;
         var r = await Busy.During(AddButton, () => Runner.Run(Pane, fromUrl ? "checkout " + url : "checkout add " + folder,
@@ -52,6 +56,7 @@ public sealed partial class AddCheckoutPage : SgPage
                 ? Ops.CheckoutFromUrl(root, url, folder.Length > 0 ? folder : null, skip, junctions, optional, name.Length > 0 ? name : null, shared)
                 : Ops.CheckoutAdd(root, folder, skip, junctions, optional, name.Length > 0 ? name : null, shared)), restoreEnabled: false);
 
+        _running = false;
         if (r == null)
         {
             // It did not register, so let the user change what they typed and try again.
@@ -64,9 +69,11 @@ public sealed partial class AddCheckoutPage : SgPage
         Result.Text = $"{r.Checkout.Name}: r{r.Snapshot.Revision}, {r.Snapshot.Externals.Count} external(s)";
         Pane.Append($"{r.Checkout.Name}: r{r.Snapshot.Revision}, snapshot {r.Snapshot.Sha[..10]}, {r.Snapshot.Externals.Count} external(s)");
         foreach (var w in r.Snapshot.Warnings) Pane.Append("warn: " + w);
-        Fields.Root = Session.Root;
-        Fields.Revalidate();
+        // Registration creates the .git pointer that preflight rejects. The submitted form is
+        // complete now; validating it again would turn a successful result into an ownership error.
         CloseButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+        if (Window is MainWindow main) main.CheckoutRegistered(this, root, r.Checkout.Name);
+        else if (Session.Root == root) Close();
     }
 
     void Close_Click(object sender, RoutedEventArgs e) => Close();

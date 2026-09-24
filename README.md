@@ -44,6 +44,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-backup-layout.ps1 -FixtureRoot <workflow-fixture-root>` checks badge clipping, confirmation text overlap, and column stability when expanding backup cards at normal and maximized window sizes. Use a retained workflow fixture with a backed-up `source` branch. It runs on a private desktop and restores the fixture's exclusion setting and confirmation time afterward.
 
+`scripts/test-checkout-add.ps1` creates its own tiny SVN repository and SG root, then verifies checkout completion redirects, duplicate-folder guidance, URL checkout selection, and completion after navigating away. Build the Debug CLI and app first. All interaction uses UI Automation on a private desktop; the fixtures and diagnostics stay under `TestResults/UI`.
+
 The Debug app uses a separate instance key, settings, monitor data, crash log, update directory, and WebView profile per run. Release builds ignore the test-directory environment variable. Background runs skip the system-clipboard assertion because Windows desktops in the same window station share that resource; the direct task test still covers it. Notification registration is disabled for isolated runs.
 
 For direct Windows UI Automation testing on your visible desktop, build the Debug app and run `scripts/test-task-pane.ps1 -FixtureRoot <disposable-root-with-checkout>`. It exercises progress across navigation, action gating, placeholders, cancellation, completion, and footer alignment through control patterns; no mouse or keyboard input is injected. Add `-CheckRecovery` to verify startup discovery, recovery navigation, and notice removal after reconciliation.
@@ -60,7 +62,7 @@ Pull previews use labeled status colors for revisions and saved edits, with link
 
 **Code review** lets you leave file and line comments in a worktree, reply, resolve, or reopen them, and copy instructions for an agent. Comments and saved code context follow that worktree's backup and restore. **Review readiness** runs explicitly configured local checks and records the exact branch and feedback version reviewed; open comments prevent marking ready. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
 
-`sg mcp` exposes all 23 public CLI command families and seven typed code review tools through a local stdio MCP server, plus command help. See [MCP setup, review workflow, and backup details](MCP.md).
+`sg mcp` exposes all 23 public CLI command families and eight typed code review tools through a local stdio MCP server, plus command help. **Review inbox** collects feedback across local worktrees, with status/worktree filters, search, live updates, and links straight to the annotated code. See [MCP setup, review workflow, and backup details](MCP.md).
 
 **Storage** previews conservative worktree archives and manual temporary-data cleanup. Loading and error states retain useful content, navigation, and retry actions. Ignored and linked content blocks archive; commit checkpoints are recoverable through Activity. Archive and cleanup confirmations list what will be changed. Reclaimable physical space is shown as unknown. `scripts/test-storage-feedback.ps1 -FixtureRoot <disposable-root>` verifies loading under a held repository lock and recovery from a read error on a private desktop.
 

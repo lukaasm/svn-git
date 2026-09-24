@@ -1,6 +1,6 @@
 # Worktree code review
 
-Implementation update: delivered features include the review page, shared durable comments, CLI addressing, a 31-tool MCP server, readiness integration, worktree-scoped backup/restore, inline gutter threads, a shared searchable file tree, selected-line context menus on both diff sides, local composer drafts, and navigation between unresolved comments across files. Incoming feedback updates live while preserving the displayed code, selected thread, scroll, and open drafts. External source edits show an explicit reload notice; reload preserves reading anchors, selection, discussion, and drafts, while failed reads retain the last good snapshot. Usernames and review states share colors with the other views. See [the shipped behavior and setup](MCP.md). This document remains the broader UX roadmap; richer scope filters, rename tracking, and review rounds are not yet implemented. Backup was brought forward from the later phase at the user's request.
+Implementation update: delivered features include the review page, shared durable comments, CLI addressing, a 32-tool MCP server, readiness integration, worktree-scoped backup/restore, inline gutter threads, a shared searchable file tree, selected-line context menus on both diff sides, local composer drafts, and navigation between unresolved comments across files. Incoming feedback updates live while preserving the displayed code, selected thread, scroll, and open drafts. External source edits show an explicit reload notice; reload preserves reading anchors, selection, discussion, and drafts, while failed reads retain the last good snapshot. A root-wide review inbox now provides live feedback summaries, status/worktree filters, search, and direct links to code or saved context. Usernames and review states share colors with the other views. See [the shipped behavior and setup](MCP.md). This document remains the broader UX roadmap; rename tracking and review rounds are not yet implemented. Backup was brought forward from the later phase at the user's request.
 
 Status: design and feature roadmap. The implementation update above identifies delivered features; later sections also contain planned behavior.
 
@@ -52,7 +52,7 @@ Tasks · ongoing operations remain visible
 | Review scope | All worktree changes; committed changes; uncommitted changes; browse a tracked file | Selected commits/ranges and named review rounds |
 | Comments | Line, line range, or file; both original and modified sides; multiline text | Suggestions with explicit apply-and-preview |
 | Threads | Replies, Open/Resolved, reopen, author and timestamps, retained resolution history | Optional assignment and temporary agent claims |
-| Navigation | File counts, Open/Resolved/All, literal search, next/previous open thread, file/line links | Root-wide review inbox |
+| Navigation | File counts, Open/Resolved/All, literal search, next/previous open thread, file/line links, root-wide review inbox | Rename tracking |
 | Agent access | CLI JSON, stable IDs, reply/resolve/reopen, handoff text/export | Explicitly launched agent runs in Tasks |
 | Code movement | Durable original context; conservative relocation; visible outdated/missing states | Richer rename tracking and review-round comparisons |
 | Readiness | Open threads shown in existing Review readiness; version-bound checks remain separate | Configurable mandatory review policy |
@@ -150,7 +150,7 @@ Readiness and discussion remain distinguishable. **Mark this version ready** req
 
 1. **Core and CLI:** durable identity/threads, captured context, conservative anchors, concurrency, handoff export, and tests. Preserve all existing `sg review` behavior.
 2. **Complete first release:** Code review page, both-side inline comments, shared thread presenter, draft retention, agent updates, worktree badges, and readiness integration. Verify end to end with background UI Automation on a disposable repository.
-3. **Follow-up:** review inbox, selected-worktree review backup/import, then optional explicit agent execution. Suggestions, assignments, and mandatory approval policy remain separate additions.
+3. **Follow-up:** review rounds and rename tracking, then optional explicit agent execution. Suggestions, assignments, and mandatory approval policy remain separate additions.
 
 Acceptance scenarios:
 

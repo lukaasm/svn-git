@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     bool _syncingPane;
     int _generation;
     string? _navigationRoot;
+    (SgPage Page, SgRoot Root, string Name)? _registeredCheckout;
     bool _checking;
     /// <summary>
     /// A check was asked for while one was already running. The one running belongs to a state that has
@@ -209,7 +210,7 @@ public sealed partial class MainWindow : Window
         Nav.IsBackEnabled = Host.CanGoBack;
         ForwardButton.Visibility = Host.CanGoForward ? Visibility.Visible : Visibility.Collapsed;
         RefreshButton.Visibility = Session.Root != null ? Visibility.Visible : Visibility.Collapsed;
-        ActivityItem.IsEnabled = StorageItem.IsEnabled = Session.Root != null;
+        ActivityItem.IsEnabled = StorageItem.IsEnabled = ReviewInboxItem.IsEnabled = Session.Root != null;
 
         // The pane highlights the checkout the page is about, the monitor, or the settings.
         var key = Host.CurrentKey ?? "";
@@ -218,6 +219,7 @@ public sealed partial class MainWindow : Window
             "settings" => Nav.SettingsItem,
             "monitor" => MonitorItem,
             "activity" => ActivityItem,
+            "review-inbox" => ReviewInboxItem,
             "storage" => StorageItem,
             _ when page?.Checkout != null => Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (i.Tag as CheckoutRow)?.Name == page.Checkout),
             _ => null,
@@ -249,6 +251,32 @@ public sealed partial class MainWindow : Window
         var key = row == null ? "overview" : "checkout:" + row.Name;
         if (Host.CurrentKey != key && Host.BackTo(key)) { Overview.Show(row, _status); return; }
         Host.Go(() => { Overview.Show(row, _status); return Overview; }, key);
+    }
+
+    /// <summary>Open a completed checkout after status publishes it. A newer refresh may supersede
+    /// this one; navigation follows whichever read succeeds, only while the submitting page is current.</summary>
+    internal void CheckoutRegistered(SgPage page, SgRoot root, string name)
+    {
+        if (Session.Root != root || Host.Current != page) return;
+        _registeredCheckout = (page, root, name);
+        _ = RefreshAsync();
+    }
+
+    bool OpenRegisteredCheckout()
+    {
+        if (_registeredCheckout is not { } request) return false;
+        if (Session.Root != request.Root || Host.Current != request.Page)
+        {
+            _registeredCheckout = null;
+            return false;
+        }
+        var row = Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow)
+            .FirstOrDefault(r => r?.Name == request.Name);
+        if (row == null) return false;
+        _registeredCheckout = null;
+        _current = row;
+        ShowOverview(row);
+        return true;
     }
 
     // ---- updates ----
@@ -676,7 +704,7 @@ public sealed partial class MainWindow : Window
         // selection on the way.
         var shownRows = Nav.MenuItems.OfType<NavigationViewItem>()
             .Select(i => (Item: i, Row: i.Tag as CheckoutRow)).Where(p => p.Row != null).ToList();
-        if (shownRows.Count == _status.Checkouts.Count
+        if (shownRows.Count > 0 && shownRows.Count == _status.Checkouts.Count
             && shownRows.Zip(_status.Checkouts).All(p => p.First.Row!.Name == p.Second.Name && p.First.Row.Path == p.Second.Path))
         {
             foreach (var (_, row) in shownRows)
@@ -689,7 +717,7 @@ public sealed partial class MainWindow : Window
                        ?? shownRows[0].Item;
             _current = keep.Tag as CheckoutRow;
             // The page on screen may be a commit or a push; the overview behind it takes the new state quietly.
-            if (Host.Current is CheckoutPage) ShowOverview(_current);
+            if (!OpenRegisteredCheckout() && Host.Current is CheckoutPage) ShowOverview(_current);
             _ = CheckRemotesAsync(root, generation);
             if (runStartAction && _startAction != null) await RunStartAction();
             return;
@@ -741,7 +769,7 @@ public sealed partial class MainWindow : Window
         // Rebuilding the sidebar within the same root must not replace an action page, including
         // when its own task completion triggered this refresh. Changing roots does invalidate pages
         // about the old root; monitor and settings remain independent.
-        if (Host.Current is CheckoutPage || rootChanged && Host.Current is not MonitorPage and not SettingsPage) ShowOverview(select);
+        if (!OpenRegisteredCheckout() && (Host.Current is CheckoutPage || rootChanged && Host.Current is not MonitorPage and not SettingsPage)) ShowOverview(select);
 
         _ = CheckRemotesAsync(root, generation);
         if (runStartAction && _startAction != null) await RunStartAction();
@@ -804,6 +832,7 @@ public sealed partial class MainWindow : Window
     {
         if (_restoringSelection || _syncingPane) return;
         if (args.IsSettingsSelected) { ShowSettings(); return; }
+        if (Session.Root != null && ReferenceEquals(args.SelectedItem, ReviewInboxItem)) { Host.Go(() => new ReviewInboxPage(), "review-inbox"); return; }
         if (Session.Root != null && ReferenceEquals(args.SelectedItem, ActivityItem)) { Host.Go(() => new ActivityPage(), "activity"); return; }
         if (Session.Root != null && ReferenceEquals(args.SelectedItem, StorageItem)) { Host.Go(() => new StoragePage(), "storage"); return; }
         if (ReferenceEquals(args.SelectedItem, MonitorItem)) { ShowMonitor(null); return; }
@@ -957,6 +986,7 @@ public sealed partial class MainWindow : Window
             list.Add(new QuickJump.Entry(wt.Branch + ": Open folder", wt.Path, "", () => Session.OpenInExplorer(wt.Path)));
         }
         list.Add(new QuickJump.Entry("Project monitor", "SVN URLs watched for new commits", "", () => ShowMonitor(null)));
+        if (Session.Root != null) list.Add(new QuickJump.Entry("Review inbox", "Open feedback across local worktrees", "\uE90A", () => Host.Go(() => new ReviewInboxPage(), "review-inbox")));
         list.Add(new QuickJump.Entry("Settings", "the app, the bridge, the backup", "", ShowSettings));
         list.Add(new QuickJump.Entry("Log window", "every git and svn command the app ran", "", () => OutputWindow.Show()));
         list.Add(new QuickJump.Entry("New worktree", "a branch from the latest snapshot", "", () => _ = NewBranchAsync(_current?.Config)));

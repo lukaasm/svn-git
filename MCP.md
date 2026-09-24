@@ -42,10 +42,11 @@ Each command-family result contains `exitCode`, `output` (CLI stdout), and `diag
 
 ## Addressing review feedback
 
-Seven additional typed tools take an absolute registered `worktree` path:
+Eight additional typed tools expose review feedback. `sg_review_inbox` takes an absolute `workingDirectory` anywhere inside the root and optional `state` (`open`, `resolved`, `all`), `query`, `worktree` (branch name or path), and `offset`. The other tools take an absolute registered `worktree` path:
 
 | Tool | Purpose |
 | --- | --- |
+| `sg_review_inbox` | Root-wide feedback summaries, newest activity first; 100 per page, with `nextOffset` and per-worktree errors |
 | `sg_review_files` | Changed paths and paths with retained comments |
 | `sg_review_file` | Original/current file text and a code version token |
 | `sg_review_threads` | Open, resolved, or all threads; 100 per page with `nextOffset` |
@@ -69,6 +70,7 @@ Equivalent CLI commands:
 
 ```text
 sg review files --json
+sg review inbox --root <root> --state open --search <text> --json
 sg review file src/example.cs --json
 sg review comment --file src/example.cs --side modified --lines 12:18 --body-file feedback.txt
 sg review threads --state open --json
@@ -83,6 +85,8 @@ sg review handoff --json
 `--worktree <name-or-path>` selects a registered worktree for these commands. `--body-file -` reads CLI stdin; MCP callers should use typed tools with a `body` string. Line comments retain their original text even after edits or deletion. Exact context may relocate within the same file; changed, ambiguous, and missing locations are reported explicitly. Rename tracking is a future enhancement. Binary files, symlinks/shared folders, and text over 1 MiB are not loaded for inline review.
 
 ## UI and readiness
+
+**Review inbox** in the main navigation collects feedback from this root's local branch worktrees. It opens with unresolved comments, supports status and worktree filters, and searches filenames, first/latest messages, authors, and worktree names. **Open comment** jumps to the exact discussion and diff side; changed or missing anchors open saved context. Returning restores filters and scroll. Summaries load per worktree, display 40 rows at a time, and update as agents reply or resolve comments. A failed metadata read retains the last valid feedback for that worktree with a retry warning. The inbox reads review metadata without scanning source files, contacting remotes, or creating review identities. Removed worktrees and remote-only backups are outside its scope. Standalone launch: `sg-ui review-inbox <root>`.
 
 Expand a worktree and choose **Review code**, or launch `sg-ui code-review <worktree-path>`. A resizable file tree on the left uses the same folders, keyboard navigation, path actions, and search (Ctrl+F) as other file views. Badges identify open feedback, resolved feedback, and local drafts. Select code on either side of the diff and right-click **Comment on selected lines** to open the composer with that side and range. A selection ending at column one excludes the final line. The toolbar also offers **Comment** for a whole-file/manual original-or-modified range. An existing draft resumes with its saved range. The comments pane provides context, replies, resolve/reopen, and an open/all filter. Gutter markers and **Show in code** open inline threads with the same reply and resolution actions. Comments at the same line share a card; long histories scroll within it. Original-side feedback opens the two-column diff. Showing feedback reveals any collapsed unchanged lines without changing saved layout defaults. Changed, ambiguous, and missing anchors stay in the pane with saved context instead of appearing at an uncertain line. **Back to diff** returns from saved context. **Copy agent instructions** prepares a handoff. Metadata is saved without editing the source or making a commit.
 
@@ -114,6 +118,8 @@ Local documents live under `.sg/code-reviews/`; a private Git worktree identity 
 
 ## Verification
 
-Core tests cover review freshness, readiness, move/rename identity, concurrent feedback, corrupt input, and selected-worktree backup/restore. MCP tests launch the real stdio server, negotiate the protocol, discover all 31 tools, exercise CLI delegation and typed review operations, and reject stale resolutions. They run with the regular `dotnet test tests/Sg.Core.Tests` command.
+Core tests cover review freshness, readiness, move/rename identity, concurrent feedback, corrupt input, selected-worktree backup/restore, and read-only inbox filtering/pagination. MCP tests launch the real stdio server, negotiate the protocol, discover all 32 tools, exercise CLI delegation and typed review operations, and reject stale resolutions. They run with the regular `dotnet test tests/Sg.Core.Tests` command.
+
+`scripts/test-review-inbox.ps1 -FixtureRoot <disposable-workflow-fixture-root>` creates an isolated root from the fixture's SVN URL, then checks empty states, live feedback, resolved/original-side links, uncertain anchors, invalid-metadata recovery, filtering, pagination, scroll restoration, narrow-layout bounds, and main navigation through UI Automation on a private desktop.
 
 After building the Debug CLI and x64 app, run `scripts/test-code-review.ps1 -FixtureRoot <disposable-workflow-fixture-root>`. It uses Windows UI Automation and WebView DOM automation on a private desktop to exercise feedback, draft recovery, cross-file navigation, shared colors, live agent replies/resolutions, invalid-metadata recovery, selected-line context menus on both diff sides, an 84-file tree, and Push to SVN scroll retention with 46 local commits. It records screenshots and removes its temporary worktree. It does not control the interactive desktop or open a real working repository.

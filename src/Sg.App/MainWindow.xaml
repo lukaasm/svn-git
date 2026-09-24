@@ -80,6 +80,9 @@
 
             <!-- Footer items sit directly above the Settings entry. -->
             <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="ReviewInboxItem" Content="Review inbox" AutomationProperties.AutomationId="ReviewInboxNav">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE90A;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="ActivityItem" Content="Activity">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE81C;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>

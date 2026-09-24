@@ -243,6 +243,9 @@ public partial class App : Application
                 window = PageWindow.For(() => new ServerBranchPage(co), "server-branch", 1100, 800);
                 break;
             }
+            case "review-inbox" when Session.Root != null:
+                window = PageWindow.For(() => new ReviewInboxPage(), "review-inbox", 1250, 900);
+                break;
             // The file, not a folder: an export names the checkout it belongs to itself.
             case "import" when path != null:
                 window = PageWindow.For(() => new ImportPage(path), "import:" + path, 1100, 860);

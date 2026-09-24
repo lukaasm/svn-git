@@ -14,7 +14,7 @@
             <local:EmptyState.Action>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <local:IconButton Glyph="&#xE895;" Text="Sync now" x:Name="EmptySync" Visibility="Collapsed" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click"
-                        ToolTipService.ToolTip="svn update the checkout and take a new snapshot. This page closes and sg does the work." />
+                        ToolTipService.ToolTip="Bring the checkout up to the server and take a new snapshot. This page closes and sg does the work." />
                     <local:IconButton Glyph="&#xE72C;" Text="Reload" Click="Reload_Click" ToolTipService.ToolTip="Read the log from the server again." />
                     <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
                 </StackPanel>
@@ -29,7 +29,7 @@
                     VerticalAlignment="Bottom" Click="Reload_Click" ToolTipService.ToolTip="Read the log from the server again." />
                 <!-- Only when the page opened to answer "what would a sync bring in?". -->
                 <local:IconButton Glyph="&#xE895;" Text="Sync now"
-                    x:Name="SyncButton" Visibility="Collapsed" VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout and take a new snapshot. This page closes and sg does the work." />
+                    x:Name="SyncButton" Visibility="Collapsed" VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click" ToolTipService.ToolTip="Bring the checkout up to the server and take a new snapshot. This page closes and sg does the work." />
             </StackPanel>
 
             <Grid x:Name="Body" Grid.Row="1" Padding="0,8,0,0">

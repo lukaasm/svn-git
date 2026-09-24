@@ -7,14 +7,14 @@
         <ScrollViewer Grid.Row="0" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="12" MaxWidth="1000" Padding="0,0,0,16">
                 <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
-                           Text="Adds a checkout to the open root: a working copy that already exists on disk, or one svn checks out from a URL first. It joins the checkouts in the pane, shares the one git store, and gets its own snapshot ref. 'New server checkout' is the faster way to another branch of a checkout you already have: it copies that one and switches." />
+                           Text="Adds a checkout to the open root: an SVN working copy or a git clone that already exists on disk, or one checked out or cloned from a URL first. It joins the checkouts in the pane, shares the one git store, and gets its own snapshot ref. 'New server checkout' is the faster way to another branch of a checkout you already have: it copies that one and switches." />
 
                 <Border Style="{StaticResource Card}">
                     <local:CheckoutFields x:Name="Fields" />
                 </Border>
 
                 <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
-                           Text="Adding writes one file into the checkout: .git, a one-line pointer back to the root. Then it hashes every versioned file once, which on a 16 GB checkout takes minutes. SVN never sees any of it." />
+                           Text="An SVN working copy gets one file: .git, a one-line pointer back to the root, and every versioned file is hashed once, which on a 16 GB checkout takes minutes. A git clone keeps its own .git; the branch's history is copied into the store once. The server never sees any of it." />
             </StackPanel>
         </ScrollViewer>
 
@@ -22,7 +22,7 @@
             <local:TaskGate>
                 <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
                     x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="Add_Click" IsEnabled="False"
-                    ToolTipService.ToolTip="Same as 'sg checkout add'. From a URL, svn checkout runs first. Then every versioned file is read and hashed once, which is the long step." />
+                    ToolTipService.ToolTip="Same as 'sg checkout add'. From a URL, svn checkout or git clone runs first. Then the first snapshot is taken, which is the long step." />
             </local:TaskGate>
             <Button x:Name="CloseButton" Content="Close" Click="Close_Click"
                     ToolTipService.ToolTip="Back to the overview. Nothing is registered unless you added it." />

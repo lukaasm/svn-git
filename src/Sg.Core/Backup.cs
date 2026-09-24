@@ -95,7 +95,9 @@ public static class Thin
         sb.Append(lines.Length > 0 ? lines[0] : "snapshot").Append("\n\n");
         foreach (var line in lines)
             if (line.StartsWith("svn-rev: ", StringComparison.Ordinal) || line.StartsWith("svn-url: ", StringComparison.Ordinal)
-                || line.StartsWith("svn-external: ", StringComparison.Ordinal))
+                || line.StartsWith("svn-external: ", StringComparison.Ordinal)
+                || line.StartsWith(SnapshotMeta.GitRev, StringComparison.Ordinal) || line.StartsWith(SnapshotMeta.GitUrl, StringComparison.Ordinal)
+                || line.StartsWith(SnapshotMeta.GitCommit, StringComparison.Ordinal))
                 sb.Append(line).Append('\n');
         sb.Append(KeyVersion).Append(": ").Append(Version).Append('\n');
         sb.Append(KeyKind).Append(": marker\n");
@@ -257,6 +259,8 @@ public sealed class BackupEntry
     public string Checkout = "";
     public string Url = "";
     public long Revision;
+    /// <summary>The server commit the marker names, for a branch cut from a git checkout. Empty for SVN.</summary>
+    public string Commit = "";
     public List<ExportWc> Bases = new();
     public int Commits;
     public List<string> Subjects = new();
@@ -928,6 +932,7 @@ public static partial class Backup
         var meta = MetaOf(name, chain[0].Body);
         e.Url = meta.Root?.Url ?? "";
         e.Revision = meta.Root?.Revision ?? 0;
+        e.Commit = meta.Root?.Commit ?? "";
         e.Bases = meta.Bases;
         var changes = chain.Where(c => c.Kind == ThinKind.Change).ToList();
         e.Commits = changes.Count;
@@ -974,7 +979,7 @@ public static partial class Backup
     {
         var snap = SnapshotMeta.Parse(markerBody);
         var meta = new ExportMeta { Branch = name, Version = ExportMeta.Current };
-        meta.Bases.Add(new ExportWc { Rel = "", Url = snap.Url.TrimEnd('/'), Revision = snap.Revision });
+        meta.Bases.Add(new ExportWc { Rel = "", Url = snap.Url.TrimEnd('/'), Revision = snap.Revision, Commit = snap.Commit.Length > 0 ? snap.Commit : null });
         foreach (var (rel, rev) in snap.Externals.OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase))
             meta.Bases.Add(new ExportWc { Rel = rel, Url = (snap.ExternalUrls.TryGetValue(rel, out var u) ? u : "").TrimEnd('/'), Revision = rev });
         return meta;

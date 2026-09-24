@@ -46,14 +46,25 @@ public sealed class SgConfig
     public void Save(string path) => AtomicFile.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions) + "\n");
 }
 
-/// <summary>One SVN checkout that the tool mirrors. Its snapshot ref is refs/remotes/svn/&lt;Name&gt;.</summary>
+/// <summary>
+/// One checkout that the tool mirrors: an SVN working copy, or a git clone tracking a branch on its
+/// remote. Its snapshot ref is refs/remotes/svn/&lt;Name&gt; either way.
+/// </summary>
 public sealed class CheckoutConfig
 {
     public string Name { get; set; } = "";
+    /// <summary>The server behind it. A config written before git checkouts existed has none, and means SVN.</summary>
+    public CheckoutKind Kind { get; set; } = CheckoutKind.Svn;
+    /// <summary>Git: the remote the checkout's branch tracks, usually origin. Null for SVN.</summary>
+    public string? Remote { get; set; }
+    /// <summary>Git: the branch on that remote. Null for SVN.</summary>
+    public string? Branch { get; set; }
     /// <summary>Managed PNG filename in .sg/icons; empty explicitly selects initials, null has no local choice.</summary>
     public string? Icon { get; set; }
     public string Path { get; set; } = "";
+    /// <summary>Where on the server it is. SVN: the URL. Git: the remote's URL and the branch, written url#branch.</summary>
     public string Url { get; set; } = "";
+    /// <summary>SVN: the repository root. Git: the remote's URL.</summary>
     public string ReposRoot { get; set; } = "";
     /// <summary>Relative paths that never enter git.</summary>
     public List<string> Skip { get; set; } = new();
@@ -65,6 +76,8 @@ public sealed class CheckoutConfig
     public List<string> Optional { get; set; } = new();
     /// <summary>Working copies (relative paths, "" is the root) in the order push commits them. Others follow alphabetically.</summary>
     public List<string> PushOrder { get; set; } = new();
+
+    [JsonIgnore] public bool IsGit => Kind == CheckoutKind.Git;
 }
 
 /// <summary>How a worktree gets a folder it shares with its checkout, like libs/prebuilt.</summary>

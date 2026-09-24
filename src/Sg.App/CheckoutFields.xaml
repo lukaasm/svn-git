@@ -4,17 +4,17 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Sg.App">
     <StackPanel Spacing="10">
-        <!-- Where the checkout comes from: a working copy svn already made, or a URL svn is about to. -->
+        <!-- Where the checkout comes from: a working copy or clone already on disk, or a URL to check out or clone. -->
         <RadioButtons x:Name="Source" MaxColumns="2" SelectedIndex="0" SelectionChanged="Source_Changed">
             <x:String>A working copy on disk</x:String>
-            <x:String>Check out from an SVN URL</x:String>
+            <x:String>Check out from a URL</x:String>
         </RadioButtons>
-        <TextBox x:Name="UrlBox" Header="SVN URL" PlaceholderText="https://svn.example.com/svn/monorepo/branches/main" Visibility="Collapsed"
-                 ToolTipService.ToolTip="A branch, a trunk, or any folder in a repository. Externals come with it." />
+        <TextBox x:Name="UrlBox" Header="SVN or git URL" PlaceholderText="https://svn.example.com/svn/monorepo/branches/main, or https://host/repo.git#main" Visibility="Collapsed"
+                 ToolTipService.ToolTip="SVN: a branch, a trunk, or any folder in a repository; externals come with it. Git: the repository, with the branch after a #; without one the default branch is cloned." />
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
             <TextBox x:Name="FolderBox" Header="Checkout folder" PlaceholderText="D:\work\monorepo" />
             <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse" Click="Browse_Click" VerticalAlignment="Bottom"
-                    ToolTipService.ToolTip="Pick the working copy that svn checked out. It must not already have a .git in it." />
+                    ToolTipService.ToolTip="Pick the working copy svn checked out, or a git clone whose branch tracks the server." />
         </Grid>
 
         <!-- Answered while the path is typed, not after the long step fails. -->

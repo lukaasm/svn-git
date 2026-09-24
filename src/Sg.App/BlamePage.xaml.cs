@@ -9,8 +9,9 @@ namespace Sg.App;
 /// <summary>
 /// Who last touched each line of a file, the way this bridge has to answer it. A worktree's git history
 /// is one commit per sync, so plain git blame names the sync and not the change; here the lines that came
-/// in with a snapshot carry the SVN revision and the person who wrote them, and the lines the branch
-/// changed carry its own commit. Picking a line shows what that change said and what else it did here.
+/// in with a snapshot carry the server's revision or commit and the person who wrote them, and the lines
+/// the branch changed carry its own commit. Picking a line shows what that change said and what else it
+/// did here.
 /// </summary>
 public sealed partial class BlamePage : SgPage
 {
@@ -87,9 +88,10 @@ public sealed partial class BlamePage : SgPage
         WarnBar.IsOpen = result.Warnings.Count > 0;
 
         var svnLines = _rows.Count - result.LocalLines;
+        var server = ServerWords.Name(_base);
         Summary.Text = result.LocalLines == 0
-            ? $"{_rows.Count} line(s), all of them from SVN."
-            : $"{_rows.Count} line(s): {result.LocalLines} the branch changed, {svnLines} from SVN.";
+            ? $"{_rows.Count} line(s), all of them from {server}."
+            : $"{_rows.Count} line(s): {result.LocalLines} the branch changed, {svnLines} from {server}.";
         // A reload draws a new list, so nothing is open any more: the guard has to forget what was, or
         // clicking the line you were reading before Refresh does nothing at all.
         _shown = null;
@@ -132,7 +134,7 @@ public sealed partial class BlamePage : SgPage
         if (line.Local && line.Sha != null)
         {
             var sha = line.Sha;
-            UserColors.Header(DetailHead, sha + "\n", line.Author, $"   {line.Date}\nOn the branch. SVN has not seen this line.");
+            UserColors.Header(DetailHead, sha + "\n", line.Author, $"   {line.Date}\nOn the branch. {ServerWords.Name(_base)} has not seen this line.");
             DetailMessage.Text = Msg.Body(line.Summary);
             var mine = $"{_path}   {sha[..Math.Min(8, sha.Length)]}";
             Diff.BeginLoading(mine);
@@ -141,7 +143,7 @@ public sealed partial class BlamePage : SgPage
             return;
         }
 
-        if (line.Revision is not { } revision || revision == 0)
+        if (!line.FromServer || line.Revision == 0)
         {
             UserColors.Plain(DetailHead, "Not committed yet.");
             DetailMessage.Text = "";
@@ -149,19 +151,18 @@ public sealed partial class BlamePage : SgPage
             return;
         }
 
-        // An SVN line: the revision's own message, and what it did to this file.
+        // A server line: the revision's own message, and what it did.
         var co = _base;
         if (co == null) return;
-        var title = $"{_path}   r{revision}";
+        var title = $"{_path}   {line.Mark}";
         Diff.BeginLoading(title);
         var read = await Runner.Quiet(Pane, () =>
         {
-            var url = root.Svn.Info(co.Path, _path).Url;
-            var log = root.Svn.LogVerbose(co.Path, _path, 200).FirstOrDefault(x => x.Revision == revision);
-            return new { Log = log, Diff = root.Svn.DiffRevision(url, revision) };
+            var (log, diff) = root.Vcs(co).BlameDetails(root, co, _path, line.Server);
+            return new { Log = log, Diff = diff };
         });
         if (read == null || _shown != line.Mark) return;
-        UserColors.Header(DetailHead, $"r{read.Log?.Revision ?? revision}   ", read.Log?.Author ?? line.Author, $"   {Msg.When(read.Log?.Date ?? line.Date)}");
+        UserColors.Header(DetailHead, $"{read.Log?.Label ?? line.Mark}   ", read.Log?.Author ?? line.Author, $"   {Msg.When(read.Log?.Date ?? line.Date)}");
         DetailMessage.Text = Msg.Body(read.Log?.Message);
         Diff.ShowUnified(read.Diff, title);
     }

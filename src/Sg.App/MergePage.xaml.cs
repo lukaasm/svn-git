@@ -105,7 +105,7 @@ public sealed partial class MergePage : SgPage
     {
         var gen = ++_generation;
         using var read = _reads.Begin();
-        var sources = await read.Run(Pane, () => Merge.Sources(root, target));
+        var sources = await read.Run(Pane, () => Merge.Sources(root, _co, target));
         if (!read.Current || _hidden || root != Session.Root || sources == null || gen != _generation) return;
         _sources = sources;
         _binding = true;
@@ -280,7 +280,7 @@ public sealed partial class MergePage : SgPage
         TaskGate.SetHelp(TestButton, reason ?? "Preview the merge without writing changes.");
         TaskGate.SetHelp(MergeButton, reason ?? (_blocked ? "Resolve the problems listed above before merging." : "Merge the selected revisions into the target checkout."));
         TaskGate.SetHelp(TakeOutButton, reason ?? (_blocked ? "Resolve the problems listed above before reversing changes." : picked.Count == 0 ? "Select the revisions to reverse." : "Reverse the selected revisions in the target checkout."));
-        MergeLabel.Text = picked.Count == 0 ? "Merge" : picked.Count == 1 ? "Merge r" + picked[0].Revision : $"Merge {picked.Count} revisions";
+        MergeLabel.Text = picked.Count == 0 ? "Merge" : picked.Count == 1 ? "Merge " + picked[0].Entry.Label : $"Merge {picked.Count} revisions";
     }
 
     void ShowPickedText()
@@ -392,7 +392,7 @@ public sealed partial class MergePage : SgPage
         if (r == null) return;
 
         OutcomeHeader.Text = dryRun ? "What a merge would do" : "What the merge did";
-        Diff.ShowText(Describe(r), $"{source.Name} → {target.Label}" + (dryRun ? "   test only, nothing written" : ""));
+        Diff.ShowText(Describe(r, ServerWords.Name(_co)), $"{source.Name} → {target.Label}" + (dryRun ? "   test only, nothing written" : ""));
         _layout.ShowDetails();
 
         if (dryRun)
@@ -425,19 +425,20 @@ public sealed partial class MergePage : SgPage
     Button ChangesButton()
     {
         var b = new Button { Content = "Open the checkout changes" };
-        ToolTipService.SetToolTip(b, "See what the merge brought in, file by file, and commit it to SVN when it is right.");
+        ToolTipService.SetToolTip(b, $"See what the merge brought in, file by file, and commit it to {ServerWords.Target(_co)} when it is right.");
         b.Click += (_, _) => Go(() => new SvnCommitPage(_co) { Checkout = Checkout }, "changes:" + _co.Name);
         return b;
     }
 
-    static string Describe(MergeResult r)
+    static string Describe(MergeResult r, string server)
     {
         if (r.Failure != null) return r.Failure + "\n\n" + r.Output;
         if (r.Changed.Count == 0) return "Nothing would change.\n\n" + r.Output;
         var lines = new List<string>();
-        lines.Add(r.Revisions.Count == 0
+        var picked = r.Commits.Count > 0 ? r.Commits.Select(Rev.Short) : r.Revisions.Select(x => "r" + x);
+        lines.Add(r.Revisions.Count == 0 && r.Commits.Count == 0
             ? "Everything the source branch has that this one has not:"
-            : (r.Reverse ? "Taking back out " : "Revisions ") + string.Join(", ", r.Revisions.Select(x => "r" + x)) + ":");
+            : (r.Reverse ? "Taking back out " : "Revisions ") + string.Join(", ", picked) + ":");
         lines.Add("");
         foreach (var (action, path) in r.Changed) lines.Add($"{action}  {path}");
         if (r.Conflicts.Count > 0)
@@ -447,7 +448,7 @@ public sealed partial class MergePage : SgPage
             foreach (var c in r.Conflicts) lines.Add("  " + c);
         }
         lines.Add("");
-        lines.Add("--- what svn said ---");
+        lines.Add($"--- what {server.ToLowerInvariant()} said ---");
         lines.Add(r.Output);
         return string.Join("\n", lines);
     }

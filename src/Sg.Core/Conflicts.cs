@@ -9,6 +9,8 @@ public sealed class ConflictState
     public string Worktree = "";
     public string Branch = "";
     public string Checkout = "";
+    /// <summary>What the checkout's server is called: SVN, or git. It names the base a rebase replays over.</summary>
+    public string Server = "SVN";
     public string? BackupName;
     public List<string> Explanations = new();
     public List<string> ResolutionReviewFiles = new();
@@ -48,7 +50,7 @@ public sealed class ConflictState
     public string Verb => BackupName != null ? "backup replay" : Conflicts.Verb(Kind);
 
     /// <summary>What the left side of a conflict is: the version already here, whatever put it there.</summary>
-    public string OursLabel => Kind == Replay.Import ? "current branch" : "updated SVN base";
+    public string OursLabel => Kind == Replay.Import ? "current branch" : $"updated {Server} base";
 
     /// <summary>What the right side is: the version the stopped commit or patch wants.</summary>
     public string TheirsLabel => BackupName != null ? "incoming backup" : Kind == Replay.Import ? "imported commit" : "branch commit";
@@ -145,6 +147,7 @@ public static class Conflicts
             Worktree = worktree,
             Branch = branch,
             Checkout = co.Name,
+            Server = root.Vcs(co).ServerName,
             Kind = git.ReplayInProgress(worktree),
             BackupName = Backup.ReplayName(git, worktree),
             Conflicted = git.ConflictedFiles(worktree),

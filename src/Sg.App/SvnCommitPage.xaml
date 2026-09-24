@@ -50,7 +50,7 @@
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
                         <Button Content="All" Click="All_Click" ToolTipService.ToolTip="Check every change, unversioned files too." />
                         <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
-                        <local:IconButton Glyph="&#xE7A7;" Text="Discard"
+                        <local:IconButton x:Name="DiscardButton" Glyph="&#xE7A7;" Text="Discard"
                             Click="Revert_Click" ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. The confirmation keeps a recovery shelf by default, with an option to discard permanently." />
                         <local:TaskGate>
                             <local:IconButton Glyph="&#xE7B8;" Text="Shelve"

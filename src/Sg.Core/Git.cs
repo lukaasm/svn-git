@@ -79,15 +79,63 @@ public sealed class Git
         cwd ??= Store;
         var list = new List<string> { "-C", cwd };
         list.AddRange(args);
-        IReadOnlyDictionary<string, string> env = _env;
+        IReadOnlyDictionary<string, string> env = EnvFor(cwd);
         if (extraEnv != null || asUser)
         {
-            var d = new Dictionary<string, string>(_env);
+            var d = new Dictionary<string, string>(env);
             if (asUser && HasUserIdentity) foreach (var k in Ident) d.Remove(k);
             if (extraEnv != null) foreach (var kv in extraEnv) d[kv.Key] = kv.Value;
             env = d;
         }
         return Proc.Run(_exe, list, cwd, _log, stdin, env, stdoutToFile);
+    }
+
+    // ---- git checkouts, seen from the store ----
+
+    volatile GitTunnel[] _tunnels = [];
+
+    /// <summary>
+    /// The git checkouts of this root. A command this class runs inside one of them is a store command:
+    /// it reads the store's objects and the store's snapshot, not the clone's own .git. See <see cref="GitTunnel"/>.
+    /// </summary>
+    public void SetTunnels(IEnumerable<GitTunnel> tunnels) => _tunnels = tunnels.ToArray();
+
+    /// <summary>
+    /// The tunnel a folder is inside, or null when it is a store worktree or the store itself. A folder
+    /// with a .git of its own between it and the clone - a worktree, a nested repository - is not the
+    /// clone's, and neither is anything under the store.
+    /// </summary>
+    public GitTunnel? TunnelOf(string? cwd)
+    {
+        if (cwd == null) return null;
+        var tunnels = _tunnels;
+        if (tunnels.Length == 0) return null;
+        var p = Path.GetFullPath(cwd).TrimEnd('\\', '/');
+        var store = Store.TrimEnd('\\', '/');
+        if (p.Equals(store, StringComparison.OrdinalIgnoreCase) || p.StartsWith(store + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return null;
+        GitTunnel? best = null;
+        foreach (var t in tunnels)
+            if ((p.Equals(t.WorkTree, StringComparison.OrdinalIgnoreCase)
+                 || p.StartsWith(t.WorkTree + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                && (best == null || t.WorkTree.Length > best.WorkTree.Length))
+                best = t;
+        if (best == null) return null;
+        for (var d = p; d.Length > best.WorkTree.Length; d = Path.GetDirectoryName(d) ?? best.WorkTree)
+        {
+            var dotGit = Path.Combine(d, ".git");
+            if (File.Exists(dotGit) || Directory.Exists(dotGit)) return null;
+        }
+        return best;
+    }
+
+    IReadOnlyDictionary<string, string> EnvFor(string? cwd)
+    {
+        var t = TunnelOf(cwd);
+        if (t == null) return _env;
+        var d = new Dictionary<string, string>(_env);
+        foreach (var kv in t.Env) d[kv.Key] = kv.Value;
+        return d;
     }
 
     public ProcResult Run(string? cwd, params string[] args) => Run(cwd, (IEnumerable<string>)args);
@@ -242,7 +290,8 @@ public sealed class Git
     /// <summary>A path inside the worktree's git folder. Falls back to git when the .git file cannot be read.</summary>
     string GitPath(string worktree, string name)
     {
-        var dir = GitDirOf(worktree);
+        // A git checkout's own .git is the clone's; the store's files for it live in its tunnel.
+        var dir = TunnelOf(worktree)?.GitDir ?? GitDirOf(worktree);
         if (dir != null) return Path.Combine(dir, name);
         var p = Out(worktree, "rev-parse", "--git-path", name);
         return Path.IsPathRooted(p) ? p : Path.Combine(worktree, p);
@@ -355,7 +404,7 @@ public sealed class Git
                     {
                         if (line.StartsWith("add '") && line.EndsWith('\'')) onAdded(line[5..^1]);
                     },
-                    null, _env, keepStdout: false);
+                    null, EnvFor(worktree), keepStdout: false);
                 if (r.Ok) return invalid;
                 var m = InvalidPath.Match(r.StdErr);
                 if (m.Success && !invalid.Contains(m.Groups[1].Value))
@@ -393,7 +442,7 @@ public sealed class Git
         {
             var m = CheckoutCounts.Match(line);
             if (m.Success && onProgress != null) onProgress(long.Parse(m.Groups[1].Value), long.Parse(m.Groups[2].Value));
-        }, _env);
+        }, EnvFor(worktree));
         r.EnsureOk();
     }
 
@@ -526,12 +575,17 @@ public sealed class Git
     public List<GitBlameLine> BlamePorcelain(string worktree, string relPath)
     {
         var r = Run(worktree, "blame", "--line-porcelain", "--", relPath);
-        if (!r.Ok) return new();
+        return r.Ok ? ParseBlame(r.StdOut) : new();
+    }
+
+    /// <summary>What git blame --line-porcelain wrote, one entry per line of the file.</summary>
+    public static List<GitBlameLine> ParseBlame(string stdout)
+    {
         var res = new List<GitBlameLine>();
         string sha = "", author = "", date = "", summary = "";
         var original = 0;
         var number = 0;
-        foreach (var raw in r.StdOut.Split('\n'))
+        foreach (var raw in stdout.Split('\n'))
         {
             var line = raw.TrimEnd('\r');
             if (line.Length == 0) continue;
@@ -580,12 +634,24 @@ public sealed class Git
 
     /// <summary>What git would call these files, without writing anything into the store. Answers whether a
     /// file on disk still holds what a tree says it held.</summary>
-    public Dictionary<string, string> HashFiles(IEnumerable<string> absolutePaths)
+    public Dictionary<string, string> HashFiles(IEnumerable<string> absolutePaths, string? worktree = null)
     {
         var list = absolutePaths.ToList();
         var res = new Dictionary<string, string>(StringComparer.Ordinal);
         if (list.Count == 0) return res;
         var stdin = Encoding.UTF8.GetBytes(string.Join("\n", list) + "\n");
+        // A git checkout's files are what its own git would store only after its line-ending rules, so
+        // they are hashed in its tunnel, through them. Everywhere else git never changes bytes.
+        if (TunnelOf(worktree) != null)
+        {
+            var t = Run(worktree, ["hash-object", "--stdin-paths"], stdin);
+            if (t.Ok)
+            {
+                var shas = t.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                for (var i = 0; i < shas.Length && i < list.Count; i++) res[list[i]] = shas[i].Trim();
+                return res;
+            }
+        }
         var r = Run(null, ["hash-object", "--no-filters", "--stdin-paths"], stdin);
         if (r.Ok)
         {
@@ -656,6 +722,16 @@ public sealed class Git
     }
 
     /// <summary>One blob, byte for byte, into a file. A merge needs the real bytes, not a decoded string.</summary>
+    /// <summary>
+    /// A blob as a file of the given worktree would hold it. In a git checkout that is after its
+    /// line-ending rules, the way its own git writes the file; everywhere else the bytes are the blob's.
+    /// </summary>
+    public void BlobToFileAs(string? worktree, string relPath, string sha, string file)
+    {
+        if (TunnelOf(worktree) == null) { BlobToFile(sha, file); return; }
+        Run(worktree, ["cat-file", "--filters", "--path=" + relPath, sha], null, null, false, file).EnsureOk();
+    }
+
     public void BlobToFile(string sha, string file) =>
         Proc.Run(_exe, ["-C", Store, "cat-file", "blob", sha], Store, _log, null, _env, file).EnsureOk();
 

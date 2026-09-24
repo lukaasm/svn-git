@@ -337,6 +337,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     static readonly string[] Painted =
     {
         nameof(CardOpacity), nameof(NextAction),
+        nameof(CommitDescription), nameof(PushHeader), nameof(PushDescription), nameof(PullHeader), nameof(PullDescription),
+        nameof(ExportDescription), nameof(RemoveDescription),
         nameof(Behind), nameof(BehindTip), nameof(BehindVisibility), nameof(Conflicts), nameof(ConflictTip), nameof(ResolveVisibility),
         nameof(PendingVisibility), nameof(Shelves), nameof(ShelvedTip), nameof(ShelvedVisibility), nameof(ShelvedDescription),
         nameof(DirtyFiles), nameof(DirtyTip), nameof(DirtyVisibility), nameof(MissingVisibility), nameof(RebaseVisibility),
@@ -385,6 +387,8 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         Conflicts = n.Conflicts;
         Ahead = n.Ahead;
         BaseRevision = n.BaseRevision;
+        Server = n.Server;
+        ServerBranch = n.ServerBranch;
         Shared = n.Shared;
         Shelves = n.Shelves;
         NotBackedUp = n.NotBackedUp;
@@ -414,7 +418,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         Branch == o.Branch && Path == o.Path && Base == o.Base && Detail == o.Detail
         && Dirty == o.Dirty && DirtyFiles == o.DirtyFiles && Behind == o.Behind && Pending == o.Pending && Missing == o.Missing
         && OperationPending == o.OperationPending && BackupFinalizing == o.BackupFinalizing && Stopped == o.Stopped && Conflicts == o.Conflicts && Ahead == o.Ahead
-        && BaseRevision == o.BaseRevision && Shelves == o.Shelves
+        && BaseRevision == o.BaseRevision && Shelves == o.Shelves && Server == o.Server && ServerBranch == o.ServerBranch
         && NotBackedUp == o.NotBackedUp && BackedUp == o.BackedUp && BackupOn == o.BackupOn
         && BackupFailed == o.BackupFailed && BackupRemote == o.BackupRemote && BackupExcluded == o.BackupExcluded;
 
@@ -433,6 +437,27 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     /// <summary>The revision the snapshot this branch was born from is at. The bar over the cards names it.</summary>
     public long BaseRevision { get; set; }
 
+    /// <summary>Where the branch's checkout sends to, short: "SVN", or a git clone's remote, like origin.</summary>
+    public string Server { get; set; } = "SVN";
+
+    /// <summary>The same with the branch: "SVN", or origin/main.</summary>
+    public string ServerBranch { get; set; } = "SVN";
+
+    bool GitServer => Server != "SVN";
+
+    // The words of the card's action rows, which name where the branch goes.
+    public string CommitDescription => $"Pick changed files, see each diff, write a message, and commit to the git branch. Nothing goes to {ServerBranch}.";
+    public string PushHeader => "Push to " + Server;
+    public string PushDescription => GitServer
+        ? $"Review the commits and files, then send the branch to {ServerBranch}: sync, rebase, one commit, pushed. Asks before it commits."
+        : "Review the commits and files, then send the branch to SVN: sync, rebase, one svn commit per repository. Asks before it commits.";
+    public string PullHeader => "Pull from " + Server;
+    public string PullDescription => $"Save local edits, sync {ServerBranch}, replay commits, and recover edits.";
+    public string ExportDescription => GitServer
+        ? $"Pack the commits this branch has that {ServerBranch} does not into one file, for a machine that has a clone of the same repository. Uncommitted work does not go in it."
+        : "Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.";
+    public string RemoveDescription => $"Delete the worktree folder and the git branch. Asks first. What was pushed stays in {ServerBranch}.";
+
     /// <summary>
     /// What this worktree wants next, in one sentence. The badges say what is true; this says what to
     /// do about it. A card that said "0 commit(s) ahead" was telling the user to work it out themselves.
@@ -447,14 +472,14 @@ public sealed class WorktreeRow : INotifyPropertyChanged
             ? $"The {StoppedVerb} stopped on 1 file. Resolve it to continue."
             : $"The {StoppedVerb} stopped on {Conflicts} files. Resolve them to continue.")
         : Pending ? "A push stopped half way. Fix the cause and push again."
-        : Dirty && Behind > 0 ? $"Pull from SVN will save and recover the {DirtyFilesText}."
+        : Dirty && Behind > 0 ? $"Pull from {Server} will save and recover the {DirtyFilesText}."
         : Dirty ? $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} not committed. Commit them, or discard them."
         : Behind > 0 ? (Behind == 1
-            ? "1 snapshot behind. Rebase onto the current SVN snapshot."
-            : $"{Behind} snapshots behind. Rebase onto the current SVN snapshot.")
+            ? $"1 snapshot behind. Rebase onto the current {ServerBranch} snapshot."
+            : $"{Behind} snapshots behind. Rebase onto the current {ServerBranch} snapshot.")
         : Ahead > 0 ? (Ahead == 1
-            ? "1 commit ready. Push to SVN when you are."
-            : $"{Ahead} commits ready. Push to SVN when you are.")
+            ? $"1 commit ready. Push to {Server} when you are."
+            : $"{Ahead} commits ready. Push to {Server} when you are.")
         : "Level with svn/" + Base + ".";
 
     /// <summary>
@@ -493,9 +518,9 @@ public sealed class WorktreeRow : INotifyPropertyChanged
     {
         WorktreeAction.Remove => "Remove",
         WorktreeAction.Resolve => Conflicts > 0 ? $"Resolve {Conflicts} file(s)" : "Resume operation",
-        WorktreeAction.Push => "Push to SVN",
+        WorktreeAction.Push => "Push to " + Server,
         WorktreeAction.Commit => "Commit",
-        WorktreeAction.Rebase => "Pull from SVN",
+        WorktreeAction.Rebase => "Pull from " + Server,
         _ => "Log",
     };
 
@@ -511,10 +536,10 @@ public sealed class WorktreeRow : INotifyPropertyChanged
 
     public string PrimaryTip => Primary switch
     {
-        WorktreeAction.Remove => "Delete the worktree folder and the git branch. Asks first. What was pushed stays in SVN.",
+        WorktreeAction.Remove => $"Delete the worktree folder and the git branch. Asks first. What was pushed stays in {ServerBranch}.",
         WorktreeAction.Resolve => "Open the conflict resolver: pick a version per file, then continue, skip the one it stopped on, or put it all back.",
-        WorktreeAction.Push => "Review the commits and files, then send the branch to SVN: sync, rebase, one svn commit per repository. Asks before it commits.",
-        WorktreeAction.Commit => "Pick changed files, see each diff, write a message, and commit to the git branch. Nothing goes to SVN.",
+        WorktreeAction.Push => PushDescription,
+        WorktreeAction.Commit => $"Pick changed files, see each diff, write a message, and commit to the git branch. Nothing goes to {ServerBranch}.",
         WorktreeAction.Rebase => "Put the branch on top of the latest snapshot. A conflict opens the resolver.",
         _ => "The commits on the branch and the snapshots under it, with files and diffs.",
     };
@@ -534,13 +559,14 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         ? "Files that are not tracked yet. Commit adds them to the branch; Discard deletes them."
         : $"{DirtyFilesText[..1].ToUpperInvariant()}{DirtyFilesText[1..]} changed and not committed. Commit or discard them before a rebase or a push, or shelve them for later.";
     public string BehindTip => (Behind == 1 ? "1 snapshot" : $"{Behind} snapshots")
-        + " taken since this branch was made or last rebased. Rebase onto the current SVN snapshot; sync the checkout first to fetch newer SVN changes.";
+        + $" taken since this branch was made or last rebased. Rebase onto the current {ServerBranch} snapshot; sync the checkout first to fetch newer {ServerBranch} changes.";
     public string ConflictTip => BackupFinalizing ? "Resume to recover saved local edits." : Conflicts == 0 ? $"The {StoppedVerb} is paused. Resume to review, continue, or skip the current step." : $"The {StoppedVerb} stopped on {(Conflicts == 1 ? "1 file" : $"{Conflicts} files")} in conflict. "
         + "Use Resolve to pick a version for each, then continue.";
     public string ShelvedTip => (Shelves == 1 ? "1 set" : $"{Shelves} sets")
-        + " of changes taken out of this worktree and kept. They are not in the branch and not in SVN: open Shelved changes to write them back.";
+        + $" of changes taken out of this worktree and kept. They are not in the branch and not in {ServerBranch}: open Shelved changes to write them back.";
     public string AheadTip => (Ahead == 1 ? "1 commit" : $"{Ahead} commits")
-        + " on the branch that SVN does not have. Push to SVN sends them, one svn commit per repository"
+        + (GitServer ? $" on the branch that {ServerBranch} does not have. Push to {Server} sends them as one commit"
+            : " on the branch that SVN does not have. Push to SVN sends them, one svn commit per repository")
         + (Dirty ? ", once the uncommitted changes are committed, discarded or shelved."
             : RebaseInProgress ? $", once the {StoppedVerb} is finished."
             : ".");
@@ -609,7 +635,7 @@ public sealed class ChangeRow : CheckableRow
 /// <summary>A local change in the checkout, with a checkbox.</summary>
 public sealed class SvnChangeRow : CheckableRow
 {
-    public Ops.SvnChange Change { get; set; } = null!;
+    public CheckoutChange Change { get; set; } = null!;
     public override string Code => Change.Code;
     public override string PathText => Change.Path;
     public override string TreePath => Change.Path;
@@ -636,7 +662,7 @@ public sealed class SvnRevRow
     public string Author { get; set; } = "";
     public string Date { get; set; } = "";
     public string Subject { get; set; } = "";
-    public SvnLogRevision Entry { get; set; } = null!;
+    public LogRevision Entry { get; set; } = null!;
     public RevMark Mark { get; set; }
     /// <summary>The working copy the revision came from; "" is the root. The SVN log tags rows with it.</summary>
     public string Group { get; set; } = "";
@@ -652,7 +678,8 @@ public sealed class SvnRevRow
     public Brush? RepoBrush => ShowRepo ? Res("RepoBrush" + (RepoColor & 7)) : null;
     public Brush? RepoBackground => ShowRepo ? Res("RepoBackground" + (RepoColor & 7)) : null;
 
-    public string RevText => "r" + Revision;
+    /// <summary>r266, or the short commit of a git server's.</summary>
+    public string RevText => Entry != null ? Entry.Label : "r" + Revision;
 
     /// <summary>Everything this row draws, so a refresh that changed nothing can keep the row it has.</summary>
     public bool SameAs(SvnRevRow o) =>
@@ -751,7 +778,7 @@ public sealed class BlameRow : StatusRow
 /// <summary>A changed path of one SVN revision, in the SVN log and the monitor.</summary>
 public sealed class SvnPathRow : StatusRow
 {
-    public SvnChangedPath Path { get; set; } = null!;
+    public ChangedPath Path { get; set; } = null!;
     public override string Code => Path.Action;
     public override string PathText => Path.Path + (Path.CopyFrom != null ? $"  (from {Path.CopyFrom})" : "");
     public override string TreePath => Path.Path;

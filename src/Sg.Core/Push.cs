@@ -8,11 +8,16 @@ public sealed class PushGroup
     /// <summary>pending, committed, failed, skipped</summary>
     public string State = "pending";
     public long? Revision;
+    /// <summary>The commit a git checkout pushed. Empty for SVN.</summary>
+    public string Commit = "";
     public string? Error;
     public List<string> Files = new();
     public List<DiffEntry> Entries = new();
     internal List<string> Targets = new();
     internal List<string> AddedDirs = new();
+
+    /// <summary>What the server calls what this group made: r266, or the short commit. Empty before it made one.</summary>
+    public string Label => new CommitId(Revision, Commit).Label;
 }
 
 /// <summary>
@@ -37,6 +42,7 @@ public static class PushChecks
     public const string Types = "types";
     public const string Paths = "paths";
     public const string Collisions = "collisions";
+    public const string Checkout = "checkout";
 }
 
 public sealed class PushPreview
@@ -137,6 +143,9 @@ public sealed class PushResult
 
     public string BranchState = "";
     public long Revision;
+    /// <summary>The server commit the new snapshot holds, for a git checkout. Empty for SVN.</summary>
+    public string Commit = "";
+    public string Label => Rev.Label(Revision, Commit);
     public List<string> Warnings = new();
 }
 
@@ -163,11 +172,12 @@ public static class Push
         PushScope scope = default, PushFinish finish = PushFinish.Commit)
     {
         var git = root.Git;
-        var svn = root.Svn;
         var log = root.Log;
         worktree = git.Toplevel(worktree);
         var branch = git.CurrentBranch(worktree);
         var co = Ops.BaseCheckout(root, branch);
+        var vcs = root.Vcs(co);
+        var server = vcs.ServerName;
         var snapRef = root.SnapshotRef(co);
 
         if (!interactive && !root.Config.AllowAgentPush)
@@ -178,7 +188,7 @@ public static class Push
         // SVN, and the reset at the end would drop it. Say both, or the refusal reads as arbitrary.
         if (!git.IsClean(worktree))
             throw new SgException("worktree has uncommitted changes: " + worktree
-                + "\nPush sends commits, so these would not reach SVN, and the reset it ends with would drop them."
+                + $"\nPush sends commits, so these would not reach {server}, and the reset it ends with would drop them."
                 + "\nCommit them on the branch first, or discard them, then push again.");
         // A message of a working copy's own is checked here, before anything is written: a refusal
         // after the sync and the rebase would come with the checkout already moved.
@@ -209,17 +219,18 @@ public static class Push
         var lastSent = LastSent(git, worktree, snapRef, tip, batches, scope);
         var going = lastSent == tip ? whole : git.DiffNameStatus(worktree, snapRef, lastSent);
         if (going.Count == 0) throw new SgException("nothing to push: the commits picked change no files");
-        var status = svn.Status(co.Path, noIgnore: false);
-        var bad = Refusals(going, co, LocalEdits(status));
+        var scan = vcs.Scan(root, co);
+        var bad = Refusals(going, co, scan.LocalEdits);
+        bad.AddRange(vcs.WriteBlockers(root, co));
         if (bad.Count > 0) throw new SgException("push refused:\n  " + string.Join("\n  ", bad));
 
-        var wcs = WorkingCopies(status.Where(x => x.Item == "external" && x.Path.Length > 0).Select(x => x.Path));
+        var wcs = WorkingCopies(scan.Externals);
 
         // 3. Or stop before the server: write the change into the checkout and leave it there. No
         // message is asked for, because nothing is being committed, and the branch does not move,
         // because nothing has left the machine.
         if (finish == PushFinish.LeaveInCheckout)
-            return LeaveInCheckout(root, co, git, svn, log, branch, lastSent, going, wcs);
+            return LeaveInCheckout(root, co, vcs, log, branch, lastSent, going, wcs);
 
         // 3. The plan: what goes out, in how many pieces, under which messages.
         var plan = ResolveBatches(root, git, worktree, snapRef, tip, batches, message, interactive, editMessage, scope);
@@ -253,7 +264,7 @@ public static class Push
             }
 
             br.Groups = GroupsFor(entries, wcs, co);
-            FillReposRoots(svn, co, br.Groups);
+            vcs.FillRepositories(root, co, br.Groups);
             br.Attempted = true;
             if (plan.Count > 1) log.Info($"batch {i + 1} of {plan.Count}: {entries.Count} change(s) in {br.Groups.Count} working cop" + (br.Groups.Count == 1 ? "y" : "ies"));
 
@@ -263,11 +274,14 @@ public static class Push
                 log.Info($"committing {g.Entries.Count} change(s) in {label} ({g.ReposRoot})" + (own.ContainsKey(g.Wc) ? ", under its own message" : ""));
                 try
                 {
-                    Operations.Receipt(root, "SVN publication started", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Outcome unknown until a revision receipt follows. Do not retry based solely on this record."], required: true);
-                    Apply(root, co, g, b.Through, own.TryGetValue(g.Wc, out var mine) ? mine : b.Message);
+                    Operations.Receipt(root, server + " publication started", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Outcome unknown until a revision receipt follows. Do not retry based solely on this record."], required: true);
+                    vcs.WriteInto(root, co, g, b.Through);
+                    var made = vcs.CommitWritten(root, co, g, own.TryGetValue(g.Wc, out var mine) ? mine : b.Message);
+                    g.Revision = made.Revision;
+                    g.Commit = made.Commit;
                     g.State = "committed";
-                    Operations.Receipt(root, "SVN revision published", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Repository: " + g.ReposRoot, "Revision: " + g.Revision]);
-                    log.Info($"  {label}: r{g.Revision}");
+                    Operations.Receipt(root, server + " revision published", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Repository: " + g.ReposRoot, "Revision: " + g.Label]);
+                    log.Info($"  {label}: {g.Label}");
                 }
                 catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException)
                 {
@@ -276,7 +290,7 @@ public static class Push
                     log.Warn($"  {label} failed: " + ex.Message);
                     // Put this working copy back to where this batch started, not to the snapshot:
                     // an earlier batch may already be in SVN and on disk.
-                    Rollback(root, co, g, from, result.Warnings);
+                    vcs.Rollback(root, co, g, from, result.Warnings);
                     foreach (var rest in br.Groups.Where(x => x.State == "pending")) rest.State = "skipped";
                     stoppedAfter = from;
                     break;
@@ -288,6 +302,7 @@ public static class Push
         // 5. New snapshot, then put the branch where it belongs.
         var sync = Ops.Sync(root, co);
         result.Revision = sync.Revision;
+        result.Commit = sync.Commit;
 
         // Everything from here on did not reach SVN: the batch that failed, or the tail of a push that
         // was asked to stop early. Both are the same shape, and both are rebuilt onto the new snapshot.
@@ -315,7 +330,7 @@ public static class Push
             git.ResetHard(worktree, sha);
             result.BranchState = "pending commit " + sha[..10] + " holds what did not go";
         }
-        Operations.Receipt(root, "Push to SVN", worktree, result.Batches.SelectMany(x => x.Groups).Select(g => g.Wc + ": " + g.State + (g.Revision == null ? "" : " r" + g.Revision)).Append(result.BranchState));
+        Operations.Receipt(root, "Push to " + server, worktree, result.Batches.SelectMany(x => x.Groups).Select(g => g.Wc + ": " + g.State + (g.Label.Length == 0 ? "" : " " + g.Label)).Append(result.BranchState));
         return result;
     }
 
@@ -328,12 +343,12 @@ public static class Push
     /// push refuses to touch the same files, which is the rule that stops the two ways of sending the
     /// same work from writing over each other.
     /// </summary>
-    static PushResult LeaveInCheckout(SgRoot root, CheckoutConfig co, Git git, Svn svn, ILog log,
+    static PushResult LeaveInCheckout(SgRoot root, CheckoutConfig co, ICheckoutVcs vcs, ILog log,
         string branch, string tip, List<DiffEntry> entries, List<string> wcs)
     {
         var result = new PushResult { Branch = branch, Checkout = co.Name, AppliedOnly = true };
         var groups = GroupsFor(entries, wcs, co);
-        FillReposRoots(svn, co, groups);
+        vcs.FillRepositories(root, co, groups);
         result.Batches.Add(new PushBatchResult { From = "", To = tip, Groups = groups, Attempted = true });
 
         // Past here files are being written. Cancelling half way would leave the checkout in a state
@@ -346,7 +361,7 @@ public static class Push
             log.Info($"writing {g.Entries.Count} change(s) into {label}, without committing");
             try
             {
-                WriteInto(root, co, g, tip);
+                vcs.WriteInto(root, co, g, tip);
                 g.State = "applied";
                 done.Add(g);
             }
@@ -357,8 +372,8 @@ public static class Push
                 log.Warn($"  {label} failed: " + ex.Message);
                 // Nothing was committed, so everything already written goes back: a half applied
                 // checkout is worse than one that was never touched.
-                foreach (var back in done) Rollback(root, co, back, tip, result.Warnings);
-                Rollback(root, co, g, tip, result.Warnings);
+                foreach (var back in done) vcs.Rollback(root, co, back, tip, result.Warnings);
+                vcs.Rollback(root, co, g, tip, result.Warnings);
                 foreach (var rest in groups.Where(x => x.State == "pending")) rest.State = "skipped";
                 result.BranchState = "nothing was applied";
                 return result;
@@ -490,107 +505,6 @@ public static class Push
             .ToList();
     }
 
-    /// <summary>One svn info for every working copy at once. One call each meant a process per external.</summary>
-    static void FillReposRoots(Svn svn, CheckoutConfig co, List<PushGroup> groups)
-    {
-        if (groups.Count == 0) return;
-        try
-        {
-            var roots = svn.InfoMany(co.Path, groups.Select(g => g.Wc.Length == 0 ? "." : g.Wc), recursive: false);
-            foreach (var g in groups)
-                g.ReposRoot = roots.FirstOrDefault(i => i.Path.Equals(g.Wc, StringComparison.OrdinalIgnoreCase))?.ReposRoot ?? "";
-        }
-        catch (SgException) { /* shown as empty */ }
-    }
-
-    static void Apply(SgRoot root, CheckoutConfig co, PushGroup g, string tip, string msg)
-    {
-        WriteInto(root, co, g, tip);
-        g.Revision = root.Svn.Commit(co.Path, g.Targets, msg);
-    }
-
-    /// <summary>
-    /// Puts one working copy's share of the change on disk and tells svn about it: files written, adds
-    /// added, deletes deleted, renames moved. It stops there. A push commits what this leaves behind;
-    /// an apply that is not committing leaves exactly this, for someone to read and commit by hand.
-    /// </summary>
-    static void WriteInto(SgRoot root, CheckoutConfig co, PushGroup g, string tip)
-    {
-        var git = root.Git;
-        var svn = root.Svn;
-        var cwd = co.Path;
-        var renames = g.Entries.Where(e => e.Status == 'R' && e.OldPath != null).ToList();
-        var adds = g.Entries.Where(e => e.Status == 'A').Select(e => e.Path).ToList();
-        var mods = g.Entries.Where(e => e.Status is 'M' or 'T').Select(e => e.Path).ToList();
-        var dels = g.Entries.Where(e => e.Status == 'D').Select(e => e.Path).ToList();
-
-        g.Targets = new List<string>();
-        foreach (var r in renames)
-        {
-            svn.Mv(cwd, r.OldPath!, r.Path);
-            g.Targets.Add(r.OldPath!);
-            g.Targets.Add(r.Path);
-        }
-        var write = adds.Concat(mods).Concat(renames.Select(r => r.Path)).ToList();
-        git.CheckoutPaths(cwd, tip, write);
-        foreach (var d in dels)
-        {
-            var abs = PathUtil.Join(cwd, d);
-            if (File.Exists(abs)) File.Delete(abs);
-        }
-        if (adds.Count > 0) svn.Add(cwd, adds);
-        if (dels.Count > 0) svn.Rm(cwd, dels);
-        g.Targets.AddRange(write);
-        g.Targets.AddRange(dels);
-
-        // Folders that svn add --parents or svn mv --parents just created must be in the commit too.
-        var ancestors = adds.Concat(renames.Select(r => r.Path)).SelectMany(PathUtil.Ancestors)
-            .Where(a => PathUtil.IsUnder(a, g.Wc) && !a.Equals(g.Wc, StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (ancestors.Count > 0)
-            g.AddedDirs = svn.StatusTargets(cwd, ancestors).Where(s => s.Item == "added").Select(s => s.Path).ToList();
-        g.Targets = g.AddedDirs.Concat(g.Targets).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    /// <summary>
-    /// Puts a working copy back to how the failed batch found it. That is the batch's own starting
-    /// commit, not the snapshot: with several batches, an earlier one may already be in SVN.
-    /// </summary>
-    static void Rollback(SgRoot root, CheckoutConfig co, PushGroup g, string restoreFrom, List<string> warnings)
-    {
-        var git = root.Git;
-        var svn = root.Svn;
-        var cwd = co.Path;
-        var label = g.Wc.Length == 0 ? "root" : g.Wc;
-        try
-        {
-            var renames = g.Entries.Where(e => e.Status == 'R' && e.OldPath != null).ToList();
-            var restore = g.Entries.Where(e => e.Status is 'M' or 'T' or 'D').Select(e => e.Path).Concat(renames.Select(r => r.OldPath!)).ToList();
-            var drop = g.Entries.Where(e => e.Status == 'A').Select(e => e.Path).Concat(renames.Select(r => r.Path)).ToList();
-            var all = g.Targets.Concat(restore).Concat(drop).Concat(g.AddedDirs).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (all.Count > 0)
-            {
-                var r = svn.Revert(cwd, all);
-                if (!r.Ok) warnings.Add($"svn revert in {label} said: " + r.StdErr.Trim());
-            }
-            if (restore.Count > 0) git.CheckoutPaths(cwd, restoreFrom, restore);
-            foreach (var d in drop)
-            {
-                var abs = PathUtil.Join(cwd, d);
-                if (File.Exists(abs)) File.Delete(abs);
-            }
-            foreach (var dir in g.AddedDirs.OrderByDescending(x => x.Length))
-            {
-                var abs = PathUtil.Join(cwd, dir);
-                if (Directory.Exists(abs) && !Directory.EnumerateFileSystemEntries(abs).Any()) Directory.Delete(abs);
-            }
-        }
-        catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException)
-        {
-            warnings.Add($"rollback of {label} hit a problem: {ex.Message}. Check 'svn status' in {cwd}.");
-        }
-    }
-
     /// <summary>A commit on top of the new snapshot that carries the paths of the failed groups as they were on the old tip.</summary>
     static string PendingCommit(SgRoot root, CheckoutConfig co, string newSnap, string tip, List<string> paths, string message)
     {
@@ -653,7 +567,8 @@ public static class Push
 
         var rebasing = git.RebaseInProgress(worktree);
         var paths = entries.SelectMany(e => e.OldPath != null ? new[] { e.Path, e.OldPath } : new[] { e.Path }).Distinct().ToList();
-        var localEdits = LocalEditsOn(root.Svn, co, paths);
+        var vcs = root.Vcs(co);
+        var localEdits = vcs.LocalEditsOn(root, co, paths);
         var unsupported = entries.Where(e => e.Status is not ('A' or 'M' or 'D' or 'R' or 'T' or 'C'))
             .Select(e => $"{e.Path} ({e.Status})").ToList();
         var unwritable = paths.Where(x => co.Skip.Any(sk => PathUtil.IsUnder(x, sk)) || PathUtil.HasReservedName(x)).ToList();
@@ -669,25 +584,15 @@ public static class Push
                 entries.Count > 0
                     ? $"{entries.Count} changed path(s) across {p.Groups.Count} working cop" + (p.Groups.Count == 1 ? "y" : "ies")
                     : "the branch is the same as svn/" + co.Name),
-            Check(PushChecks.Types, "Change types SVN takes", unsupported, "add, modify, delete and rename only"),
+            Check(PushChecks.Types, $"Change types {vcs.ServerName} takes", unsupported, "add, modify, delete and rename only"),
             Check(PushChecks.Paths, "Paths sg may write", unwritable, "none skipped, no reserved names"),
             Check(PushChecks.Collisions, "No local edit in the checkout on the same file", collisions, "no collisions"),
         ];
+        // A checkout that cannot take a commit at all says why. SVN always can, so it shows no row for it.
+        var blockers = vcs.WriteBlockers(root, co);
+        if (blockers.Count > 0)
+            p.Checks.Add(new PushCheck(PushChecks.Checkout, "Checkout can take a commit", false, string.Join("; ", blockers)));
         return p;
-    }
-
-    /// <summary>
-    /// The same question as LocalEdits, asked about a handful of paths instead of the whole
-    /// checkout. A full svn status walks 173k files and every external, which is far too slow to
-    /// run every time the Push window opens.
-    /// </summary>
-    static HashSet<string> LocalEditsOn(Svn svn, CheckoutConfig co, IReadOnlyList<string> paths)
-    {
-        if (paths.Count == 0) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var here = paths.Where(p => File.Exists(PathUtil.Join(co.Path, p)) || Directory.Exists(PathUtil.Join(co.Path, p))).ToList();
-        if (here.Count == 0) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try { return LocalEdits(svn.StatusTargets(co.Path, here)); }
-        catch (SgException) { return LocalEdits(svn.Status(co.Path, noIgnore: false)); }
     }
 
     /// <summary>
@@ -704,13 +609,6 @@ public static class Push
             if (PathUtil.IsUnder(path, w)) return w;
         return "";
     }
-
-    /// <summary>Paths the checkout has changed locally. Push must never write over one.</summary>
-    static HashSet<string> LocalEdits(IEnumerable<SvnStatusEntry> status) =>
-        status
-            .Where(s => s.Path.Length > 0 && s.Item is not ("external" or "unversioned" or "ignored") && !(s.Item == "normal" && s.Props == "none"))
-            .Select(s => s.Path)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Every reason this set of changes cannot go to SVN. Empty means it can.</summary>
     static List<string> Refusals(IEnumerable<DiffEntry> entries, CheckoutConfig co, HashSet<string> localEdits)

@@ -129,15 +129,19 @@ static class Cli
     static void Help()
     {
         Console.WriteLine("""
-            sg - git branches and worktrees over SVN checkouts. SVN stays the master.
+            sg - git branches and worktrees over SVN checkouts and git clones. The server stays the master.
 
             sg init [<root>]                          make the shared store in <root>/.sg
-            sg checkout add <folder> [--name n]       register an SVN checkout and build its first snapshot
-            sg checkout add --url <url> [<folder>]    svn checkout the URL first, into <root>\<name> by default
-                 [--skip p]... [--junction p]... [--optional p]... [--shared junction|clone|copy]
+            sg checkout add <folder> [--name n]       register an SVN checkout or a git clone and build its first snapshot.
+                                                      A folder with a .git of its own is a git clone; its branch must track
+                                                      the server branch
+            sg checkout add --url <url> [<folder>]    svn checkout or git clone the URL first, into <root>\<name> by default.
+                                                      A git URL names its branch after a #: https://host/repo.git#main
+                 [--skip p]... [--junction p]... [--optional p]... [--shared junction|clone|copy] [--kind svn|git]
                                                       --shared says how worktrees get the --junction folders:
-                                                      a junction, a ReFS clone (copy-on-write), or a full copy
-            sg sync [<checkout>] [--ignores]          svn update, new snapshot, move svn/<checkout>
+                                                      a junction, a ReFS clone (copy-on-write), or a full copy.
+                                                      --kind overrides what the folder or the URL looks like
+            sg sync [<checkout>] [--ignores]          svn update or git fetch and fast-forward, new snapshot, move svn/<checkout>
             sg branch <name> [--from <checkout>]      new branch and worktree from svn/<checkout>
                  [--without p]... [--minimal] [--shared junction|clone|copy]
             sg branch-update [--yes]                 preview/save edits, sync SVN, replay, recover edits
@@ -166,7 +170,8 @@ static class Cli
             sg resolve auto [--all]                   hand the files in conflict to the resolver (Claude Code unless sg.json
                                                       names another command); --all keeps going until the replay is through
             sg resolve continue|skip|abort            carry on, drop the one it stopped on, or put it all back
-            sg push [-m <message>] [--check]          commit this branch to SVN, one commit per repository
+            sg push [-m <message>] [--check]          commit this branch to the server: one SVN commit per repository,
+                                                      or one git commit pushed to the clone's branch
                                                       --check only runs the pre-checks, and exits 10 when one fails
             sg rm <branch> [--force]                  remove a worktree and its branch
             sg shelve [-m <title>] [<path>...]        put local changes aside, here or in the named paths
@@ -204,14 +209,17 @@ static class Cli
             sg server-branch <name> [--from <checkout>] [--dry-run] [--no-checkout] [-m <message>]
                  [--keep <external>]... [--as <external>=<name>]...
                                                       copy the branch on the server, every repository, then check it out
-                                                      --keep leaves an external on its branch, --as gives one a name of its own
+                                                      --keep leaves an external on its branch, --as gives one a name of its own.
+                                                      For a git checkout: push a new branch at the server branch's tip
             sg server-checkout <name|url> [--near <checkout>] [--name <n>]
-                                                      new checkout of a server branch: copy the nearest one, svn switch
+                                                      new checkout of a server branch: copy the nearest one, svn switch;
+                                                      for git, a clone that borrows the nearest clone's objects
             sg update [--check] [--force]             install the newest GitHub build over this sg.exe
                  [--repo owner/name] [--dir <folder>]  --check only reports, and exits 10 when a newer build exists
             sg version
 
             Options: --json (machine output), --verbose (show every git and svn command), --root <folder>
+            A revision is r266 for an SVN checkout and a short commit for a git one.
             """);
     }
 
@@ -344,14 +352,16 @@ static class Cli
         var hint = folder == null ? null : Directory.Exists(folder) ? folder : Path.GetDirectoryName(folder);
         var root = FindRoot(a, log, hint);
         var shared = SharedArg(a);
+        var kind = KindArg(a);
         var res = url != null
-            ? Ops.CheckoutFromUrl(root, url, folder, a.GetAll("--skip"), a.GetAll("--junction"), a.GetAll("--optional"), a.Get("--name"), shared)
-            : Ops.CheckoutAdd(root, folder!, a.GetAll("--skip"), a.GetAll("--junction"), a.GetAll("--optional"), a.Get("--name"), shared);
+            ? Ops.CheckoutFromUrl(root, url, folder, a.GetAll("--skip"), a.GetAll("--junction"), a.GetAll("--optional"), a.Get("--name"), shared, kind)
+            : Ops.CheckoutAdd(root, folder!, a.GetAll("--skip"), a.GetAll("--junction"), a.GetAll("--optional"), a.Get("--name"), shared, kind);
         if (a.Has("--json"))
-            Json(new { checkout = res.Checkout, revision = res.Snapshot.Revision, snapshot = res.Snapshot.Sha, externals = res.Snapshot.Externals, warnings = res.Snapshot.Warnings });
+            Json(new { checkout = res.Checkout, revision = res.Snapshot.Revision, commit = res.Snapshot.Commit, snapshot = res.Snapshot.Sha, externals = res.Snapshot.Externals, warnings = res.Snapshot.Warnings });
         else
         {
-            Console.WriteLine($"{res.Checkout.Name}: r{res.Snapshot.Revision}, snapshot {res.Snapshot.Sha[..10]}, {res.Snapshot.Externals.Count} externals");
+            Console.WriteLine($"{res.Checkout.Name}: {Rev.Label(res.Snapshot.Revision, res.Snapshot.Commit)}, snapshot {res.Snapshot.Sha[..10]}"
+                              + (res.Checkout.IsGit ? $", git {res.Checkout.Remote}/{res.Checkout.Branch}" : $", {res.Snapshot.Externals.Count} externals"));
             Warn(res.Snapshot.Warnings);
         }
         return 0;
@@ -366,9 +376,9 @@ static class Cli
         if (a.Has("--json")) Json(r);
         else
         {
-            Console.WriteLine($"{r.Checkout}: r{r.Revision}, {(r.Changed ? "new snapshot" : "no change")} {r.Sha[..10]}"
+            Console.WriteLine($"{r.Checkout}: {r.Label}, {(r.Changed ? "new snapshot" : "no change")} {r.Sha[..10]}"
                               + (r.Overlaid > 0 ? $", {r.Overlaid} local edit(s) left out" : "")
-                              + (r.Conflicts > 0 ? $", {r.Conflicts} svn conflict(s) in the checkout" : "")
+                              + (r.Conflicts > 0 ? $", {r.Conflicts} conflict(s) in the checkout" : "")
                               + (r.KeptSwitched.Count > 0 ? $", kept {string.Join(", ", r.KeptSwitched)} switched" : ""));
             Warn(r.Warnings);
         }
@@ -420,6 +430,15 @@ static class Cli
         var s = a.Get("--shared");
         return s == null ? null : SharedFolders.Parse(s);
     }
+
+    /// <summary>--kind svn|git. Null reads the folder or the URL.</summary>
+    static CheckoutKind? KindArg(Args a) => a.Get("--kind")?.Trim().ToLowerInvariant() switch
+    {
+        null => null,
+        "svn" => CheckoutKind.Svn,
+        "git" => CheckoutKind.Git,
+        var s => throw new SgException("--kind is svn or git, not " + s),
+    };
 
     static int Rebase(Args a, ILog log)
     {
@@ -625,10 +644,10 @@ static class Cli
         {
             foreach (var g in r.Groups)
                 Console.WriteLine($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}"
-                                  + (g.Revision.HasValue ? $" r{g.Revision}" : "")
+                                  + (g.Label.Length > 0 ? " " + g.Label : "")
                                   + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
             Console.WriteLine(r.AllCommitted
-                ? $"pushed. {r.Branch} now equals svn/{r.Checkout} at r{r.Revision}"
+                ? $"pushed. {r.Branch} now equals svn/{r.Checkout} at {r.Label}"
                 : $"partly pushed. {r.Branch} keeps the rest: {r.BranchState}");
             Warn(r.Warnings);
         }
@@ -678,7 +697,7 @@ static class Cli
             return 0;
         }
         Server.ExecuteBranch(root, plan);
-        foreach (var r in plan.Repos) Console.WriteLine($"  {r.ReposRoot,-60} r{r.Revision}");
+        foreach (var r in plan.Repos) Console.WriteLine($"  {r.ReposRoot,-60} {r.Label}");
         if (a.Has("--no-checkout"))
         {
             Console.WriteLine($"branch {name} is on the server. Check it out with: sg server-checkout {name}");
@@ -701,7 +720,8 @@ static class Cli
     static void PrintCheckout(CheckoutResult res)
     {
         Console.WriteLine($"checkout {res.Checkout.Name}: {res.Checkout.Path}");
-        Console.WriteLine($"  {res.Checkout.Url} r{res.Snapshot.Revision}, snapshot {res.Snapshot.Sha[..10]}, {res.Snapshot.Externals.Count} externals");
+        Console.WriteLine($"  {res.Checkout.Url} {Rev.Label(res.Snapshot.Revision, res.Snapshot.Commit)}, snapshot {res.Snapshot.Sha[..10]}"
+                          + (res.Checkout.IsGit ? "" : $", {res.Snapshot.Externals.Count} externals"));
         Console.WriteLine($"  next: sg branch <name> --from {res.Checkout.Name}");
         Warn(res.Snapshot.Warnings);
     }
@@ -755,7 +775,7 @@ static class Cli
             if (a.Has("--json")) { Json(m); return 0; }
             Console.WriteLine($"{m.Branch} from {m.Checkout}, {m.Commits} commit(s), made {m.Created:yyyy-MM-dd HH:mm} on {m.From}");
             if (m.HasAppearance) Console.WriteLine("  Includes checkout appearance; an existing local choice will be kept.");
-            foreach (var b in m.Bases) Console.WriteLine($"  {b.Where,-26} r{b.Revision,-10} {b.Url}");
+            foreach (var b in m.Bases) Console.WriteLine($"  {b.Where,-26} {Rev.Label(b.Revision, b.Commit),-10} {b.Url}");
             foreach (var s in m.Subjects) Console.WriteLine("  . " + s);
             return 0;
         }
@@ -855,7 +875,7 @@ static class Cli
         if (a.Has("--json")) { Json(s); return 0; }
         Console.WriteLine("root: " + s.Root);
         foreach (var c in s.Checkouts)
-            Console.WriteLine($"  checkout {c.Name,-20} r{c.Revision,-7} {c.Path}" + (c.LocalEdits.HasValue ? $"  {c.LocalEdits} local edit(s)" : "")
+            Console.WriteLine($"  checkout {c.Name,-20} {c.Label,-10} {c.Path}" + (c.Kind == CheckoutKind.Git ? "  (git)" : "") + (c.LocalEdits.HasValue ? $"  {c.LocalEdits} local edit(s)" : "")
                               + (c.Shelves > 0 ? $"  {c.Shelves} shelf/shelves" : ""));
         foreach (var w in s.Worktrees)
             Console.WriteLine($"  branch   {w.Branch,-20} base svn/{w.Base,-12} +{w.Ahead}"
@@ -935,7 +955,7 @@ static class Cli
                         "edits" => "local edits of checkout " + e.Branch,
                         _ => "shelf \"" + e.Title + "\"" + (e.Branch.Length > 0 ? " of " + e.Branch : ""),
                     };
-                    Console.WriteLine($"  {e.Kind,-7} {e.Name,-28} {what}  from {(e.Checkout.Length > 0 ? e.Checkout : e.Url)} r{e.Revision}"
+                    Console.WriteLine($"  {e.Kind,-7} {e.Name,-28} {what}  from {(e.Checkout.Length > 0 ? e.Checkout : e.Url)} {Rev.Label(e.Revision, e.Commit)}"
                                       + (e.ExistsHere ? "  (here)" : "") + (e.HasWip ? "  +wip" : "")
                                       + (e.Last is { } t ? $"  {t.LocalDateTime:yyyy-MM-dd HH:mm}" : ""));
                     foreach (var d in e.Drift) Console.WriteLine("           moved on since: " + d);
@@ -1152,7 +1172,7 @@ sealed class Args
 {
     static readonly HashSet<string> ValueOpts = new(StringComparer.OrdinalIgnoreCase)
     {
-        "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared",
+        "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared", "--kind",
         "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only",
         "--worktree", "--body-file", "--body", "--file", "--side", "--lines", "--actor", "--expected-revision", "--version", "--request-id", "--state", "--offset",
     };

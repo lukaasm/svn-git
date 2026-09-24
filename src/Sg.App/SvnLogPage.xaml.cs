@@ -6,19 +6,17 @@ using Sg.Core;
 namespace Sg.App;
 
 /// <summary>
-/// The SVN history of the checkout and every external in one list, with changed paths and diffs from the
-/// server. Opened from Sync it shows only what a sync would bring in, and hands the sync back to the
-/// overview when the user says go.
+/// The server's history of the checkout and every external in one list, with changed paths and diffs from
+/// the server: svn log, or a git clone's branch. Opened from Sync it shows only what a sync would bring
+/// in, and hands the sync back to the overview when the user says go.
 /// </summary>
 public sealed partial class SvnLogPage : SgPage
 {
-    sealed record WcChoice(string Rel, string Url, string ReposRoot, long WcRevision, long? SnapshotRevision);
-
     readonly CheckoutConfig _co;
     readonly ListFilter _paths;
-    List<WcChoice> _wcs = new();
-    WcChoice? _wc;
-    SvnLogRevision? _rev;
+    List<HistorySource> _wcs = new();
+    HistorySource? _wc;
+    LogRevision? _rev;
     readonly bool _autoSelect;
     readonly bool _incoming;
 
@@ -58,7 +56,7 @@ public sealed partial class SvnLogPage : SgPage
         _paths = new ListFilter(PathsFilter, Paths, PathsHeader, r => ((SvnPathRow)r).Display);
         _paths.Picked += OnPicked;
         _paths.ExpectStats = true;
-        Title = incoming ? "Incoming changes" : "SVN log";
+        Title = incoming ? "Incoming changes" : ServerWords.LogTitle(co);
         Checkout = co.Name;
         Subtitle = $"{co.Name}   {co.Path}";
         NoRevisions.Title = incoming ? "Up to date with the server" : "No revisions";
@@ -73,25 +71,7 @@ public sealed partial class SvnLogPage : SgPage
     {
         var root = Session.Require();
         RevisionsSkeleton.Show();
-        var wcs = await Runner.Quiet(Pane, () =>
-        {
-            var svn = root.Svn;
-            var status = svn.Status(_co.Path, noIgnore: false);
-            var rels = new List<string> { "" };
-            rels.AddRange(status.Where(e => e.Item == "external" && e.Path.Length > 0).Select(e => e.Path).OrderBy(p => p, StringComparer.Ordinal));
-            var infos = svn.InfoMany(_co.Path, rels.Select(r => r.Length == 0 ? "." : r), recursive: false);
-            var snapSha = root.Git.RefSha(root.SnapshotRef(_co));
-            var meta = snapSha != null ? SnapshotMeta.Parse(root.Git.Body(snapSha)) : null;
-            var list = new List<WcChoice>();
-            foreach (var rel in rels)
-            {
-                var info = infos.FirstOrDefault(i => i.Path.Equals(rel, StringComparison.OrdinalIgnoreCase));
-                if (info == null) continue;
-                long? snapRev = meta == null ? null : rel.Length == 0 ? meta.Revision : meta.Externals.TryGetValue(rel, out var er) ? er : null;
-                list.Add(new WcChoice(rel, info.Url.TrimEnd('/'), info.ReposRoot.TrimEnd('/'), info.Revision, snapRev));
-            }
-            return list;
-        });
+        var wcs = await Runner.Quiet(Pane, () => root.Vcs(_co).HistorySources(root, _co));
         if (wcs == null)
         {
             // The reason is in the strip; the page shows what it still offers rather than a live skeleton.
@@ -137,8 +117,9 @@ public sealed partial class SvnLogPage : SgPage
         if (Revisions.ItemsSource == null) RevisionsSkeleton.Show();
         ShowEmpty(false);
         // The URL, not the working copy path: a working copy path only shows history up to its own revision.
+        var vcs = root.Vcs(_co);
         var logs = await Runner.Quiet(Pane, () =>
-            Task.WhenAll(wcs.Select(wc => Task.Run(() => (wc, entries: root.Svn.LogVerbose(_co.Path, wc.Url, limit))))));
+            Task.WhenAll(wcs.Select(wc => Task.Run(() => (wc, entries: vcs.Log(root, _co, wc, limit))))));
         if (!ReferenceEquals(wcs, _wcs)) return;
         RevisionsSkeleton.Hide();
         if (logs == null)
@@ -161,11 +142,12 @@ public sealed partial class SvnLogPage : SgPage
             var floor = Math.Min(wc.WcRevision, wc.SnapshotRevision ?? wc.WcRevision);
             var pending = entries.Count(r => r.Revision > (_incoming ? floor : wc.WcRevision));
             var snap = wc.SnapshotRevision.HasValue
-                ? (wc.SnapshotRevision == wc.WcRevision ? "the snapshot matches it" : $"the snapshot svn/{_co.Name} is at r{wc.SnapshotRevision}, run Sync")
+                ? (wc.SnapshotRevision == wc.WcRevision ? "the snapshot matches it"
+                    : _co.IsGit ? $"the snapshot svn/{_co.Name} is older, run Sync" : $"the snapshot svn/{_co.Name} is at r{wc.SnapshotRevision}, run Sync")
                 : "no snapshot yet";
-            var tip = $"{(wc.Rel.Length == 0 ? "root" : wc.Rel)}\n{wc.Url}\nWorking copy at r{wc.WcRevision}, {snap}. "
+            var tip = $"{wc.Label}\n{wc.Url}\n{(_co.IsGit ? "Clone" : "Working copy")} at {wc.WcLabel}, {snap}. "
                       + (pending == 0 ? "Nothing newer on the server." : $"{pending}{(pending >= limit ? "+" : "")} newer revision(s) on the server, not synced yet.");
-            if (pending > 0) behind.Add($"{(wc.Rel.Length == 0 ? "root" : wc.Rel)} {pending}{(pending >= limit ? "+" : "")}");
+            if (pending > 0) behind.Add($"{wc.Label} {pending}{(pending >= limit ? "+" : "")}");
             rows.AddRange(entries.Where(r => !_incoming || r.Revision > floor).Select(r => new SvnRevRow
             {
                 Revision = r.Revision,
@@ -173,7 +155,7 @@ public sealed partial class SvnLogPage : SgPage
                 Date = Msg.Day(r.Date),
                 Subject = Msg.Subject(r.Message),
                 Entry = r,
-                Group = wc.Rel,
+                Group = wc.Wc,
                 RepoColor = colour,
                 RepoTip = tip,
                 ShowRepo = true,
@@ -209,10 +191,10 @@ public sealed partial class SvnLogPage : SgPage
     {
         if (Revisions.SelectedItem is not SvnRevRow row) return;
         // The diff comes from the working copy the row sits under, not from whichever one was picked last.
-        _wc = _wcs.FirstOrDefault(w => w.Rel.Equals(row.Group, StringComparison.OrdinalIgnoreCase));
+        _wc = _wcs.FirstOrDefault(w => w.Wc.Equals(row.Group, StringComparison.OrdinalIgnoreCase));
         if (_wc == null) return;
         _rev = row.Entry;
-        UserColors.Header(DetailHead, $"r{row.Revision}   ", row.Entry.Author, $"   {Msg.When(row.Entry.Date)}");
+        UserColors.Header(DetailHead, $"{row.Entry.Label}   ", row.Entry.Author, $"   {Msg.When(row.Entry.Date)}");
         DetailMessage.Text = Msg.Body(row.Entry.Message);
         _paths.SetItems(row.Entry.Paths.Select(p => new SvnPathRow
         {
@@ -221,13 +203,14 @@ public sealed partial class SvnLogPage : SgPage
         }).ToList(), "Changed paths");
         // --select walks all the way to a file diff, so a check can see what the page really draws.
         if (_autoSelect) _paths.SelectFirstFile();
-        var svn = Session.Require().Svn;
-        var url = _wc.Url;
-        var rev = row.Revision;
-        var title = $"r{rev}  all files, unified";
+        var root = Session.Require();
+        var vcs = root.Vcs(_co);
+        var wc = _wc;
+        var rev = row.Entry;
+        var title = $"{rev.Label}  all files, unified";
         Diff.BeginLoading(title);
-        var patch = await Task.Run(() => svn.DiffRevision(url, rev));
-        if (_rev?.Revision != rev) return;
+        var patch = await Task.Run(() => vcs.RevisionDiff(root, _co, wc, rev, null));
+        if (_rev != rev) return;
         _paths.SetStats(DiffStats.Parse(patch));
         if (!_paths.HasPick) Diff.ShowUnified(patch, title);
     }
@@ -235,16 +218,18 @@ public sealed partial class SvnLogPage : SgPage
     async void OnPicked(TreeNode node)
     {
         if (_rev == null || _wc == null) return;
-        var svn = Session.Require().Svn;
-        var rev = _rev.Revision;
+        var root = Session.Require();
+        var vcs = root.Vcs(_co);
+        var wc = _wc;
+        var rev = _rev;
         if (node.Row is not SvnPathRow row || (node.IsFolder && row.Path.Kind == "dir"))
         {
             // A folder: everything the revision changed under it, as one patch from the server.
-            var url = _wc.ReposRoot + "/" + node.FullPath.TrimStart('/');
-            var title = $"{node.FullPath}   {node.FileCount} path(s), r{rev}, unified";
+            var folder = node.FullPath;
+            var title = $"{node.FullPath}   {node.FileCount} path(s), {rev.Label}, unified";
             Diff.BeginLoading(title);
-            var patch = await Task.Run(() => svn.DiffRevision(url, rev));
-            if (_paths.IsCurrent(node) && _rev?.Revision == rev) Diff.ShowUnified(patch, title);
+            var patch = await Task.Run(() => vcs.RevisionDiff(root, _co, wc, rev, folder));
+            if (_paths.IsCurrent(node) && _rev == rev) Diff.ShowUnified(patch, title);
             return;
         }
         var p = row.Path;
@@ -253,12 +238,12 @@ public sealed partial class SvnLogPage : SgPage
             Diff.ShowText($"folder: {p.Path}", p.Path);
             return;
         }
-        var fileUrl = _wc.ReposRoot + p.Path;
-        await Diff.ShowFileAsync(p.Path, $"{p.Path}   r{rev - 1} → r{rev}", new DiffView.Reads(
-                () => p.Action == "A" && p.CopyFrom == null ? "" : svn.CatUrl(fileUrl, rev - 1),
-                () => p.Action == "D" ? "" : svn.CatUrl(fileUrl, rev)),
+        var sides = _co.IsGit ? $"{rev.Label}^ → {rev.Label}" : $"r{rev.Revision - 1} → r{rev.Revision}";
+        await Diff.ShowFileAsync(p.Path, $"{p.Path}   {sides}", new DiffView.Reads(
+                () => vcs.FileAt(root, _co, wc, rev, p, before: true),
+                () => vcs.FileAt(root, _co, wc, rev, p, before: false)),
             // The revision can change under the selection too, so both have to still be the ones asked for.
-            () => _paths.IsCurrent(node) && _rev?.Revision == rev);
+            () => _paths.IsCurrent(node) && _rev == rev);
     }
 
     /// <summary>
@@ -274,10 +259,7 @@ public sealed partial class SvnLogPage : SgPage
     string? CheckoutRelative(TreeNode node)
     {
         if (_wc == null) return null;
-        var root = _wc.ReposRoot.TrimEnd('/');
-        var mine = _wc.Url.TrimEnd('/').StartsWith(root, StringComparison.OrdinalIgnoreCase)
-            ? _wc.Url.TrimEnd('/')[root.Length..]
-            : "";
+        var mine = _wc.Prefix.TrimEnd('/');
         var p = "/" + node.FullPath.TrimStart('/');
         if (mine.Length > 0)
         {
@@ -286,7 +268,7 @@ public sealed partial class SvnLogPage : SgPage
             p = p[mine.Length..];
         }
         var inside = p.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-        return _wc.Rel.Length == 0 ? inside : PathUtil.Join(_wc.Rel, inside);
+        return _wc.Wc.Length == 0 ? inside : PathUtil.Join(_wc.Wc, inside);
     }
 
     string? LocalOf(TreeNode node) =>

@@ -9,6 +9,8 @@ public sealed class SnapshotInfo
 {
     public string Sha = "";
     public long Revision;
+    /// <summary>The server commit it holds, for a git checkout. Empty for SVN.</summary>
+    public string Commit = "";
     public string Url = "";
     public List<ExternalInfo> Externals = new();
     public List<string> Warnings = new();
@@ -16,11 +18,24 @@ public sealed class SnapshotInfo
     public bool Unchanged;
 }
 
-/// <summary>What a snapshot commit says about itself, read back from its trailers.</summary>
+/// <summary>
+/// What a snapshot commit says about itself, read back from its trailers. An SVN snapshot writes
+/// svn-rev, svn-url and one svn-external per external; a git snapshot writes git-rev, the height of its
+/// commit on the branch, git-url, and git-commit.
+/// </summary>
 public sealed class SnapshotMeta
 {
+    public const string GitRev = "git-rev: ";
+    public const string GitUrl = "git-url: ";
+    public const string GitCommit = "git-commit: ";
+
     public long Revision;
     public string Url = "";
+    /// <summary>The server commit, for a git snapshot. Empty for SVN.</summary>
+    public string Commit = "";
+    public CheckoutKind Kind => Commit.Length > 0 ? CheckoutKind.Git : CheckoutKind.Svn;
+    /// <summary>What a reader calls the snapshot's place on the server: r266, or the short commit.</summary>
+    public string Label => Rev.Label(Revision, Commit);
     public Dictionary<string, long> Externals = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> ExternalUrls = new(StringComparer.OrdinalIgnoreCase);
 
@@ -32,6 +47,9 @@ public sealed class SnapshotMeta
             var line = raw.TrimEnd('\r');
             if (line.StartsWith("svn-rev: ")) long.TryParse(line[9..].Trim(), out m.Revision);
             else if (line.StartsWith("svn-url: ")) m.Url = line[9..].Trim();
+            else if (line.StartsWith(GitRev)) long.TryParse(line[GitRev.Length..].Trim(), out m.Revision);
+            else if (line.StartsWith(GitUrl)) m.Url = line[GitUrl.Length..].Trim();
+            else if (line.StartsWith(GitCommit)) m.Commit = line[GitCommit.Length..].Trim();
             else if (line.StartsWith("svn-external: "))
             {
                 var parts = line[14..].Split(' ', 3);
@@ -45,7 +63,8 @@ public sealed class SnapshotMeta
 
 /// <summary>
 /// A snapshot is the exact content of a checkout as SVN has it, at the revisions of the root and of every external.
-/// Local edits and skipped paths are left out. Only files that changed on disk get hashed.
+/// Local edits and skipped paths are left out. Only files that changed on disk get hashed. This is the SVN
+/// builder; a git checkout's snapshot is built by <see cref="GitSnapshot"/>.
 /// </summary>
 public static class Snapshot
 {

@@ -199,7 +199,7 @@ public static class Dialogs
 
     public static async Task<ServerCheckoutInput?> ServerCheckout(object owner, SgRoot root, CheckoutConfig? preselect)
     {
-        var target = new TextBox { Header = "Server branch name, or full URL", PlaceholderText = "stable" };
+        var target = new TextBox { Header = "Server branch name, or full URL", PlaceholderText = "stable, or for git https://host/repo.git#stable" };
         var near = new ComboBox { Header = "Copy from the nearest checkout", ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch };
         near.SelectedItem = (preselect ?? root.Config.Checkouts.FirstOrDefault())?.Name;
         var name = new TextBox { Header = "Folder name (optional)", PlaceholderText = "same as the branch name" };

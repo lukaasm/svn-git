@@ -13,6 +13,12 @@ public sealed class ExportWc
     public long Revision { get; set; }
 
     /// <summary>
+    /// The server commit, for a git checkout; Revision is then its height on the branch. Null for SVN,
+    /// and on an export written before sg took git checkouts.
+    /// </summary>
+    public string? Commit { get; set; }
+
+    /// <summary>
     /// The repository's own id, as SVN reports it, and the path inside that repository. Together they say
     /// which repository and which folder without saying how to reach it, which is the part that differs
     /// between two machines: one reaches the server by name and the other by address, one over http and
@@ -70,6 +76,10 @@ public sealed record ExportResult(string File, string Branch, string Checkout, i
 /// <summary>A working copy that is not where the export was taken from: another revision, or another branch.</summary>
 public sealed record ExportDrift(string Where, string Url, long Exported, long Local, string? LocalUrl = null)
 {
+    /// <summary>The git commits on both sides, when the checkout is a git one. Null for SVN.</summary>
+    public string? ExportedCommit { get; init; }
+    public string? LocalCommit { get; init; }
+
     /// <summary>
     /// This working copy points somewhere else entirely. Then the two revisions are numbers out of two
     /// different histories and comparing them says nothing, so the URL is what gets reported.
@@ -81,8 +91,8 @@ public sealed record ExportDrift(string Where, string Url, long Exported, long L
 
     public override string ToString() =>
         Elsewhere ? $"{Where}: exported from {Url}, here it is {LocalUrl}"
-        : Missing ? $"{Where}: exported at r{Exported}, not here at all"
-        : $"{Where}: exported at r{Exported}, here at r{Local}";
+        : Missing ? $"{Where}: exported at {Rev.Label(Exported, ExportedCommit)}, not here at all"
+        : $"{Where}: exported at {Rev.Label(Exported, ExportedCommit)}, here at {Rev.Label(Local, LocalCommit)}";
 }
 
 public sealed class ImportResult
@@ -203,7 +213,7 @@ public static class Export
     {
         var list = new List<ExportWc>
         {
-            new() { Rel = "", Url = (snap.Url.Length > 0 ? snap.Url : co.Url).TrimEnd('/'), Revision = snap.Revision },
+            new() { Rel = "", Url = (snap.Url.Length > 0 ? snap.Url : co.Url).TrimEnd('/'), Revision = snap.Revision, Commit = snap.Commit.Length > 0 ? snap.Commit : null },
         };
         foreach (var (rel, rev) in snap.Externals.OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase))
             list.Add(new ExportWc
@@ -226,6 +236,14 @@ public static class Export
     /// </summary>
     static void Identify(SgRoot root, CheckoutConfig co, List<ExportWc> list)
     {
+        if (co.IsGit)
+        {
+            // One working copy, and the clone says who it is without a server: its first commit and the branch.
+            var id = Identity(root, co);
+            var top = list.FirstOrDefault(b => b.Rel.Length == 0);
+            if (id != null && top != null) (top.Uuid, top.RepoPath) = id.Value;
+            return;
+        }
         try
         {
             var paths = list.Select(b => b.Rel.Length == 0 ? co.Path : PathUtil.Join(co.Path, b.Rel)).ToList();
@@ -453,23 +471,11 @@ public static class Export
         return slash < 0 ? "" : n[slash..];
     }
 
-    /// <summary>The repository id and path of a registered checkout, read from the working copy on disk. Null when svn cannot say.</summary>
+    /// <summary>The repository id and path of a registered checkout, read from the working copy on disk. Null when it cannot say.</summary>
     static (string Uuid, string Path)? Identity(SgRoot root, CheckoutConfig co)
     {
-        try
-        {
-            var info = root.Svn.Info(co.Path, co.Path);
-            var repoRoot = info.ReposRoot.TrimEnd('/');
-            var here = info.Url.TrimEnd('/');
-            var rel = repoRoot.Length > 0 && here.StartsWith(repoRoot, StringComparison.OrdinalIgnoreCase)
-                ? here[repoRoot.Length..].TrimStart('/')
-                : "";
-            return (info.Uuid, rel);
-        }
-        catch (Exception e) when (e is SgException or IOException)
-        {
-            return null;
-        }
+        try { return root.Vcs(co).Identity(root, co); }
+        catch (Exception e) when (e is SgException or IOException) { return null; }
     }
 
     /// <summary>How far the checkout here has moved from where the export was taken. Empty means they match.</summary>
@@ -489,7 +495,12 @@ public static class Export
             // http here against https there reported all seven working copies as somewhere else entirely.
             if (b.Url.Length > 0 && myUrl.Length > 0 && !SameUrl(myUrl, b.Url))
                 drift.Add(new ExportDrift(b.Where, b.Url, b.Revision, mine, myUrl));
-            else if (mine != b.Revision) drift.Add(new ExportDrift(b.Where, b.Url, b.Revision, mine));
+            // A git base is its commit: two histories can reach the same height, and one pushed over the
+            // other is exactly that. The height alone decides only where the export did not record one.
+            else if (isRoot && b.Commit is { Length: > 0 } && here.Commit.Length > 0
+                     ? !b.Commit.Equals(here.Commit, StringComparison.OrdinalIgnoreCase)
+                     : mine != b.Revision)
+                drift.Add(new ExportDrift(b.Where, b.Url, b.Revision, mine) { ExportedCommit = b.Commit, LocalCommit = isRoot && here.Commit.Length > 0 ? here.Commit : null });
         }
         return drift;
     }

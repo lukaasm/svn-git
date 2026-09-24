@@ -209,12 +209,13 @@ public sealed partial class ServerBranchPage : SgPage
         var co = Source();
         if (_plan == null || co == null) return;
         var plan = _plan;
-        if (!await Dialogs.Confirm(this, "Create server branch " + plan.Name,
-                $"This makes {plan.Repos.Count} revision(s) on the server that everyone can see. Continue?", "Create")) return;
+        if (!await Dialogs.Confirm(this, "Create server branch " + plan.Name, co.IsGit
+                ? $"This pushes a new branch {plan.Name} to {co.Remote}, at the newest commit of {ServerWords.Target(co)}. Everyone can see it. Continue?"
+                : $"This makes {plan.Repos.Count} revision(s) on the server that everyone can see. Continue?", "Create")) return;
         await Busy.During(CreateButton, async () =>
         {
             var ok = await Runner.Run(Pane, "server branch " + plan.Name, () => Server.ExecuteBranch(root, plan));
-            ShowPlan(plan.Describe() + "\n\n" + string.Join("\n", plan.Repos.Select(r => $"{r.ReposRoot}: {r.State}" + (r.Revision.HasValue ? $" r{r.Revision}" : ""))));
+            ShowPlan(plan.Describe() + "\n\n" + string.Join("\n", plan.Repos.Select(r => $"{r.ReposRoot}: {r.State}" + (r.Label.Length > 0 ? " " + r.Label : ""))));
             if (!ok) return;
             if (NoCheckout.IsChecked == true)
             {
@@ -222,7 +223,7 @@ public sealed partial class ServerBranchPage : SgPage
                 return;
             }
             var res = await Runner.Run(Pane, "server checkout " + plan.Name, () => Server.Checkout(root, co, plan.NewRootUrl, plan.Name));
-            if (res != null) Pane.Append($"checkout {res.Checkout.Name}: {res.Checkout.Path}, r{res.Snapshot.Revision}");
+            if (res != null) Pane.Append($"checkout {res.Checkout.Name}: {res.Checkout.Path}, {Rev.Label(res.Snapshot.Revision, res.Snapshot.Commit)}");
         }, restoreEnabled: false);
     }
 

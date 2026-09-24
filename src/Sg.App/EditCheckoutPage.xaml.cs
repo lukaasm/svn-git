@@ -51,6 +51,12 @@ public sealed partial class EditCheckoutPage : SgPage
         _ = SharedBox.DetectAsync(co.Path, Session.Root?.Config.WorktreeRoot ?? Session.Root?.RootPath);
         var path = co.Path;
         _ = PathPicker.OfferFoldersOf(path, SkipPick, JunctionPick, OptionalPick);
+        if (co.IsGit)
+        {
+            // A git clone has no externals to point anywhere: the section would only ever say so.
+            ExternalsHeader.Visibility = ExternalsIntro.Visibility = ExternalsCard.Visibility = Visibility.Collapsed;
+            return;
+        }
         _ = LoadExternalsAsync();
     }
 
@@ -148,11 +154,11 @@ public sealed partial class EditCheckoutPage : SgPage
 
         // Reading the branch list is a call to the server, so the box works as a URL field meanwhile.
         var root = Session.Root;
-        if (root == null) return;
+        if (root == null || CheckoutConfig() is not { } co) return;
         var url = row.Url;
         if (_branchesFor != url)
         {
-            var names = await Runner.Quiet(Pane, () => Ops.BranchNames(root, url));
+            var names = await Runner.Quiet(Pane, () => Ops.BranchNames(root, co, url));
             if (Externals.SelectedItem != row) return;   // the user moved on while the server answered
             _branches = names ?? new List<string>();
             _branchesFor = url;
@@ -166,8 +172,8 @@ public sealed partial class EditCheckoutPage : SgPage
     {
         var root = Session.Root;
         if (root == null || BranchBox.SelectedItem is not string branch) return;
-        if (Externals.SelectedItem is not ExternalRow row) return;
-        try { BranchBox.Text = Ops.UrlForBranch(root, row.Url, branch); }
+        if (Externals.SelectedItem is not ExternalRow row || CheckoutConfig() is not { } co) return;
+        try { BranchBox.Text = Ops.UrlForBranch(root, co, row.Url, branch); }
         catch (SgException) { /* a repository that follows neither shape: the typed URL still works */ }
     }
 

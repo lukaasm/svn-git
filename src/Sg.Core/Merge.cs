@@ -30,7 +30,7 @@ public sealed record MergePair(MergeTarget Target, string SourceUrl)
 /// One revision on offer, and which working copy would take it. Merged says this working copy already
 /// has it, so it is folded away rather than offered again.
 /// </summary>
-public sealed record MergeRevision(MergePair Pair, SvnLogRevision Entry, bool Merged)
+public sealed record MergeRevision(MergePair Pair, LogRevision Entry, bool Merged)
 {
     public long Revision => Entry.Revision;
 }
@@ -52,6 +52,9 @@ public sealed class MergeResult
     /// <summary>Which revisions it took. Empty means everything the source has that this branch has not.</summary>
     public List<long> Revisions = new();
 
+    /// <summary>Which commits it took, for a git checkout. Revisions is empty then.</summary>
+    public List<string> Commits = new();
+
     /// <summary>It took those revisions back out rather than bringing them in.</summary>
     public bool Reverse;
 
@@ -66,14 +69,104 @@ public sealed class MergeResult
 /// Merging between server branches, in the checkout, the way it has always been done here by hand.
 /// Two shapes: a cherry pick of named revisions, and everything the source has that this branch has not.
 /// Both leave their result as local changes in the checkout, which is where they are read and committed;
-/// nothing here talks to git, and nothing here commits.
+/// nothing here commits. What a merge is made of - svn merge, or a git cherry-pick or squash merge in the
+/// clone - is the checkout's server's business, through <see cref="ICheckoutVcs"/>.
 /// </summary>
 public static class Merge
 {
     /// <summary>The working copies of a checkout a merge can target: the root first, then each external.</summary>
+    public static List<MergeTarget> Targets(SgRoot root, CheckoutConfig co) => root.Vcs(co).MergeTargets(root, co);
+
+    /// <summary>The branches of the same repository this working copy could take changes from, itself left out.</summary>
+    public static List<MergeSource> Sources(SgRoot root, CheckoutConfig co, MergeTarget target) => root.Vcs(co).MergeSources(root, co, target);
+
+    /// <summary>The SVN branches beside an SVN target. The overload above asks the checkout's own server.</summary>
+    public static List<MergeSource> Sources(SgRoot root, MergeTarget target) => SvnMerge.Sources(root, target);
+
+    /// <summary>The revisions of an SVN branch, newest first, with the paths each one touched.</summary>
+    public static List<LogRevision> Revisions(SgRoot root, string url, int limit = 100) => SvnMerge.Revisions(root, url, limit);
+
+    /// <summary>What an SVN branch declares as externals, as the folder they land in against the URL they come from.</summary>
+    public static Dictionary<string, string> SourceExternals(SgRoot root, string sourceUrl) => SvnMerge.SourceExternals(root, sourceUrl);
+
+    /// <summary>Every working copy a merge into this target covers, each with the folder of the source branch it takes from.</summary>
+    public static List<MergePair> Pairs(SgRoot root, CheckoutConfig co, MergeTarget target, string sourceUrl) =>
+        root.Vcs(co).MergePairs(root, co, target, sourceUrl);
+
+    /// <summary>What is on offer across every working copy the merge covers, newest first, merged ones marked.</summary>
+    public static List<MergeRevision> Offered(SgRoot root, CheckoutConfig co, IReadOnlyList<MergePair> pairs, int limit = 100) =>
+        root.Vcs(co).MergeOffered(root, co, pairs, limit);
+
+    /// <summary>
+    /// Everything that stops a merge before it starts. The window shows these; a run checks them again,
+    /// because the CLI and an agent reach it without going past the window.
+    /// </summary>
+    public static List<string> Problems(SgRoot root, CheckoutConfig co, MergeTarget target, string sourceUrl) =>
+        root.Vcs(co).MergeProblems(root, co, target, sourceUrl);
+
+    /// <summary>
+    /// One SVN working copy's merge, by revision number. revisions names the ones to take; null or empty
+    /// takes everything the source has that this branch has not.
+    /// </summary>
+    public static MergeResult Run(SgRoot root, CheckoutConfig co, MergeTarget target, string sourceUrl,
+        IReadOnlyList<long>? revisions, bool dryRun, bool reverse = false) =>
+        SvnMerge.Run(root, co, target, sourceUrl, revisions, dryRun, reverse);
+
+    /// <summary>
+    /// The whole merge, across every working copy it covers. Each pair takes the revisions that belong
+    /// to it; a pair with nothing to take is left alone. With no revisions named, every pair takes
+    /// everything the branch on its other side has that it has not.
+    ///
+    /// It stops at the first working copy that fails and says what the ones before it did: a merge is
+    /// not one transaction across repositories, and pretending otherwise would hide half a result.
+    /// </summary>
+    public static MergeResult RunAll(SgRoot root, CheckoutConfig co, IReadOnlyList<MergePair> pairs,
+        IReadOnlyList<MergeRevision>? picked, bool dryRun, bool reverse = false)
+    {
+        using var operation = root.Lock();
+        var vcs = root.Vcs(co);
+        var whole = new MergeResult
+        {
+            DryRun = dryRun,
+            Reverse = reverse,
+            Target = pairs.Count == 1 ? pairs[0].Label : "the checkout",
+        };
+        foreach (var pair in pairs)
+        {
+            var mine = picked?.Where(p => p.Pair == pair).Select(p => p.Entry).ToList();
+            // Named revisions that belong to another working copy are not this one's business.
+            if (picked != null && (mine == null || mine.Count == 0)) continue;
+            MergeResult part;
+            try { part = vcs.MergeRun(root, co, pair, mine, dryRun, reverse); }
+            catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException or OperationCanceledException)
+            {
+                whole.Failure = $"{pair.Label}: {ex.Message}. Earlier targets may already have changed; inspect checkout changes before retrying.";
+                whole.Output += "\n" + whole.Failure;
+                break;
+            }
+            whole.Parts.Add(part);
+            whole.Changed.AddRange(part.Changed);
+            whole.Conflicts.AddRange(part.Conflicts);
+            whole.Revisions.AddRange(part.Revisions);
+            whole.Commits.AddRange(part.Commits);
+            whole.Output += (whole.Output.Length > 0 ? "\n\n" : "") + $"--- {pair.Label} ---\n" + part.Output;
+        }
+        if (whole.Parts.Count == 0 && whole.Failure == null) throw new SgException("none of the picked revisions belong to a working copy this merge covers");
+        whole.SourceUrl = whole.Parts.FirstOrDefault()?.SourceUrl ?? "";
+        return whole;
+    }
+}
+
+/// <summary>
+/// The SVN side of a merge: svn merge, one working copy at a time, pairing the root's externals with the
+/// source branch's. It leaves the result as local changes; nothing here talks to git, and nothing commits.
+/// </summary>
+internal static class SvnMerge
+{
+    /// <summary>The working copies of a checkout a merge can target: the root first, then each external.</summary>
     public static List<MergeTarget> Targets(SgRoot root, CheckoutConfig co)
     {
-        var parts = Server.Parts(root, co);
+        var parts = SvnServer.Parts(root, co);
         // One svn info for every working copy at once. It answers with the paths as they were given or
         // as absolute ones depending on the version, so both are folded back to the relative form here.
         var infos = new Dictionary<string, SvnInfo>(StringComparer.OrdinalIgnoreCase);
@@ -127,7 +220,7 @@ public static class Merge
             .ToList();
 
     /// <summary>The revisions of a source branch, newest first, with the paths each one touched.</summary>
-    public static List<SvnLogRevision> Revisions(SgRoot root, string url, int limit = 100) =>
+    public static List<LogRevision> Revisions(SgRoot root, string url, int limit = 100) =>
         root.Svn.LogVerbose(null, url, limit);
 
     /// <summary>
@@ -262,48 +355,6 @@ public static class Merge
         if (!r.Ok) throw new SgException("svn merge failed:\n" + result.Output);
         Parse(result);
         return result;
-    }
-
-    /// <summary>
-    /// The whole merge, across every working copy it covers. Each pair takes the revisions that belong
-    /// to it; a pair with nothing to take is left alone. With no revisions named, every pair takes
-    /// everything the branch on its other side has that it has not.
-    ///
-    /// It stops at the first working copy that fails and says what the ones before it did: a merge is
-    /// not one transaction across repositories, and pretending otherwise would hide half a result.
-    /// </summary>
-    public static MergeResult RunAll(SgRoot root, CheckoutConfig co, IReadOnlyList<MergePair> pairs,
-        IReadOnlyList<MergeRevision>? picked, bool dryRun, bool reverse = false)
-    {
-        using var operation = root.Lock();
-        var whole = new MergeResult
-        {
-            DryRun = dryRun,
-            Reverse = reverse,
-            Target = pairs.Count == 1 ? pairs[0].Label : "the checkout",
-        };
-        foreach (var pair in pairs)
-        {
-            var mine = picked?.Where(p => p.Pair == pair).Select(p => p.Revision).ToList();
-            // Named revisions that belong to another working copy are not this one's business.
-            if (picked != null && (mine == null || mine.Count == 0)) continue;
-            MergeResult part;
-            try { part = Run(root, co, pair.Target, pair.SourceUrl, mine, dryRun, reverse); }
-            catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException or OperationCanceledException)
-            {
-                whole.Failure = $"{pair.Label}: {ex.Message}. Earlier targets may already have changed; inspect checkout changes before retrying.";
-                whole.Output += "\n" + whole.Failure;
-                break;
-            }
-            whole.Parts.Add(part);
-            whole.Changed.AddRange(part.Changed);
-            whole.Conflicts.AddRange(part.Conflicts);
-            whole.Revisions.AddRange(part.Revisions);
-            whole.Output += (whole.Output.Length > 0 ? "\n\n" : "") + $"--- {pair.Label} ---\n" + part.Output;
-        }
-        if (whole.Parts.Count == 0 && whole.Failure == null) throw new SgException("none of the picked revisions belong to a working copy this merge covers");
-        whole.SourceUrl = whole.Parts.FirstOrDefault()?.SourceUrl ?? "";
-        return whole;
     }
 
     // "U    path", "A    path", "C    path", and " C   path" for a property conflict. The two columns

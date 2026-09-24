@@ -205,8 +205,8 @@ public static class Shelf
         var versioned = files.Where(c => c.Versioned).Select(c => c.Path).ToList();
         if (versioned.Count > 0)
         {
-            var r = root.Svn.Revert(co.Path, versioned);
-            if (!r.Ok) root.Log.Warn("svn revert said: " + r.StdErr.Trim());
+            var said = root.Vcs(co).Revert(root, co, versioned);
+            if (said != null) root.Log.Warn("revert said: " + said);
         }
         foreach (var c in files.Where(c => c.Item is "unversioned" or "added")) Delete(PathUtil.Join(co.Path, c.Path));
         root.Log.Info($"shelved {info.Count} file(s) from {co.Name} as {info.Id}");
@@ -475,7 +475,7 @@ public static class Shelf
         // writing over it would drop whatever came in meanwhile.
         var was = git.LsTree(info.Base, all, recursive: true).ToDictionary(t => t.Path, t => t.Sha, StringComparer.Ordinal);
         var want = git.LsTree(info.Sha, all, recursive: true).ToDictionary(t => t.Path, t => t.Sha, StringComparer.Ordinal);
-        var onDisk = git.HashFiles(all.Select(p => PathUtil.Join(info.Path, p)).Where(File.Exists));
+        var onDisk = git.HashFiles(all.Select(p => PathUtil.Join(info.Path, p)).Where(File.Exists), info.Path);
         var write = new List<string>();
         var remove = new List<string>();
         var merge = new List<string>();
@@ -539,8 +539,8 @@ public static class Shelf
         var other = root.NewTempFile(".shelved");
         try
         {
-            root.Git.BlobToFile(before, ancestor);
-            root.Git.BlobToFile(after, other);
+            root.Git.BlobToFileAs(info.Path, path, before, ancestor);
+            root.Git.BlobToFileAs(info.Path, path, after, other);
             var conflicts = root.Git.MergeFile(abs, ancestor, other, path + " as it is now", path + " as the shelf holds it");
             if (conflicts == 0)
             {
@@ -571,19 +571,20 @@ public static class Shelf
         }
         CheckoutConfig co;
         try { co = root.Checkout(info.Checkout); }
-        catch (SgException ex) { root.Log.Warn("the files are back, but svn was not told: " + ex.Message); return; }
+        catch (SgException ex) { root.Log.Warn("the files are back, but the checkout was not told: " + ex.Message); return; }
+        var vcs = root.Vcs(co);
         var add = info.Files.Where(f => f.Code == "added").Select(f => f.Path)
             .Where(p => File.Exists(PathUtil.Join(co.Path, p)) || Directory.Exists(PathUtil.Join(co.Path, p))).ToList();
         var rm = info.Files.Where(f => f.Code == "deleted").Select(f => f.Path).ToList();
         try
         {
-            if (add.Count > 0) root.Svn.Add(co.Path, add);
-            if (rm.Count > 0) root.Svn.Rm(co.Path, rm);
+            if (add.Count > 0) vcs.Add(root, co, add);
+            if (rm.Count > 0) vcs.Remove(root, co, rm);
         }
         catch (SgException ex)
         {
-            root.Log.Warn("the files are back, but svn was not told: " + ex.Message);
-            result.Conflicted.Add("svn: " + ex.Message);
+            root.Log.Warn($"the files are back, but {vcs.ServerName} was not told: " + ex.Message);
+            result.Conflicted.Add(vcs.ServerName.ToLowerInvariant() + ": " + ex.Message);
         }
     }
 
@@ -711,7 +712,7 @@ public static class Shelf
     /// The row carries an svn property change, on its own or beside a content change. Either way a shelf
     /// cannot hold it: git has no place for a property, and svn revert would take it with the text.
     /// </summary>
-    static bool HasPropertyEdit(Ops.SvnChange c) => c.Item == "normal" || c.Props is "modified" or "conflicted";
+    static bool HasPropertyEdit(CheckoutChange c) => c.Item == "normal" || c.Props is "modified" or "conflicted";
 
     /// <summary>
     /// The id is the time, then as much of the title as reads as a name. The time first so a list sorts

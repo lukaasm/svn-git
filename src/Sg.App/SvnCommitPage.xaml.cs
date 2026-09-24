@@ -7,11 +7,13 @@ using Windows.System;
 namespace Sg.App;
 
 /// <summary>
-/// Edits made directly in an SVN checkout: see them, read and edit each diff, revert them whole or one
-/// block at a time, ignore what should never have been listed, or commit them straight to SVN.
+/// Edits made directly in a checkout: see them, read and edit each diff, revert them whole or one block
+/// at a time, ignore what should never have been listed, or commit them straight to the server.
 ///
-/// SVN has no index, so a file has one diff here: BASE against the working copy. A block goes back to
-/// BASE the way TortoiseSVN's "revert this hunk" does, and the file itself can be edited in place.
+/// A file has one diff here: what the server has against the working copy. SVN has no index, and a git
+/// clone's own index is its owner's business, so a block goes back to the server's version the way
+/// TortoiseSVN's "revert this hunk" does, and the file itself can be edited in place. For a git clone
+/// the commit is one commit on the branch it tracks, pushed.
 /// </summary>
 public sealed partial class SvnCommitPage : SgPage
 {
@@ -47,9 +49,11 @@ public sealed partial class SvnCommitPage : SgPage
         Message.Minimum = Session.Root?.Config.MinMessageLength ?? 10;
         Message.Confirm = () =>
         {
+            if (_co.IsGit) return $"This makes one commit on {ServerWords.Target(_co)} and pushes it, straight from the clone. Everyone can see it. Continue?";
             var groups = _rows.Where(r => r.Checked).Select(r => r.Change.Wc).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             return $"This makes {groups} SVN commit(s) that everyone can see, straight from the checkout. Continue?";
         };
+        if (co.IsGit) SayGit();
         Diff.SelectionChanged += SyncBlockButtons;
         Diff.DirtyChanged += SyncBlockButtons;
         Diff.ActionInvoked += OnDiffAction;
@@ -62,6 +66,19 @@ public sealed partial class SvnCommitPage : SgPage
     public override void OnShown(bool returning) => _ = LoadAsync(_shownPath);
     public override void OnHidden() { ++_generation; _reads.Cancel(); }
 
+    /// <summary>The page's own words, for a git clone: where the commit goes, and what the ignore list is.</summary>
+    void SayGit()
+    {
+        var target = ServerWords.Target(_co);
+        InfoText.Message = $"These are edits made directly in the git clone. Commit makes one commit of the checked ones on {target} and pushes it; other edits stay where they are. Then the snapshot is refreshed.";
+        ToolTipService.SetToolTip(DiscardButton, "Put the checked files back the way the server has them; untracked files get deleted. The confirmation keeps a recovery shelf by default, with an option to discard permanently.");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CommitButton, ServerWords.CommitButton(_co));
+        ToolTipService.SetToolTip(CommitButton, $"Write the message, then commit the checked changes on {target} and push them. Untracked files are added first. Asks first. Ctrl+Enter opens this too.");
+        Message.Title = ServerWords.CommitButton(_co);
+        Message.PrimaryButtonText = ServerWords.CommitButton(_co);
+        Message.Header = "Commit message for " + target;
+    }
+
     /// <summary>Right click on a line: the file actions, then what can be done to these changes.</summary>
     void ExtendMenu(MenuFlyout menu, TreeNode node)
     {
@@ -69,12 +86,14 @@ public sealed partial class SvnCommitPage : SgPage
         if (changes.Count == 0) return;
         menu.Items.Add(new MenuFlyoutSeparator());
 
-        Add("Discard", "\uE7A7", "Put these files back the way SVN has them; an unversioned one is deleted. Asks first, and Undo on the bar brings them back.",
+        Add("Discard", "\uE7A7", $"Put these files back the way {(_co.IsGit ? "the server" : "SVN")} has them; an unversioned one is deleted. Asks first, and Undo on the bar brings them back.",
             () => RevertAsync(changes.Select(c => c.Path).ToList()));
 
         var unversioned = changes.Where(c => c.Item == "unversioned").ToList();
         if (unversioned.Count > 0)
-            Add("Add to ignore list", "\uE8F8", "Set svn:ignore on the folder each of these sits in, so it stops being listed. The property change is itself a change to commit.",
+            Add("Add to ignore list", "\uE8F8", _co.IsGit
+                    ? "Add each of these to the .gitignore of the folder it sits in, so it stops being listed. The .gitignore change is itself a change to commit."
+                    : "Set svn:ignore on the folder each of these sits in, so it stops being listed. The property change is itself a change to commit.",
                 () => IgnoreAsync(unversioned.Select(c => c.Path).ToList()));
 
         Add("Shelve", "\uE7B8", "Take these out of the checkout and keep them, to put back later. A local edit that blocks a push stops blocking it.",
@@ -86,7 +105,7 @@ public sealed partial class SvnCommitPage : SgPage
             return Task.CompletedTask;
         });
 
-        Add("Delete file", "\uE74D", "Delete these from disk. A versioned file is deleted through svn, so the deletion is a change to commit. Asks first.",
+        Add("Delete file", "\uE74D", $"Delete these from disk. A versioned file is deleted through {ServerWords.Name(_co)}, so the deletion is a change to commit. Asks first.",
             () => DeleteAsync(changes.ToList()));
         if (changes.Count == 1 && changes[0].Versioned)
             Add("Blame", "\uE7B3", "Who last changed each line of this file, and in which revision.",
@@ -174,12 +193,13 @@ public sealed partial class SvnCommitPage : SgPage
 
     async Task ShowPatchAsync(int gen, List<string> wcs, string title)
     {
-        var svn = Session.Require().Svn;
+        var root = Session.Require();
+        var vcs = root.Vcs(_co);
         var wanted = !_filter.HasPick;
-        // One svn process per working copy, and a lazy Select ran them one after another inside the one
+        // One process per working copy, and a lazy Select ran them one after another inside the one
         // Task.Run. Fan.Map runs them side by side and keeps the input order, so the joined patch is the same.
         var patch = await Task.Run(() =>
-            string.Join("\n", Fan.Map(wcs, wc => svn.DiffLocal(_co.Path, wc.Length == 0 ? "." : wc))));
+            string.Join("\n", Fan.Map(wcs, wc => vcs.DiffLocal(root, _co, wc.Length == 0 ? "." : wc))));
         if (gen != _generation) return;
         _filter.SetStats(DiffStats.Parse(patch));
         if (wanted && !_filter.HasPick) Diff.ShowUnified(patch, title);
@@ -195,7 +215,8 @@ public sealed partial class SvnCommitPage : SgPage
 
     async void OnPicked(TreeNode node)
     {
-        var svn = Session.Require().Svn;
+        var root = Session.Require();
+        var vcs = root.Vcs(_co);
         Clear();
         if (node.Row is not SvnChangeRow row || (node.IsFolder && Directory.Exists(PathUtil.Join(_co.Path, row.Change.Path))))
         {
@@ -203,7 +224,7 @@ public sealed partial class SvnCommitPage : SgPage
             var folder = node.FullPath;
             var title = $"{(folder.Length == 0 ? "root" : folder)}   {node.FileCount} file(s), BASE → working copy, unified. Unversioned files are not in it.";
             Diff.BeginLoading(title);
-            var patch = await Task.Run(() => svn.DiffLocal(_co.Path, folder.Length == 0 ? "." : folder));
+            var patch = await Task.Run(() => vcs.DiffLocal(root, _co, folder.Length == 0 ? "." : folder));
             if (_filter.IsCurrent(node)) Diff.ShowUnified(patch, title);
             return;
         }
@@ -218,9 +239,9 @@ public sealed partial class SvnCommitPage : SgPage
         var hasBase = c.Item is "modified" or "replaced";
 
         var sides = await Diff.ShowFileAsync(c.Path, $"{c.Path}   BASE → working copy", new DiffView.Reads(
-                () => c.Item is "unversioned" or "added" ? "" : svn.CatBase(_co.Path, c.Path),
+                () => c.Item is "unversioned" or "added" ? "" : vcs.BaseText(root, _co, c.Path),
                 () => File.Exists(abs) ? ReadTextSafe(abs) : "",
-                () => hasBase ? svn.DiffLocal(_co.Path, c.Path) : ""),
+                () => hasBase ? vcs.DiffLocal(root, _co, c.Path) : ""),
             () => _filter.IsCurrent(node), editable: File.Exists(abs));
 
         if (sides == null) return;
@@ -259,7 +280,7 @@ public sealed partial class SvnCommitPage : SgPage
         // A revert writes the file back to BASE. SVN has no index to hold the change and nothing on this
         // page has committed it anywhere, so what it takes out has no other copy left.
         var permanent = await Discards.Confirm(this, "Discard " + DiffBlocks.Label("discard", blocks).ToLowerInvariant(),
-            $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way SVN has them?", blocks: true);
+            $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way {(_co.IsGit ? "the server" : "SVN")} has them?", blocks: true);
         if (permanent == null) return;
         var abs = PathUtil.Join(_co.Path, path);
         var before = _shownModified;
@@ -318,9 +339,10 @@ public sealed partial class SvnCommitPage : SgPage
     {
         var picked = _rows.Count(r => r.Checked);
         CommitButton.IsEnabled = picked > 0;
-        ActionHint.SetHelp(CommitButton, picked > 0 ? "Review the message and commit the selected files to SVN." : "Select at least one changed file to commit to SVN.");
+        var target = ServerWords.Target(_co);
+        ActionHint.SetHelp(CommitButton, picked > 0 ? $"Review the message and commit the selected files to {target}." : $"Select at least one changed file to commit to {target}.");
         Message.Ready = picked > 0;
-        CommitLabel.Text = picked == 0 ? "Commit to SVN" : $"Commit {picked} to SVN";
+        CommitLabel.Text = ServerWords.CommitButton(_co, picked);
     }
 
     /// <summary>The left half of the split button. Its right half drops the menu and never gets here.</summary>
@@ -335,15 +357,15 @@ public sealed partial class SvnCommitPage : SgPage
         await Busy.During(CommitButton, async () =>
         {
             ResultBar.IsOpen = false;
-            var r = await Runner.Run(Pane, "svn commit", () => Ops.SvnCommit(root, _co, paths, msg));
+            var r = await Runner.Run(Pane, _co.IsGit ? "git commit and push" : "svn commit", () => Ops.SvnCommit(root, _co, paths, msg));
             if (r != null)
             {
                 foreach (var g in r.Groups)
-                    Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}" + (g.Revision.HasValue ? $" r{g.Revision}" : "") + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
+                    Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}" + (g.Label.Length > 0 ? " " + g.Label : "") + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
                 ResultBar.ActionButton = null;
                 ResultBar.Severity = r.AllCommitted ? InfoBarSeverity.Success : InfoBarSeverity.Error;
                 ResultBar.Message = r.AllCommitted
-                    ? $"Committed. Snapshot is now r{r.Sync?.Revision}."
+                    ? $"Committed. Snapshot is now {r.Sync?.Label}."
                     : "Some working copies did not commit. See the log. Their changes stay in the checkout.";
                 ResultBar.IsOpen = true;
                 if (r.AllCommitted) { MessageDialog.Remember(msg); Message.Text = ""; }
@@ -358,7 +380,8 @@ public sealed partial class SvnCommitPage : SgPage
         var root = Session.Require();
         var what = paths.Count == 1 ? $"the changes in {paths[0]}" : $"{paths.Count} change(s) in the checkout";
         var permanent = await Discards.Confirm(this, "Discard changes",
-            $"Put {what} back the way SVN has them? Unversioned files get deleted.\n\nSVN property changes cannot be saved on a recovery shelf.");
+            $"Put {what} back the way {(_co.IsGit ? "the server" : "SVN")} has them? Unversioned files get deleted."
+            + (_co.IsGit ? "" : "\n\nSVN property changes cannot be saved on a recovery shelf."));
         if (permanent == null) return;
         // The shelf is the discard: saving one reverts the files. What it cannot hold is reverted the old way.
         var result = await Discards.RunAsync(Pane, _co.Path, paths,
@@ -368,34 +391,36 @@ public sealed partial class SvnCommitPage : SgPage
     }
 
     /// <summary>
-    /// svn:ignore on the folder each file sits in, the way TortoiseSVN does it. That property change is
-    /// itself a local change of that folder, so the list gains it and the next commit of that folder carries it.
+    /// svn:ignore on the folder each file sits in, the way TortoiseSVN does it; for a git clone, a line in
+    /// that folder's .gitignore. Either change is itself a local change of that folder, so the list gains it
+    /// and the next commit of that folder carries it.
     /// </summary>
     async Task IgnoreAsync(List<string> paths)
     {
         if (paths.Count == 0) return;
         var what = paths.Count == 1 ? Path.GetFileName(paths[0]) : $"{paths.Count} name(s)";
-        if (!await Dialogs.Confirm(this, "Add to ignore list",
-            $"Add {what} to svn:ignore on the containing folder? The property change is a change of that folder, and goes to the server with the next commit of it.", "Ignore")) return;
+        if (!await Dialogs.Confirm(this, "Add to ignore list", _co.IsGit
+                ? $"Add {what} to the .gitignore of the containing folder? The .gitignore change is a change of that folder, and goes to the server with the next commit of it."
+                : $"Add {what} to svn:ignore on the containing folder? The property change is a change of that folder, and goes to the server with the next commit of it.", "Ignore")) return;
         var root = Session.Require();
-        await Runner.Run(Pane, "svn:ignore", () =>
+        await Runner.Run(Pane, _co.IsGit ? ".gitignore" : "svn:ignore", () =>
         {
             foreach (var group in paths.GroupBy(p => PathUtil.Rel(Path.GetDirectoryName(p) ?? ""), StringComparer.OrdinalIgnoreCase))
-                root.Svn.AddToIgnore(_co.Path, group.Key, group.Select(p => Path.GetFileName(p)));
+                root.Vcs(_co).Ignore(root, _co, group.Key, group.Select(p => Path.GetFileName(p)));
         });
         await LoadAsync();
     }
 
-    async Task DeleteAsync(List<Ops.SvnChange> changes)
+    async Task DeleteAsync(List<CheckoutChange> changes)
     {
         if (changes.Count == 0) return;
         var what = changes.Count == 1 ? changes[0].Path : $"{changes.Count} file(s)";
-        if (!await Dialogs.Confirm(this, "Delete from disk", $"Delete {what}? A versioned file is deleted through svn, so the deletion is a change to commit. This cannot be undone.", "Delete")) return;
+        if (!await Dialogs.Confirm(this, "Delete from disk", $"Delete {what}? A versioned file is deleted through {ServerWords.Name(_co)}, so the deletion is a change to commit. This cannot be undone.", "Delete")) return;
         var root = Session.Require();
         await Runner.Run(Pane, "delete", () =>
         {
             var versioned = changes.Where(c => c.Versioned && c.Item != "deleted").Select(c => c.Path).ToList();
-            if (versioned.Count > 0) root.Svn.Rm(_co.Path, versioned);
+            if (versioned.Count > 0) root.Vcs(_co).Remove(root, _co, versioned);
             foreach (var c in changes.Where(c => !c.Versioned))
             {
                 var abs = PathUtil.Join(_co.Path, c.Path);
@@ -420,7 +445,7 @@ public sealed partial class SvnCommitPage : SgPage
         if (r == null) return;
         ResultBar.ActionButton = null;
         ResultBar.Severity = r.LeftBehind.Count > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
-        ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The checkout holds what SVN has for them again."
+        ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". The checkout holds what {(_co.IsGit ? "the server" : "SVN")} has for them again."
                             + ShelfActions.LeftBehindNote(r);
         ResultBar.IsOpen = true;
         await LoadAsync();

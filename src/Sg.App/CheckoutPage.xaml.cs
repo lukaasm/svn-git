@@ -165,12 +165,19 @@ public sealed partial class CheckoutPage : SgPage
             return;
         }
         var co = status.Checkouts.First(c => c.Name == row.Name);
+        var config = Session.Root?.Config.Checkouts.FirstOrDefault(c => c.Name == row.Name);
+        _git = config?.IsGit == true;
+        _target = config != null ? ServerWords.Target(config) : "SVN";
+        var server = _git ? config!.Remote ?? "origin" : "SVN";
         CoName.Text = row.Name;
-        CoRevision.Text = "r" + co.Revision;
+        CoRevision.Text = co.Label;
+        SayServer(config);
         // How long since the last sync, in the quiet voice; the exact time is one hover away. What the
         // server has since then is the badge on the right, so this line says only when, not what.
         CoSynced.Text = co.SnapshotTaken is { } taken ? "synced" + WorktreeRow.Ago(taken) : "never synced";
-        TaskGate.SetHelp(CoRevision, $"The snapshot svn/{row.Name} is at r{co.Revision}: the exact SVN state every branch of this checkout is built on.");
+        TaskGate.SetHelp(CoRevision, _git
+            ? $"The snapshot svn/{row.Name} holds {_target} at {co.Label}: the exact server state every branch of this checkout is built on."
+            : $"The snapshot svn/{row.Name} is at r{co.Revision}: the exact SVN state every branch of this checkout is built on.");
         TaskGate.SetHelp(CoSynced, co.SnapshotTaken is { } t
             ? $"The snapshot was taken {t.LocalDateTime:yyyy-MM-dd HH:mm}, the last time this checkout was synced. Sync takes a new one from the server."
             : "No snapshot has been taken yet. Sync takes the first one.");
@@ -205,6 +212,8 @@ public sealed partial class CheckoutPage : SgPage
                 Conflicts = w.Conflicts,
                 Ahead = w.Ahead,
                 BaseRevision = co.Revision,
+                Server = server,
+                ServerBranch = _target,
                 Detail = w.Path,
                 Shared = w.Shared,
                 Shelves = w.Shelves,
@@ -264,6 +273,27 @@ public sealed partial class CheckoutPage : SgPage
     /// <summary>What the server has that the snapshot does not, and what the checkout has that SVN does not.</summary>
     int _behind, _localEdits;
 
+    /// <summary>The checkout on show is a git clone, and the branch of its remote it sends to.</summary>
+    bool _git;
+    string _target = "SVN";
+
+    /// <summary>The toolbar's words for the checkout on show: SVN's, or its git remote's.</summary>
+    void SayServer(CheckoutConfig? co)
+    {
+        var git = co?.IsGit == true;
+        SvnLogButton.Label = co != null ? ServerWords.LogTitle(co) : "SVN log";
+        ToolTipService.SetToolTip(SvnLogButton, git
+            ? $"The history of {_target} on the server, with changed paths and diffs."
+            : "The SVN history of the checkout root and every external, with changed paths and diffs.");
+        ToolTipService.SetToolTip(ServerBranchButton, git
+            ? $"Push a new branch to {co!.Remote} at the newest commit of {_target}, then check it out beside this clone. A dry run comes first."
+            : "Copy this branch on the SVN server, one revision per repository. Each external follows, keeps its branch, or gets a name of its own. A dry run comes first.");
+        ToolTipService.SetToolTip(CoRemoteRing, git ? $"Asking {co!.Remote} for new commits on {co.Branch}." : "Asking the SVN server for new commits.");
+        ToolTipService.SetToolTip(CoRemoteBadge, git
+            ? $"Commits on {_target} that the snapshot does not have yet. Sync brings them in."
+            : "Commits on the SVN server that the snapshot does not have yet. Sync brings them in.");
+    }
+
     /// <summary>
     /// One loud button on the toolbar, never two. A worktree card offers exactly one next action and the
     /// checkout says the same thing in the same place.
@@ -289,7 +319,8 @@ public sealed partial class CheckoutPage : SgPage
     {
         var syncs = result is { Behind: false };
         TaskGate.SetHelp(SyncButton, (syncs
-            ? "svn update the checkout, then take a new snapshot into svn/<name>. Branches are not touched, rebase them when you want the new base. "
+            ? (_git ? $"Fetch {_target} and fast-forward the clone, then take a new snapshot into svn/<name>. " : "svn update the checkout, then take a new snapshot into svn/<name>. ")
+              + "Branches are not touched, rebase them when you want the new base. "
             : "Opens what the server has that the snapshot does not - the revisions, their messages and their diffs - with a Sync button under them. ") + state);
     }
 
@@ -314,7 +345,7 @@ public sealed partial class CheckoutPage : SgPage
             return;
         }
         var parts = result.Entries.Where(e => e.Behind)
-            .Select(e => $"{(e.Rel.Length == 0 ? "root" : e.Rel)} r{e.Snapshot} → r{e.Server}");
+            .Select(e => _git ? $"{_target} has {e.Commits} new commit(s)" : $"{(e.Rel.Length == 0 ? "root" : e.Rel)} r{e.Snapshot} → r{e.Server}");
         CoRemoteBadge.Count = result.Commits;
         CoRemoteBadge.Visibility = Visibility.Visible;
         ShowServerState(result, $"{result.Commits}{(result.Commits >= 50 ? "+" : "")} commit(s) on the server to sync: {string.Join(", ", parts)}");
@@ -361,7 +392,7 @@ public sealed partial class CheckoutPage : SgPage
         CoLocalBadge.Count = count.Value;
         CoLocalBadge.Visibility = Visibility.Visible;
         TaskGate.SetHelp(SvnCommitButton, $"{count} file(s) edited directly in the checkout. Pick them, see each diff, write a message, "
-                             + "and commit them straight to SVN. One commit per working copy. Asks first.");
+                             + (_git ? $"and commit them on {_target} and push. Asks first." : "and commit them straight to SVN. One commit per working copy. Asks first."));
     }
 
     /// <summary>

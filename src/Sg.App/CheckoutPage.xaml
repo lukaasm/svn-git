@@ -96,7 +96,7 @@
                 <AppBarButton x:Name="FolderButton" Label="Open folder" Click="OpenCheckout_Click">
                     <AppBarButton.Icon><FontIcon Glyph="&#xED25;" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton Label="SVN log" Click="SvnLog_Click"
+                <AppBarButton x:Name="SvnLogButton" Label="SVN log" Click="SvnLog_Click"
                               ToolTipService.ToolTip="The SVN history of the checkout root and every external, with changed paths and diffs.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE81C;" /></AppBarButton.Icon>
                 </AppBarButton>
@@ -119,7 +119,7 @@
                                   ToolTipService.ToolTip="Take changes from another branch of the same repository: all of them, or a few revisions. They land as local changes here, to read and commit like any other.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE8AB;" /></AppBarButton.Icon>
                     </AppBarButton>
-                    <AppBarButton Label="Server branch" Click="ServerBranch_Click"
+                    <AppBarButton x:Name="ServerBranchButton" Label="Server branch" Click="ServerBranch_Click"
                                   ToolTipService.ToolTip="Copy this branch on the SVN server, one revision per repository. Each external follows, keeps its branch, or gets a name of its own. A dry run comes first.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE753;" /></AppBarButton.Icon>
                     </AppBarButton>
@@ -279,7 +279,7 @@
                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                                    ToolTipService.ToolTip="What this worktree costs on disk. Folders shared with the checkout, like libs/prebuilt, are not counted when they are junctions or ReFS clones: those bytes belong to the checkout. A full copy counts." />
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Commit" Description="Pick changed files, see each diff, write a message, and commit to the git branch. Nothing goes to SVN."
+                                    <controls:SettingsCard Header="Commit" Description="{x:Bind CommitDescription, Mode=OneWay}"
                                                            IsClickEnabled="True" Tag="{x:Bind}" Click="Commit_Click">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE73E;" />
@@ -297,7 +297,7 @@
                                             <FontIcon Glyph="&#xE81C;" />
                                         </controls:SettingsCard.HeaderIcon>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Push to SVN" Description="Review the commits and files, then send the branch to SVN: sync, rebase, one svn commit per repository. Asks before it commits."
+                                    <controls:SettingsCard Header="{x:Bind PushHeader, Mode=OneWay}" Description="{x:Bind PushDescription, Mode=OneWay}"
                                                            IsClickEnabled="True" IsEnabled="{x:Bind PushEnabled, Mode=OneWay}" Tag="{x:Bind}" Click="Push_Click">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE898;" />
@@ -308,12 +308,12 @@
                                          else: six left edges down one column, each a few pixels off the last. The
                                          width is the widest word here with room around it, and MinWidth rather than
                                          Width so a longer label or a larger font still fits rather than being cut. -->
-                                    <controls:SettingsCard Header="Pull from SVN" Description="Save local edits, sync SVN, replay commits, and recover edits."
+                                    <controls:SettingsCard Header="{x:Bind PullHeader, Mode=OneWay}" Description="{x:Bind PullDescription, Mode=OneWay}"
                                                            Visibility="{x:Bind RebaseVisibility, Mode=OneWay}">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE8AB;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="Pull from SVN" Tag="{x:Bind}" Click="Rebase_Click" />
+                                        <local:IconButton MinWidth="124" Glyph="&#xE8AB;" Text="{x:Bind PullHeader, Mode=OneWay}" Tag="{x:Bind}" Click="Rebase_Click" />
                                     </controls:SettingsCard>
                                     <!-- Only while the last backup found the remote holding something this machine does not: the
                                          row is the way to take it, where the reader is, instead of a toast that points at another page. -->
@@ -378,7 +378,7 @@
                                         </local:TaskGate>
                                     </controls:SettingsCard>
                                     <controls:SettingsCard Header="Export the branch"
-                                                           Description="Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.">
+                                                           Description="{x:Bind ExportDescription, Mode=OneWay}">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xEDE1;" />
                                         </controls:SettingsCard.HeaderIcon>
@@ -387,7 +387,7 @@
                                                               ToolTipService.ToolTip="Write the branch to a file. The far side puts it back with Import a branch, or with sg import." />
                                         </local:TaskGate>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Remove worktree and branch" Description="Delete the worktree folder and the git branch. Asks first. What was pushed stays in SVN.">
+                                    <controls:SettingsCard Header="Remove worktree and branch" Description="{x:Bind RemoveDescription, Mode=OneWay}">
                                         <controls:SettingsCard.HeaderIcon>
                                             <FontIcon Glyph="&#xE74D;" />
                                         </controls:SettingsCard.HeaderIcon>

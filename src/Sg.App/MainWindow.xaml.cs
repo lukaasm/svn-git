@@ -537,8 +537,11 @@ public sealed partial class MainWindow : Window
             if (result.Behind && before.GetValueOrDefault(name) != result.Commits)
             {
                 Pane.Append($"{DateTime.Now:HH:mm}  server: {result.Commits} new commit(s) for {name}. Sync when ready.");
-                var parts = string.Join(", ", result.Entries.Where(x => x.Behind).Select(x => $"{(x.Rel.Length == 0 ? "root" : x.Rel)} r{x.Snapshot}→r{x.Server}"));
-                Notifications.Show($"{result.Commits} new SVN commit(s) for {name}", parts + ".",
+                var git = Session.Root?.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { IsGit: true } gc ? gc : null;
+                var parts = git != null
+                    ? $"{ServerWords.Target(git)} moved on"
+                    : string.Join(", ", result.Entries.Where(x => x.Behind).Select(x => $"{(x.Rel.Length == 0 ? "root" : x.Rel)} r{x.Snapshot}→r{x.Server}"));
+                Notifications.Show($"{result.Commits} new {(git != null ? "git" : "SVN")} commit(s) for {name}", parts + ".",
                     Notifications.Action("overview", ("checkout", name)),
                     new Notifications.ToastButton("Sync", Notifications.Action("sync", ("checkout", name))));
             }
@@ -742,8 +745,12 @@ public sealed partial class MainWindow : Window
             // The pane has no room for words, so the chips here are glyph and count only.
             row.RemoteBadge = new StatusChip { Severity = ChipSeverity.Caution, Glyph = "", Visibility = Visibility.Collapsed };
             row.LocalBadge = new StatusChip { Severity = ChipSeverity.Attention, Glyph = "", Visibility = Visibility.Collapsed };
-            ToolTipService.SetToolTip(row.RemoteBadge, "Commits on the SVN server that the snapshot does not have yet. Sync brings them in.");
-            ToolTipService.SetToolTip(row.LocalBadge, "Files edited directly in the SVN checkout, not committed yet. 'Changes in the checkout' shows them.");
+            ToolTipService.SetToolTip(row.RemoteBadge, row.Config.IsGit
+                ? $"Commits on {ServerWords.Target(row.Config)} that the snapshot does not have yet. Sync brings them in."
+                : "Commits on the SVN server that the snapshot does not have yet. Sync brings them in.");
+            ToolTipService.SetToolTip(row.LocalBadge, row.Config.IsGit
+                ? "Files edited directly in the git clone, not committed yet. 'Changes in the checkout' shows them."
+                : "Files edited directly in the SVN checkout, not committed yet. 'Changes in the checkout' shows them.");
             // A long checkout name gives way to the chips, never the other way round.
             var content = new Grid { ColumnSpacing = 8 };
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -802,11 +809,11 @@ public sealed partial class MainWindow : Window
             "Its name, the folders sg leaves alone, and where each external points."));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Sync", "", () => SyncOrPreview(row.Config),
-            "svn update the checkout, then take a new snapshot."));
+            row.Config.IsGit ? "Fetch the server branch and fast-forward the clone, then take a new snapshot." : "svn update the checkout, then take a new snapshot."));
         menu.Items.Add(Item("Changes in the checkout", "", () => ShowSvnChanges(row),
-            "Edits made directly in the checkout: diffs, discard, or commit them straight to SVN."));
-        menu.Items.Add(Item("SVN log", "", () => ShowSvnLog(row),
-            "The SVN history of the checkout root or any external."));
+            $"Edits made directly in the checkout: diffs, discard, or commit them straight to {ServerWords.Target(row.Config)}."));
+        menu.Items.Add(Item(ServerWords.LogTitle(row.Config), "", () => ShowSvnLog(row),
+            row.Config.IsGit ? $"The history of {ServerWords.Target(row.Config)} on the server." : "The SVN history of the checkout root or any external."));
         menu.Items.Add(Item("Merge from another branch", "", () => ShowMerge(row),
             "Take changes from another branch of the same repository, all of them or a few revisions."));
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -976,9 +983,9 @@ public sealed partial class MainWindow : Window
         {
             var co = row;
             list.Add(new QuickJump.Entry(co.Name, "checkout", "", () => ShowOverview(co), co.Path));
-            list.Add(new QuickJump.Entry(co.Name + ": Sync", "svn update and a new snapshot", "", () => { ShowOverview(co); SyncOrPreview(co.Config); }));
+            list.Add(new QuickJump.Entry(co.Name + ": Sync", co.Config.IsGit ? "git fetch, fast-forward and a new snapshot" : "svn update and a new snapshot", "", () => { ShowOverview(co); SyncOrPreview(co.Config); }));
             list.Add(new QuickJump.Entry(co.Name + ": Changes in the checkout", "edits made directly in the checkout", "", () => ShowSvnChanges(co)));
-            list.Add(new QuickJump.Entry(co.Name + ": SVN log", "the history of the checkout and its externals", "", () => ShowSvnLog(co)));
+            list.Add(new QuickJump.Entry(co.Name + ": " + ServerWords.LogTitle(co.Config), co.Config.IsGit ? "the history of the server branch" : "the history of the checkout and its externals", "", () => ShowSvnLog(co)));
             list.Add(new QuickJump.Entry(co.Name + ": Merge", "changes from another branch of the repository", "", () => ShowMerge(co)));
             list.Add(new QuickJump.Entry(co.Name + ": Shelved changes", "what was put aside from the checkout", "",
                 () => GoUnder(co, () => new ShelfPage(co.Config), "shelf:" + co.Name)));
@@ -995,7 +1002,7 @@ public sealed partial class MainWindow : Window
                 () => GoUnder(row, () => new CommitPage(wt.Path) { Branch = wt.Branch }, "commit:" + wt.Path)));
             list.Add(new QuickJump.Entry(wt.Branch + ": Log", where, "",
                 () => GoUnder(row, () => new LogPage(wt.Path) { Branch = wt.Branch }, "log:" + wt.Path)));
-            list.Add(new QuickJump.Entry(wt.Branch + ": Push to SVN", where, "",
+            list.Add(new QuickJump.Entry(wt.Branch + ": " + ServerWords.PushTitle(row?.Config), where, "",
                 () => GoUnder(row, () => new PushPage(wt.Path) { Branch = wt.Branch }, "push:" + wt.Path)));
             list.Add(new QuickJump.Entry(wt.Branch + ": Shelved changes", where, "",
                 () => GoUnder(row, () => new ShelfPage(null, wt.Path, wt.Branch) { Branch = wt.Branch }, "shelf:" + wt.Path)));
@@ -1172,9 +1179,9 @@ public sealed partial class MainWindow : Window
         var r = await Reports.Run(Overview.Report, Pane, "sync " + co.Name, () => Ops.Sync(root, co), ShowSync);
         if (r != null)
         {
-            var line = $"{r.Checkout}: r{r.Revision}, {(r.Changed ? "new snapshot" : "no change")}"
+            var line = $"{r.Checkout}: {r.Label}, {(r.Changed ? "new snapshot" : "no change")}"
                        + (r.Overlaid > 0 ? $", {r.Overlaid} local edit(s) left out" : "")
-                       + (r.Conflicts > 0 ? $", {r.Conflicts} svn conflict(s) in the checkout" : "")
+                       + (r.Conflicts > 0 ? $", {r.Conflicts} conflict(s) in the checkout" : "")
                        + (r.KeptSwitched.Count > 0 ? $", kept {string.Join(", ", r.KeptSwitched)} switched" : "");
             Pane.Append(line);
             if (!WindowHelper.IsForeground(this)) Notifications.Show("Sync done", line, Notifications.Action("overview", ("checkout", co.Name)));
@@ -1231,10 +1238,10 @@ public sealed partial class MainWindow : Window
         if (input == null) return;
         var r = await Reports.Run(Overview.Report, Pane, "server checkout " + input.Target, () => Server.Checkout(root, input.Near, input.Target, input.Name),
             (card, x) => card.Show(x.Snapshot.Warnings.Count > 0 ? ChipSeverity.Caution : ChipSeverity.Success, "",
-                $"Checkout {x.Checkout.Name} is at r{x.Snapshot.Revision}", x.Checkout.Path,
+                $"Checkout {x.Checkout.Name} is at {Rev.Label(x.Snapshot.Revision, x.Snapshot.Commit)}", x.Checkout.Path,
                 [new ReportCount(ChipSeverity.Caution, "", x.Snapshot.Warnings.Count, $"{x.Snapshot.Warnings.Count} warning(s) from the first snapshot, one per row.")],
                 x.Snapshot.Warnings.Select(w => new ReportRow(ChipSeverity.Caution, "", "warning", "first snapshot", w, w))));
-        if (r != null) Pane.Append($"checkout {r.Checkout.Name}: {r.Checkout.Path}, r{r.Snapshot.Revision}");
+        if (r != null) Pane.Append($"checkout {r.Checkout.Name}: {r.Checkout.Path}, {Rev.Label(r.Snapshot.Revision, r.Snapshot.Commit)}");
         await RefreshAsync();
     }
 
@@ -1245,13 +1252,13 @@ public sealed partial class MainWindow : Window
     static void ShowSync(ReportCard card, SyncResult r)
     {
         var severity = r.Conflicts > 0 ? ChipSeverity.Critical : r.Overlaid + r.Warnings.Count > 0 ? ChipSeverity.Caution : ChipSeverity.Success;
-        var headline = r.Conflicts > 0 ? $"{r.Checkout} is at r{r.Revision}, with {r.Conflicts} svn conflict(s) in the checkout"
-            : $"{r.Checkout} is at r{r.Revision}" + (r.Changed ? "" : ", nothing new");
+        var headline = r.Conflicts > 0 ? $"{r.Checkout} is at {r.Label}, with {r.Conflicts} conflict(s) in the checkout"
+            : $"{r.Checkout} is at {r.Label}" + (r.Changed ? "" : ", nothing new");
         var detail = r.Changed ? "A new snapshot. Rebase the worktrees when you want what came in." : "The snapshot was already at this revision.";
         ReportCount[] counts =
         [
-            new(ChipSeverity.Critical, "", r.Conflicts, $"{r.Conflicts} svn conflict(s) in the checkout. Resolve them there; the snapshot holds the server's side."),
-            new(ChipSeverity.Attention, "", r.Overlaid, $"{r.Overlaid} local edit(s) of the checkout are not in the snapshot, which holds what SVN has."),
+            new(ChipSeverity.Critical, "", r.Conflicts, $"{r.Conflicts} conflict(s) in the checkout. Resolve them there; the snapshot holds the server's side."),
+            new(ChipSeverity.Attention, "", r.Overlaid, $"{r.Overlaid} local edit(s) of the checkout are not in the snapshot, which holds what the server has."),
             new(ChipSeverity.Caution, "", r.Warnings.Count, $"{r.Warnings.Count} warning(s), one per row."),
             new(ChipSeverity.Neutral, "", r.KeptSwitched.Count, $"{r.KeptSwitched.Count} external(s) kept switched away from what svn:externals declares."),
         ];

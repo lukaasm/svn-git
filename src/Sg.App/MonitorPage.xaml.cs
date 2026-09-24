@@ -41,14 +41,14 @@ public sealed class MonitorNode
         Name + (Unread > 0 ? $", {Unread} unread" : "") + (Error != null ? ", error" : "");
 }
 
-/// <summary>Watched SVN URLs in categories, with their incoming commits.</summary>
+/// <summary>Watched server URLs, SVN or git, in categories, with their incoming commits.</summary>
 public sealed partial class MonitorPage : SgPage
 {
     readonly ListFilter _paths;
     MonitorItem? _selected;
     /// <summary>The repository whose revision details are on screen.</summary>
     MonitorItem? _shownItem;
-    SvnLogRevision? _rev;
+    LogRevision? _rev;
     bool _loaded;
     /// <summary>The page is selecting a revision itself; that is not the user reading it.</summary>
     bool _selecting;
@@ -165,7 +165,7 @@ public sealed partial class MonitorPage : SgPage
     }
 
     /// <summary>One line of a revision list. showRepo tags it, which only a category list needs.</summary>
-    static SvnRevRow Row(MonitorItem item, SvnLogRevision r, bool showRepo = false, int colour = 0) => new()
+    static SvnRevRow Row(MonitorItem item, LogRevision r, bool showRepo = false, int colour = 0) => new()
     {
         Revision = r.Revision,
         Author = r.Author,
@@ -196,7 +196,7 @@ public sealed partial class MonitorPage : SgPage
         ItemHeader.Text = $"{item.Name}   ({item.Category})";
         CheckingRing.Visibility = item.Checking ? Visibility.Visible : Visibility.Collapsed;
         var checkedText = item.LastChecked.HasValue ? item.LastChecked.Value.ToLocalTime().ToString("HH:mm") : "never";
-        ItemState.Text = $"{item.Url}\nHEAD r{item.Head}, seen up to r{item.LastSeen}, {item.Unread} unread. Checked {checkedText}, every {item.IntervalMinutes} min"
+        ItemState.Text = $"{item.Url}\nHEAD {item.HeadLabel}{(item.IsGit ? "" : $", seen up to r{item.LastSeen}")}, {item.Unread} unread. Checked {checkedText}, every {item.IntervalMinutes} min"
                          + (item.Enabled ? "" : ", paused") + (item.Notify ? ", toast on" : ", toast off") + (item.Checking ? ". Checking..." : "")
                          + (item.Error != null ? "\nerror: " + item.Error : "");
         var rows = item.Recent.Select(r => Row(item, r)).ToList();
@@ -326,19 +326,21 @@ public sealed partial class MonitorPage : SgPage
         // A press is the user reading it. A selection the page made itself is not.
         if (!_selecting) MarkRead(row);
         if (same) return;
-        UserColors.Header(DetailHead, $"r{row.Revision}   ", row.Entry.Author, $"   {Msg.When(row.Entry.Date)}");
+        UserColors.Header(DetailHead, $"{row.Entry.Label}   ", row.Entry.Author, $"   {Msg.When(row.Entry.Date)}");
         DetailMessage.Text = Msg.Body(row.Entry.Message);
         _paths.SetItems(row.Entry.Paths.Select(p => new SvnPathRow
         {
             Path = p,
             Display = $"{p.Action}  {p.Path}" + (p.CopyFrom != null ? $"  (from {p.CopyFrom})" : ""),
         }).ToList(), "Changed paths");
-        var svn = Session.Root?.Svn ?? new Svn("svn", new NullLog());
+        var history = MonitorService.History(item);
         var url = item.Url;
+        var reposRoot = item.ReposRoot;
+        var entry = row.Entry;
         var rev = row.Revision;
-        var title = $"r{rev}  all files, unified";
+        var title = $"{entry.Label}  all files, unified";
         Diff.BeginLoading(title);
-        var patch = await Task.Run(() => svn.DiffRevision(url, rev));
+        var patch = await Task.Run(() => history.Diff(url, reposRoot, entry, null));
         if (_rev?.Revision != rev || !ReferenceEquals(_shownItem, item)) return;
         _paths.SetStats(DiffStats.Parse(patch));
         if (!_paths.HasPick) Diff.ShowUnified(patch, title);
@@ -347,26 +349,27 @@ public sealed partial class MonitorPage : SgPage
     async void OnPicked(TreeNode node)
     {
         if (_rev == null || _shownItem == null) return;
-        var svn = Session.Root?.Svn ?? new Svn("svn", new NullLog());
-        var rev = _rev.Revision;
         // The repository of the revision in the diff. In a category list that is not the tree's pick.
-        var root = _shownItem.ReposRoot.TrimEnd('/');
+        var item = _shownItem;
+        var history = MonitorService.History(item);
+        var entry = _rev;
+        var rev = _rev.Revision;
         if (node.Row is not SvnPathRow row || (node.IsFolder && row.Path.Kind == "dir"))
         {
             // A folder: everything the revision changed under it, as one patch from the server.
-            var url = root + "/" + node.FullPath.TrimStart('/');
-            var title = $"{node.FullPath}   {node.FileCount} path(s), r{rev}, unified";
+            var folder = node.FullPath;
+            var title = $"{node.FullPath}   {node.FileCount} path(s), {entry.Label}, unified";
             Diff.BeginLoading(title);
-            var patch = await Task.Run(() => svn.DiffRevision(url, rev));
+            var patch = await Task.Run(() => history.Diff(item.Url, item.ReposRoot, entry, folder));
             if (_paths.IsCurrent(node) && _rev?.Revision == rev) Diff.ShowUnified(patch, title);
             return;
         }
         var p = row.Path;
         if (p.Kind == "dir") { Diff.ShowText("folder: " + p.Path, p.Path); return; }
-        var fileUrl = root + p.Path;
-        await Diff.ShowFileAsync(p.Path, $"{p.Path}   r{rev - 1} → r{rev}", new DiffView.Reads(
-                () => p.Action == "A" && p.CopyFrom == null ? "" : svn.CatUrl(fileUrl, rev - 1),
-                () => p.Action == "D" ? "" : svn.CatUrl(fileUrl, rev)),
+        var sides = item.IsGit ? $"{entry.Label}^ → {entry.Label}" : $"r{rev - 1} → r{rev}";
+        await Diff.ShowFileAsync(p.Path, $"{p.Path}   {sides}", new DiffView.Reads(
+                () => history.FileAt(item.Url, item.ReposRoot, entry, p, before: true),
+                () => history.FileAt(item.Url, item.ReposRoot, entry, p, before: false)),
             // The revision can change under the selection too, so both have to still be the ones asked for.
             () => _paths.IsCurrent(node) && _rev?.Revision == rev);
     }
@@ -459,7 +462,7 @@ public static class MonitorDialogs
     public static async Task<MonitorInput?> Edit(object owner, MonitorItem? existing)
     {
         var name = new TextBox { Header = "Name", Text = existing?.Name ?? "", PlaceholderText = "engine trunk" };
-        var url = new TextBox { Header = "SVN URL", Text = existing?.Url ?? "", PlaceholderText = "https://svn.example.com/svn/engine/trunk" };
+        var url = new TextBox { Header = "SVN or git URL", Text = existing?.Url ?? "", PlaceholderText = "https://svn.example.com/svn/engine/trunk, or https://host/engine.git#main" };
         var category = new ComboBox { Header = "Category", IsEditable = true, HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = MonitorService.Categories.ToList() };
         category.Text = existing?.Category ?? (MonitorService.Categories.FirstOrDefault() ?? "General");
         var interval = new NumberBox { Header = "Check every N minutes", Value = existing?.IntervalMinutes ?? 5, Minimum = 1, Maximum = 720, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
@@ -483,8 +486,15 @@ public static class MonitorDialogs
         };
         if (await d.ShowAsync() != ContentDialogResult.Primary) return null;
         var u = url.Text.Trim();
-        if (u.Length == 0 || !u.Contains("://")) { await Dialogs.Info(owner, "URL needed", "Give a full SVN URL, like https://svn.example.com/svn/engine/trunk."); return null; }
-        var n = name.Text.Trim().Length > 0 ? name.Text.Trim() : u.TrimEnd('/').Split('/').Last();
+        var git = GitLocation.KindOfUrl(u) == CheckoutKind.Git;
+        if (u.Length == 0 || (!git && !u.Contains("://")))
+        {
+            await Dialogs.Info(owner, "URL needed", "Give a full SVN URL, like https://svn.example.com/svn/engine/trunk, or a git repository with its branch after a #, like https://host/engine.git#main.");
+            return null;
+        }
+        var n = name.Text.Trim().Length > 0 ? name.Text.Trim()
+            : git ? GitLocation.RepoName(u) + (GitLocation.Parse(u).Branch is { } b ? " " + b : "")
+            : u.TrimEnd('/').Split('/').Last();
         var iv = double.IsNaN(interval.Value) ? 5 : (int)interval.Value;
         return new MonitorInput(n, u, category.Text.Trim(), Math.Max(1, iv), notify.IsChecked == true, enabled.IsChecked == true);
     }

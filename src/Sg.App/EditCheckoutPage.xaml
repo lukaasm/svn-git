@@ -9,7 +9,7 @@
             <StackPanel Spacing="4" MaxWidth="1000" Padding="0,0,0,16">
                 <TextBlock Text="Name and folders" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,4,0,4" />
                 <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,4"
-                           Text="These are sg's own settings. Nothing here reaches SVN, and nothing re-reads the checkout. Renaming moves the snapshot ref svn/&lt;name&gt; and re-points every branch born from it." />
+                           Text="These are sg's own settings. Nothing here reaches the server, and nothing re-reads the checkout. Renaming moves the snapshot ref svn/&lt;name&gt; and re-points every branch born from it." />
                 <controls:SettingsCard Header="Display name" Description="How the pane and every page name this checkout.">
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE8B7;" />
@@ -58,10 +58,11 @@
                     </controls:SettingsExpander.Items>
                 </controls:SettingsExpander>
 
-                <TextBlock Text="Externals" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
-                <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,4"
+                <!-- SVN only: a git clone is one working copy, and this whole section goes away for one. -->
+                <TextBlock x:Name="ExternalsHeader" Text="Externals" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
+                <TextBlock x:Name="ExternalsIntro" Style="{StaticResource Secondary}" Margin="0,0,0,4"
                            Text="Point an external at another branch on this machine only. This is svn switch on that external's own working copy: the svn:externals property is left alone, so nothing is committed and nobody else sees it. Sync afterwards and the snapshot records the switched content." />
-                <Border Style="{StaticResource Card}">
+                <Border x:Name="ExternalsCard" Style="{StaticResource Card}">
                     <StackPanel Spacing="10">
                         <Grid RowDefinitions="Auto,Auto">
                             <local:RowListView x:Name="Externals" Grid.Row="1" SelectionMode="Single" SelectionChanged="External_SelectionChanged">

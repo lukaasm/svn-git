@@ -187,8 +187,8 @@ public static class Operations
                         if (!SaveEdits(root, record, co.Path, true)) return record;
                         Move(root, record, OperationPhase.Syncing, "Checkout edits saved."); break;
                     case OperationPhase.Syncing:
-                        if (root.Svn.Status(co.Path, noIgnore: false).Any(x => x.Item is "conflicted" or "obstructed"))
-                            return Review(root, record, "Resolve the checkout's SVN conflicts before resuming.");
+                        if (root.Vcs(co).HasConflicts(root, co))
+                            return Review(root, record, $"Resolve the checkout's {root.Vcs(co).ServerName} conflicts before resuming.");
                         if (Ops.CheckoutChanges(root, co).Count > 0) return Review(root, record, "Checkout edits appeared after saving. Review them before starting another update.");
                         var sync = Ops.Sync(root, co);
                         record.Snapshot = sync.Sha;

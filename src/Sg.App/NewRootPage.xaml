@@ -17,11 +17,11 @@
                                       Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
                         </StackPanel>
                         <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
-                                   Text="Creates a .sg folder here. It holds the shared git store, the list of checkouts, and the branch worktrees. SVN never sees it." />
+                                   Text="Creates a .sg folder here. It holds the shared git store, the list of checkouts, and the branch worktrees. The server never sees it." />
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                             <TextBox x:Name="RootBox" Header="Root folder" PlaceholderText="D:\work" />
                             <Button Grid.Column="1" Content="Browse" Click="BrowseRoot_Click" VerticalAlignment="Bottom"
-                                    ToolTipService.ToolTip="Pick the folder that will hold .sg. Usually the folder that already holds your SVN checkout." />
+                                    ToolTipService.ToolTip="Pick the folder that will hold .sg. Usually the folder that already holds your SVN checkout or git clone." />
                         </Grid>
                         <CheckBox x:Name="FsMonitor" Content="Use git fsmonitor" IsChecked="True"
                                   ToolTipService.ToolTip="A background service that makes git status fast on a big worktree. Turn it off if your machine forbids it." />
@@ -37,13 +37,13 @@
                     <StackPanel Spacing="10">
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <TextBlock Text="2" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                            <TextBlock Text="Register the first SVN checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                            <TextBlock Text="Register the first checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                             <TextBlock Text="optional" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
                             <FontIcon x:Name="Step2Tick" Glyph="&#xE73E;" FontSize="14" Visibility="Collapsed" VerticalAlignment="Center"
                                       Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
                         </StackPanel>
                         <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
-                                   Text="A working copy already on disk, or one svn checks out from a URL first. Then every versioned file is hashed once into the store and one file is written into the checkout: .git, a one-line pointer back to the root. A 16 GB checkout takes minutes. You can go back and do it later instead." />
+                                   Text="An SVN working copy or a git clone already on disk, or one checked out or cloned from a URL first. An SVN working copy is hashed once into the store and gets one file: .git, a one-line pointer back to the root; a 16 GB checkout takes minutes. A git clone keeps its own .git, and the branch's history is copied into the store once. You can go back and do it later instead." />
                         <local:CheckoutFields x:Name="Fields" />
                         <local:TaskGate>
                             <local:IconButton Glyph="&#xE896;" Text="Add the checkout"

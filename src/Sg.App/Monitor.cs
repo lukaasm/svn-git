@@ -5,7 +5,7 @@ using Sg.Core;
 
 namespace Sg.App;
 
-/// <summary>One SVN URL the monitor watches.</summary>
+/// <summary>One server URL the monitor watches: an SVN folder, or a git repository's branch written url#branch.</summary>
 public sealed class MonitorItem
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -20,13 +20,17 @@ public sealed class MonitorItem
     /// <summary>The newest revision a toast was shown for.</summary>
     public long LastNotified { get; set; }
     public long Head { get; set; }
+    /// <summary>The commit Head is, for a git branch. Empty for SVN.</summary>
+    public string HeadCommit { get; set; } = "";
     public string ReposRoot { get; set; } = "";
     public DateTime? LastChecked { get; set; }
     public string? Error { get; set; }
 
-    [JsonIgnore] public List<SvnLogRevision> Recent { get; set; } = new();
+    [JsonIgnore] public List<LogRevision> Recent { get; set; } = new();
     [JsonIgnore] public int Unread => Recent.Count(r => r.Revision > LastSeen);
     [JsonIgnore] public bool Checking { get; set; }
+    [JsonIgnore] public bool IsGit => GitLocation.KindOfUrl(Url) == CheckoutKind.Git;
+    [JsonIgnore] public string HeadLabel => Rev.Label(Head, HeadCommit);
 }
 
 public sealed class MonitorStore
@@ -67,6 +71,14 @@ public static class MonitorService
     const int RecentCount = 60;
 
     public static int TotalUnread => Store.Items.Sum(i => i.Unread);
+
+    /// <summary>
+    /// The reader for one watched URL: svn against the server, or git through a cache repository kept
+    /// beside monitor.json, which every watched git branch shares.
+    /// </summary>
+    public static IServerHistory History(MonitorItem item) =>
+        ServerHistory.For(item.Url, Session.Root?.Svn ?? new Svn("svn", new NullLog()), Session.Root?.Config.GitExe ?? "git",
+            DebugTestRun.UserFile("monitor.git"), Session.Root?.Log ?? new NullLog());
     public static IEnumerable<string> Categories => Store.Items.Select(i => i.Category).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(c => c, StringComparer.OrdinalIgnoreCase);
 
     public static void Start(DispatcherQueue queue)
@@ -116,18 +128,12 @@ public static class MonitorService
         _busy = true;
         try
         {
-            var svn = Session.Root?.Svn ?? new Svn("svn", new NullLog());
             // Enough to overlap the waits, few enough that one server is not hammered.
             var gate = new SemaphoreSlim(6);
             var reads = items.Select(item => (Item: item, Read: Task.Run(async () =>
             {
                 await gate.WaitAsync();
-                try
-                {
-                    var info = svn.InfoUrl(item.Url);
-                    var log = svn.LogVerbose(null!, item.Url, RecentCount);
-                    return (info.LastChangedRev, info.ReposRoot, log);
-                }
+                try { return History(item).Read(item.Url, RecentCount); }
                 finally { gate.Release(); }
             }))).ToList();
             foreach (var item in items) item.Checking = true;
@@ -137,18 +143,19 @@ public static class MonitorService
             {
                 try
                 {
-                    var (head, reposRoot, recent) = await read;
+                    var (head, commit, reposRoot, recent) = await read;
                     item.ReposRoot = reposRoot;
                     item.Recent = recent;
                     if (item.LastSeen == 0) item.LastSeen = head;
                     item.Head = head;
+                    item.HeadCommit = commit;
                     item.Error = null;
                     if (item.Notify && item.Unread > 0 && head > item.LastNotified)
                     {
                         var newest = recent.FirstOrDefault(r => r.Revision > item.LastSeen);
                         var first = newest?.Message.Split('\n')[0].Trim() ?? "";
                         Notifications.Show($"{item.Name}: {item.Unread}{(item.Unread >= RecentCount ? "+" : "")} new commit(s)",
-                            (newest != null ? $"r{newest.Revision} {newest.Author}: {first}" : item.Url),
+                            (newest != null ? $"{newest.Label} {newest.Author}: {first}" : item.Url),
                             new Dictionary<string, string> { ["action"] = "monitor", ["id"] = item.Id });
                         item.LastNotified = head;
                     }

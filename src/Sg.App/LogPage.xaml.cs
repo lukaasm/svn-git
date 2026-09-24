@@ -9,6 +9,9 @@ namespace Sg.App;
 public sealed partial class LogPage : SgPage
 {
     readonly string _worktree;
+
+    /// <summary>What the branch's checkout sends to: SVN, or a git clone's remote branch. Known once the log is read.</summary>
+    string _server = "SVN";
     readonly bool _autoSelect;
     readonly ListFilter _filter;
     string _currentSha = "";
@@ -28,7 +31,7 @@ public sealed partial class LogPage : SgPage
         {
             if (node.Row is not FileRow row) return;
             var item = new MenuFlyoutItem { Text = "Blame", Icon = new FontIcon { Glyph = "\uE7B3" } };
-            ToolTipService.SetToolTip(item, "Who last changed each line: the SVN revision for the lines that came in with a snapshot, and the branch's own commits for the rest.");
+            ToolTipService.SetToolTip(item, $"Who last changed each line: the {(_server == "SVN" ? "SVN revision" : "server's commit")} for the lines that came in with a snapshot, and the branch's own commits for the rest.");
             item.Click += (_, _) => Go(() => new BlamePage(row.Path, _worktree, null) { Checkout = Checkout, Branch = Branch }, "blame:" + row.Path);
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(item);
@@ -107,6 +110,7 @@ public sealed partial class LogPage : SgPage
         if (rows == null) return;
         Checkout ??= rows.Checkout;
         Branch ??= rows.Branch;
+        _server = Session.Root?.Config.Checkouts.FirstOrDefault(c => c.Name == rows.Checkout) is { IsGit: true } gc ? ServerWords.Target(gc) : "SVN";
         Subtitle = $"{rows.Branch}  on  svn/{rows.Checkout}   {_worktree}";
         _currentSha = "";
         _branch = rows.List.Where(r => !r.IsSnapshot).ToList();
@@ -181,14 +185,14 @@ public sealed partial class LogPage : SgPage
             {
                 Sha = newest.Sha,
                 Date = newest.Date,
-                Author = "svn",
+                Author = _server == "SVN" ? "svn" : "server",
                 IsSnapshot = true,
                 IsGroup = true,
                 GroupCount = _snapshots.Count,
                 Expanded = _snapshotsOpen,
                 Subject = _snapshots.Count == 1
-                    ? "1 snapshot of SVN"
-                    : $"{_snapshots.Count} snapshots of SVN, newest first",
+                    ? $"1 snapshot of {_server}"
+                    : $"{_snapshots.Count} snapshots of {_server}, newest first",
                 Toggled = _ =>
                 {
                     _snapshotsOpen = !_snapshotsOpen;
@@ -237,14 +241,14 @@ public sealed partial class LogPage : SgPage
         RewordButton.IsEnabled = own.Count == 1 && !snapshot;
         // A revert adds a commit rather than rewriting one, so the picked commits need not sit together.
         RevertButton.IsEnabled = own.Count >= 1 && !snapshot;
-        var cannotRewrite = snapshot ? "Select local commits only. SVN snapshots cannot be rewritten." : null;
+        var cannotRewrite = snapshot ? $"Select local commits only. Snapshots of {_server} cannot be rewritten." : null;
         TaskGate.SetHelp(SquashButton, cannotRewrite ?? (own.Count < 2 ? "Select two or more consecutive local commits to squash." : !run ? "Select consecutive commits with no gaps in the branch history." : "Combine the selected commits and replay the commits above them."));
         TaskGate.SetHelp(RewordButton, cannotRewrite ?? (own.Count != 1 ? "Select exactly one local commit to change its message." : "Change the selected commit's message without changing its files."));
-        TaskGate.SetHelp(RevertButton, snapshot ? "Select local commits only. SVN snapshots cannot be reverted here." : own.Count == 0 ? "Select one or more local commits to revert." : "Add a commit that reverses the selected changes.");
+        TaskGate.SetHelp(RevertButton, snapshot ? $"Select local commits only. Snapshots of {_server} cannot be reverted here." : own.Count == 0 ? "Select one or more local commits to revert." : "Add a commit that reverses the selected changes.");
         SquashLabel.Text = run ? $"Squash {own.Count}" : "Squash";
         RevertLabel.Text = own.Count > 1 && !snapshot ? $"Revert {own.Count}" : "Revert";
         PickHint.Text = all.Any(r => r.IsGroup) ? "Press that line to open the snapshots, or leave it folded."
-            : snapshot ? "A snapshot of SVN is picked. Those cannot be rewritten."
+            : snapshot ? $"A snapshot of {_server} is picked. Those cannot be rewritten."
             : own.Count >= 2 && !run ? "They have to sit next to each other."
             : own.Count >= 2 ? ""
             : "Ctrl or Shift picks more than one.";
@@ -413,10 +417,10 @@ public sealed partial class LogPage : SgPage
             Message.Text = "";
             ResultBar.Severity = InfoBarSeverity.Success;
             ResultBar.Message = verb == "Revert"
-                ? $"{Short(r.Sha)} on {r.Branch} takes {(r.Replaced == 1 ? "that commit" : r.Replaced + " commits")} back out. Nothing went to SVN."
+                ? $"{Short(r.Sha)} on {r.Branch} takes {(r.Replaced == 1 ? "that commit" : r.Replaced + " commits")} back out. Nothing went to {_server}."
                 : r.Replaced == 1
-                    ? $"Reworded. {Short(r.Sha)} is on {r.Branch} now. Nothing went to SVN."
-                    : $"{r.Replaced} commits are now {Short(r.Sha)} on {r.Branch}. Nothing went to SVN.";
+                    ? $"Reworded. {Short(r.Sha)} is on {r.Branch} now. Nothing went to {_server}."
+                    : $"{r.Replaced} commits are now {Short(r.Sha)} on {r.Branch}. Nothing went to {_server}.";
             ResultBar.IsOpen = true;
         }
         await LoadAsync(select: r?.Sha);

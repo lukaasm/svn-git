@@ -4,14 +4,22 @@ namespace Sg.Core;
 
 /// <summary>
 /// One line of a file, and who last changed it. Sha is set for a line the branch itself changed;
-/// Revision for one that came from SVN. A line has one or the other, never both.
+/// Revision for one that came from SVN, and Commit for one that came from a git checkout's server.
+/// A line has one of the three, never two.
 /// </summary>
-public sealed record BlameLine(int Number, string Text, string Author, string Date, string Summary, string? Sha, long? Revision)
+public sealed record BlameLine(int Number, string Text, string Author, string Date, string Summary, string? Sha, long? Revision, string? Commit = null)
 {
-    /// <summary>What the gutter says: the SVN revision, or the short sha of the commit on the branch.</summary>
+    /// <summary>What the gutter says: the SVN revision, the server's commit, or the short sha of the commit on the branch.</summary>
     public string Mark => Revision.HasValue ? "r" + Revision.Value
+        : Commit is { Length: >= 8 } ? Commit[..8]
         : Sha is { Length: >= 8 } ? Sha[..8]
         : Sha ?? "";
+
+    /// <summary>The line came from the server: it has a revision or a server commit to show.</summary>
+    public bool FromServer => Revision.HasValue || Commit != null;
+
+    /// <summary>The server's own blame line this came from, for asking the server about it.</summary>
+    public ServerBlameLine Server => new(Number, Revision ?? 0, Author, Date, Commit ?? "");
 
     /// <summary>The branch changed this line, so it is not in SVN yet.</summary>
     public bool Local => Sha != null;
@@ -33,28 +41,35 @@ public sealed class BlameResult
 /// Who last touched each line, answered the way this bridge has to answer it. A worktree's git history
 /// is one commit per sync, so plain `git blame` says "wc r266" for nearly every line, which names the
 /// sync and not the change. Here the branch's own commits are answered by git, and every line that came
-/// in with a snapshot is handed to `svn blame`, which knows the revision and the person.
+/// in with a snapshot is handed to the checkout's server - `svn blame`, or `git blame` in the clone -
+/// which knows the revision and the person.
 /// </summary>
 public static class Blame
 {
-    /// <summary>Who last changed each line of a file in the checkout. Straight from svn.</summary>
+    /// <summary>Who last changed each line of a file in the checkout. Straight from the server.</summary>
     public static BlameResult OfCheckout(SgRoot root, CheckoutConfig co, string relPath)
     {
         var abs = PathUtil.Join(co.Path, relPath);
         if (!File.Exists(abs)) throw new SgException("no such file in the checkout: " + relPath);
         var text = ReadLines(abs);
-        var svn = root.Svn.Blame(co.Path, relPath);
+        var vcs = root.Vcs(co);
+        var server = vcs.Blame(root, co, relPath, asInSnapshot: false);
         var res = new BlameResult { Path = relPath };
         for (var i = 0; i < text.Count; i++)
         {
-            var b = i < svn.Count ? svn[i] : null;
-            res.Lines.Add(b == null
+            var b = i < server.Count ? server[i] : null;
+            res.Lines.Add(b is not { Known: true }
                 ? new BlameLine(i + 1, text[i], "", "", "", null, null)
-                : new BlameLine(i + 1, text[i], b.Author, b.Date, "", null, b.Revision));
+                : FromServer(b, i + 1, text[i]));
         }
-        if (svn.Count == 0) res.Warnings.Add("svn had nothing to say about this file. It may be added but not committed yet.");
+        if (server.Count == 0) res.Warnings.Add($"{vcs.ServerName} had nothing to say about this file. It may be added but not committed yet.");
         return res;
     }
+
+    static BlameLine FromServer(ServerBlameLine b, int number, string text) =>
+        b.Commit.Length > 0
+            ? new BlameLine(number, text, b.Author, b.Date, "", null, null, b.Commit)
+            : new BlameLine(number, text, b.Author, b.Date, "", null, b.Revision);
 
     /// <summary>
     /// Who last changed each line of a file in a worktree. A line the branch changed is answered by git;
@@ -79,29 +94,30 @@ public static class Blame
         // Every commit the snapshots are made of. Anything else is the branch's own work.
         var snapshots = git.RevList(worktree, snapRef).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // svn is asked once, for the same file in the checkout, and only when a line needs it.
-        List<SvnBlameLine>? svn = null;
+        // The server is asked once, for the same file in the checkout, and only when a line needs it.
+        var vcs = root.Vcs(co);
+        List<ServerBlameLine>? server = null;
         var wanted = lines.Any(l => snapshots.Contains(l.Sha));
         if (wanted)
         {
             var inCheckout = PathUtil.Join(co.Path, relPath);
-            if (File.Exists(inCheckout))
+            if (File.Exists(inCheckout) || co.IsGit)
             {
-                try { svn = root.Svn.Blame(co.Path, relPath); }
-                catch (SgException ex) { res.Warnings.Add("svn blame failed for " + relPath + ": " + ex.Message.Split('\n')[0]); }
+                try { server = vcs.Blame(root, co, relPath, asInSnapshot: true); }
+                catch (SgException ex) { res.Warnings.Add($"{vcs.ServerName} blame failed for " + relPath + ": " + ex.Message.Split('\n')[0]); }
             }
-            else res.Warnings.Add(relPath + " is not in the checkout, so the lines that came from SVN cannot be dated.");
+            else res.Warnings.Add(relPath + $" is not in the checkout, so the lines that came from {vcs.ServerName} cannot be dated.");
         }
 
         foreach (var l in lines)
         {
             if (snapshots.Contains(l.Sha))
             {
-                // The line as it was in the snapshot, which is the line svn blamed in the checkout.
-                var b = svn != null && l.OriginalLine >= 1 && l.OriginalLine <= svn.Count ? svn[l.OriginalLine - 1] : null;
-                res.Lines.Add(b == null
-                    ? new BlameLine(l.Number, l.Text, "svn", "", "came in with a snapshot", null, null)
-                    : new BlameLine(l.Number, l.Text, b.Author, b.Date, "", null, b.Revision));
+                // The line as it was in the snapshot, which is the line the server blamed in the checkout.
+                var b = server != null && l.OriginalLine >= 1 && l.OriginalLine <= server.Count ? server[l.OriginalLine - 1] : null;
+                res.Lines.Add(b is not { Known: true }
+                    ? new BlameLine(l.Number, l.Text, vcs.ServerName.ToLowerInvariant(), "", "came in with a snapshot", null, null)
+                    : FromServer(b, l.Number, l.Text));
             }
             else
             {
@@ -120,9 +136,6 @@ public static class Blame
         return lines;
     }
 }
-
-/// <summary>One line as svn blames it. A line svn has never seen has no revision.</summary>
-public sealed record SvnBlameLine(int Number, long Revision, string Author, string Date);
 
 /// <summary>One line as git blames it, with the line it had in the commit that last changed it.</summary>
 public sealed record GitBlameLine(int Number, int OriginalLine, string Sha, string Author, string Date, string Summary, string Text);

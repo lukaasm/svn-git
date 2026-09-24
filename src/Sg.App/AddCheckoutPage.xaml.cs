@@ -73,8 +73,10 @@ public sealed partial class AddCheckoutPage : SgPage
         }
 
         Added = true;
-        Result.Text = $"{r.Checkout.Name}: r{r.Snapshot.Revision}, {r.Snapshot.Externals.Count} external(s)";
-        Pane.Append($"{r.Checkout.Name}: r{r.Snapshot.Revision}, snapshot {r.Snapshot.Sha[..10]}, {r.Snapshot.Externals.Count} external(s)");
+        var at = Rev.Label(r.Snapshot.Revision, r.Snapshot.Commit);
+        var parts = r.Checkout.IsGit ? $"git {r.Checkout.Remote}/{r.Checkout.Branch}" : $"{r.Snapshot.Externals.Count} external(s)";
+        Result.Text = $"{r.Checkout.Name}: {at}, {parts}";
+        Pane.Append($"{r.Checkout.Name}: {at}, snapshot {r.Snapshot.Sha[..10]}, {parts}");
         foreach (var w in r.Snapshot.Warnings) Pane.Append("warn: " + w);
         // Registration creates the .git pointer that preflight rejects. The submitted form is
         // complete now; validating it again would turn a successful result into an ownership error.

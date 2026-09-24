@@ -1,7 +1,15 @@
 # sg
 
-Git branches and worktrees over SVN checkouts. SVN stays the master.
+Git branches and worktrees over SVN checkouts and git clones. The server stays the master.
 The design is in [DESIGN.md](DESIGN.md). This is milestone 1: the core library and the CLI.
+
+## Git checkouts
+
+A checkout can be a git clone instead of an SVN working copy. Register the clone's folder the same way, with **Add checkout** or `sg checkout add <folder>`; a folder with its own `.git` is taken as a clone, and its branch must track a branch of a remote. From a URL, give the branch after a `#`: `sg checkout add --url https://host/repo.git#main`. `--kind svn|git` overrides the guess.
+
+Everything works the way it does for SVN. Sync fetches the tracked branch and fast-forwards the clone, keeping local edits. Worktrees branch from its snapshot. Push, and **Commit** in the checkout's changes window, make one commit on the server branch with only the files they send, and push it; if someone pushed other files first, the commit goes on top of theirs, and if they changed the same files it stops as out of date. Stop in the checkout, shelves, blame, the server log, merge (cherry pick, take back out, or squash everything), new server branch, new server checkout, export and import, backups and the project monitor all take git clones. Revisions of a git checkout are shown as short commits.
+
+The clone stays yours: its remotes, config and identity are used as they are, and sg writes one file, `sg-root`, into its git folder so a command run inside the clone finds the root. Push and commit refuse while the clone has commits of its own that the server does not have, is on another branch, or is half way through a rebase or merge. Shallow clones are refused; submodules and LFS files are left as they are.
 
 [Worktree code review roadmap](CODE_REVIEW_DESIGN.md), covering delivered features and planned scope filters, rename tracking, and review rounds.
 

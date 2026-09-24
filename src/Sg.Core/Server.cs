@@ -11,10 +11,14 @@ public sealed class RepoPlan
     /// <summary>planned, committed, failed, skipped</summary>
     public string State = "planned";
     public long? Revision;
+    /// <summary>The commit the new git branch starts at. Empty for SVN.</summary>
+    public string Commit = "";
+    public string Label => new CommitId(Revision, Commit).Label;
 }
 
 public sealed class ServerBranchPlan
 {
+    public CheckoutKind Kind;
     public string Name = "";
     public string Source = "";
     public string NewRootUrl = "";
@@ -26,6 +30,13 @@ public sealed class ServerBranchPlan
     public string Describe()
     {
         var sb = new StringBuilder();
+        if (Kind == CheckoutKind.Git)
+        {
+            sb.Append("new server branch ").Append(Name).Append(" from ").Append(Source).Append(", one git branch pushed to the remote:\n");
+            foreach (var r in Repos)
+                foreach (var (src, dst) in r.Copies) sb.Append("  branch ").Append(dst).Append("\n     at ").Append(src).Append('\n');
+            return sb.ToString().TrimEnd('\n');
+        }
         sb.Append("new server branch ").Append(Name).Append(" from ").Append(Source).Append(", ").Append(Repos.Count).Append(" repositories, one revision each:\n");
         foreach (var (wc, url) in Kept) sb.Append("  kept  ").Append(wc).Append(" stays at ").Append(url).Append('\n');
         foreach (var r in Repos)
@@ -62,8 +73,42 @@ public sealed class BranchPart
     public bool Keep;
 }
 
-/// <summary>Server branches and server checkouts. See DESIGN.md, "New server branch" and "New server checkout".</summary>
+/// <summary>
+/// Server branches and server checkouts. See DESIGN.md, "New server branch" and "New server checkout".
+/// What a branch is made of on the server - svnmucc copies, or a new branch pushed to a git remote - is
+/// the checkout's server's business, through <see cref="ICheckoutVcs"/>.
+/// </summary>
 public static class Server
+{
+    /// <summary>
+    /// Works out what the new branch copies, and where. Touches the server only to read. parts says what
+    /// each external gets; one it does not name gets the plain rule under name.
+    /// </summary>
+    public static ServerBranchPlan PlanBranch(SgRoot root, CheckoutConfig co, string name, string? message = null, IReadOnlyList<BranchPart>? parts = null) =>
+        root.Vcs(co).PlanBranch(root, co, name, message, parts);
+
+    /// <summary>The root and every external of a checkout, each on the plain rule, for a caller to adjust before PlanBranch.</summary>
+    public static List<BranchPart> Parts(SgRoot root, CheckoutConfig co) => root.Vcs(co).Parts(root, co);
+
+    /// <summary>Runs the plan against the server of the checkout it was made from. Stops at the first failure.</summary>
+    public static void ExecuteBranch(SgRoot root, ServerBranchPlan plan)
+    {
+        var co = root.Checkout(plan.Source);
+        root.Vcs(co).ExecuteBranch(root, co, plan);
+    }
+
+    /// <summary>A new checkout of a server branch, made from the nearest one on disk so only differences travel.</summary>
+    public static CheckoutResult Checkout(SgRoot root, CheckoutConfig near, string target, string? name = null) =>
+        root.Vcs(near).ServerCheckout(root, near, target, name);
+
+    internal static void CheckName(string name)
+    {
+        if (name.Length == 0 || name.Contains('/') || name.Contains('\\') || name.Contains(' ')) throw new SgException("bad branch name: " + name);
+    }
+}
+
+/// <summary>The SVN side: svnmucc copies, one transaction per repository, and a new checkout by copy and svn switch.</summary>
+internal static class SvnServer
 {
     static readonly UTF8Encoding Utf8 = new(false);
 
@@ -205,10 +250,7 @@ public static class Server
         return plan;
     }
 
-    static void CheckName(string name)
-    {
-        if (name.Length == 0 || name.Contains('/') || name.Contains('\\') || name.Contains(' ')) throw new SgException("bad branch name: " + name);
-    }
+    static void CheckName(string name) => Server.CheckName(name);
 
     /// <summary>The root and every external of a checkout, each on the plain rule, for a caller to adjust before PlanBranch.</summary>
     public static List<BranchPart> Parts(SgRoot root, CheckoutConfig co)
@@ -306,7 +348,7 @@ public static class Server
         if (sw.Conflicts > 0) log.Warn($"{sw.Conflicts} conflict(s) after the switch, check svn status in {dir}");
 
         // 4. Same skip list, shared folders and their mode, and optional folders as the source.
-        return Ops.CheckoutAdd(root, dir, near.Skip, near.Junctions, near.Optional, name, near.Shared);
+        return Ops.CheckoutAdd(root, dir, near.Skip, near.Junctions, near.Optional, name, near.Shared, CheckoutKind.Svn);
     }
 
     static void Robocopy(SgRoot root, string src, string dst, List<string> excludeAbs)

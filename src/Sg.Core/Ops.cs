@@ -10,6 +10,9 @@ public sealed class SyncResult
 {
     public string Checkout = "";
     public long Revision;
+    /// <summary>The server commit the snapshot holds, for a git checkout. Empty for SVN.</summary>
+    public string Commit = "";
+    public string Label => Rev.Label(Revision, Commit);
     public string Sha = "";
     public List<ExternalInfo> Externals = new();
     public int Overlaid;
@@ -37,9 +40,13 @@ public sealed class RebaseResult
 public sealed class CheckoutStatus
 {
     public string Name = "";
+    public CheckoutKind Kind;
     public string Path = "";
     public string Url = "";
     public long Revision;
+    /// <summary>The server commit the snapshot holds, for a git checkout. Empty for SVN.</summary>
+    public string Commit = "";
+    public string Label => Rev.Label(Revision, Commit);
     public string Snapshot = "";
     /// <summary>When the snapshot was taken: the last sync. Null before the first one.</summary>
     public DateTimeOffset? SnapshotTaken;
@@ -194,18 +201,21 @@ public static class Ops
     // ---- checkout add ----
 
     /// <summary>
-    /// A checkout that does not exist yet: svn checkout the URL into a folder, then register it like
-    /// any other. The name defaults to the last part of the URL, and the folder to the root's own
-    /// folder plus the name, which is where server-checkout puts its copies too. Skip, junctions and
-    /// optional are typed, not picked, because there is nothing on disk to pick from yet.
+    /// A checkout that does not exist yet: svn checkout or git clone the URL into a folder, then register
+    /// it like any other. The name defaults to the last part of the URL - for git the branch after the #,
+    /// or the repository - and the folder to the root's own folder plus the name, which is where
+    /// server-checkout puts its copies too. Skip, junctions and optional are typed, not picked, because
+    /// there is nothing on disk to pick from yet. kind null reads the URL: a git URL is one that says so.
     /// </summary>
     public static CheckoutResult CheckoutFromUrl(SgRoot root, string url, string? folder = null, IEnumerable<string>? skip = null,
-        IEnumerable<string>? junctions = null, IEnumerable<string>? optional = null, string? name = null, SharedMode? shared = null)
+        IEnumerable<string>? junctions = null, IEnumerable<string>? optional = null, string? name = null, SharedMode? shared = null,
+        CheckoutKind? kind = null)
     {
         url = url.Trim().TrimEnd('/');
-        if (!url.Contains("://")) throw new SgException("give a full SVN URL, like http://svn/repo/branches/x: " + url);
-        var last = url.Split('/').Last();
-        name ??= last;
+        var vcs = root.Vcs(kind ?? GitLocation.KindOfUrl(url));
+        if (vcs.Kind == CheckoutKind.Svn && !url.Contains("://"))
+            throw new SgException("give a full SVN URL, like http://svn/repo/branches/x: " + url);
+        name ??= vcs.NameFromUrl(url);
         root.Git.CheckBranchName(name);
         folder = Path.GetFullPath(folder ?? Path.Combine(root.RootPath, name)).TrimEnd('\\', '/');
         if (File.Exists(folder)) throw new SgException("a file is in the way: " + folder);
@@ -213,17 +223,20 @@ public static class Ops
             throw new SgException("folder exists and is not empty: " + folder + ". Register it with 'checkout add' if it is already a working copy.");
         if (root.Config.Checkouts.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
             throw new SgException("checkout name already in use: " + name);
-        if (!root.Svn.UrlExists(url)) throw new SgException("not on the server: " + url);
+        if (!vcs.UrlExists(root, url)) throw new SgException("not on the server: " + url);
 
         Directory.CreateDirectory(Path.GetDirectoryName(folder)!);
-        root.Log.Info($"svn checkout {url} into {folder}");
-        var r = root.Svn.Checkout(url, folder);
-        if (r.Conflicts > 0) root.Log.Warn($"{r.Conflicts} conflict(s) after the checkout, check svn status in {folder}");
-        return CheckoutAdd(root, folder, skip, junctions, optional, name, shared);
+        vcs.CheckoutUrl(root, url, folder);
+        return CheckoutAdd(root, folder, skip, junctions, optional, name, shared, vcs.Kind);
     }
 
+    /// <summary>
+    /// Registers a working copy that is already on disk and builds its first snapshot. kind null reads the
+    /// folder: a .git in it is a git clone, anything else is taken for an SVN working copy.
+    /// </summary>
     public static CheckoutResult CheckoutAdd(SgRoot root, string folder, IEnumerable<string>? skip = null,
-        IEnumerable<string>? junctions = null, IEnumerable<string>? optional = null, string? name = null, SharedMode? shared = null)
+        IEnumerable<string>? junctions = null, IEnumerable<string>? optional = null, string? name = null, SharedMode? shared = null,
+        CheckoutKind? kind = null)
     {
         folder = Path.GetFullPath(folder).TrimEnd('\\', '/');
         if (!Directory.Exists(folder)) throw new SgException("no such folder: " + folder);
@@ -233,15 +246,17 @@ public static class Ops
             throw new SgException("checkout name already in use: " + name);
         if (root.Config.Checkouts.Any(c => c.Path.TrimEnd('\\', '/').Equals(folder, StringComparison.OrdinalIgnoreCase)))
             throw new SgException("folder already registered: " + folder);
-        var gitFile = Path.Combine(folder, ".git");
-        if (File.Exists(gitFile) || Directory.Exists(gitFile)) throw new SgException(folder + " already has a .git. Remove it first.");
 
-        var info = root.Svn.Info(folder, ".");
+        var vcs = root.Vcs(kind ?? KindOfFolder(folder));
+        var info = vcs.Describe(root, folder);
         using var _ = root.Lock();
 
         var co = new CheckoutConfig
         {
             Name = name,
+            Kind = info.Kind,
+            Remote = info.Kind == CheckoutKind.Git ? info.Remote : null,
+            Branch = info.Kind == CheckoutKind.Git ? info.Branch : null,
             Path = folder,
             Url = info.Url,
             ReposRoot = info.ReposRoot,
@@ -253,41 +268,52 @@ public static class Ops
         foreach (var j in co.Junctions)
             if (!co.Skip.Contains(j, StringComparer.OrdinalIgnoreCase)) co.Skip.Add(j);
 
-        // git worktree add refuses a folder that has files. Add it elsewhere, then move the .git file in.
-        root.Git.WorktreePrune();
-        var tmpParent = root.NewTempDir();
-        var tmp = Path.Combine(tmpParent, name);
-        try
-        {
-            root.Git.WorktreeAddDetachedNoCheckout(tmp, SgRoot.RootRef);
-            File.Move(Path.Combine(tmp, ".git"), gitFile);
-        }
-        finally
-        {
-            try { Directory.Delete(tmpParent, true); } catch { /* best effort */ }
-        }
-        root.Git.WorktreeRepair(folder);
-
         root.Config.Checkouts.Add(co);
-        root.Save();
-        root.Log.Info($"first snapshot of {name}: every file is hashed once, this can take a while");
         SnapshotInfo snap;
         try
         {
-            snap = Snapshot.Build(root, co, null);
+            vcs.Attach(root, co);
+            root.Save();
+            root.Log.Info(co.IsGit
+                ? $"first snapshot of {name}: the branch's history is copied into the store once, this can take a while"
+                : $"first snapshot of {name}: every file is hashed once, this can take a while");
+            snap = vcs.BuildSnapshot(root, co, null, null);
         }
         catch (Exception)
         {
             // Stopping here must not leave a checkout registered with no snapshot behind it.
             root.Config.Checkouts.RemoveAll(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             root.Save();
-            try { File.Delete(gitFile); } catch (IOException) { /* leave it, the message says what happened */ }
-            try { root.Git.WorktreePrune(); } catch (SgException) { /* best effort */ }
+            vcs.Detach(root, co);
             root.Log.Warn($"{name} was not registered: the first snapshot did not finish");
             throw;
         }
         root.RefreshExcludes();
         return new CheckoutResult(co, snap);
+    }
+
+    /// <summary>
+    /// A folder with a .git of its own is a git clone. Anything else is taken for an SVN working copy, which
+    /// svn then confirms - and so is one whose .git is a file pointing into an sg store: that is an SVN
+    /// checkout some root already holds, and the SVN side says so in those words.
+    /// </summary>
+    public static CheckoutKind KindOfFolder(string folder)
+    {
+        var dotGit = Path.Combine(folder, ".git");
+        if (Directory.Exists(dotGit)) return CheckoutKind.Git;
+        if (!File.Exists(dotGit)) return CheckoutKind.Svn;
+        try
+        {
+            var line = File.ReadAllText(dotGit).Trim();
+            if (line.StartsWith("gitdir:"))
+            {
+                var gd = line[7..].Trim();
+                if (!Path.IsPathRooted(gd)) gd = Path.Combine(folder, gd);
+                if (File.Exists(Path.Combine(gd, "..", "..", "sg.json"))) return CheckoutKind.Svn;
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return CheckoutKind.Git;
     }
 
     static List<string> Clean(IEnumerable<string>? paths) =>
@@ -340,6 +366,7 @@ public static class Ops
                 if (File.Exists(oldIgnores) && !File.Exists(newIgnores)) File.Move(oldIgnores, newIgnores);
             }
             catch (IOException) { /* RefreshExcludes writes it again below */ }
+            root.Vcs(co).Renamed(root, co, oldName);
             root.Log.Info($"checkout {oldName} is now {name}");
         }
 
@@ -376,309 +403,54 @@ public static class Ops
     /// <summary>
     /// Every external of a checkout: where it points now, and where the committed svn:externals says it
     /// should. The two differ when someone switched one locally, which is a working copy state and not
-    /// a commit anyone else sees.
+    /// a commit anyone else sees. A git checkout has none.
     /// </summary>
-    public static List<ExternalState> ExternalsOf(SgRoot root, CheckoutConfig co)
-    {
-        var svn = root.Svn;
-        var rels = svn.Status(co.Path, noIgnore: false)
-            .Where(e => e.Item == "external" && e.Path.Length > 0)
-            .Select(e => e.Path).Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => p, StringComparer.Ordinal).ToList();
-        if (rels.Count == 0) return new();
+    public static List<ExternalState> ExternalsOf(SgRoot root, CheckoutConfig co) => root.Vcs(co).Externals(root, co);
 
-        var infos = svn.InfoMany(co.Path, rels, recursive: false);
-        var declared = DeclaredExternals(root, co);
-        var res = new List<ExternalState>();
-        foreach (var rel in rels)
-        {
-            var info = infos.FirstOrDefault(i => i.Path.Equals(rel, StringComparison.OrdinalIgnoreCase));
-            if (info == null) continue;
-            res.Add(new ExternalState
-            {
-                Rel = rel,
-                Url = info.Url,
-                Revision = info.Revision,
-                ReposRoot = info.ReposRoot,
-                Declared = declared.GetValueOrDefault(rel, ""),
-            });
-        }
-        return res;
-    }
-
-    /// <summary>
-    /// What the svn:externals properties say, resolved to absolute URLs and keyed by the path the
-    /// external lands on. Externals.Definitions does the reading: those lines carry quoting, peg
-    /// revisions and two historic orderings, and there is no second parser for them.
-    /// </summary>
-    static Dictionary<string, string> DeclaredExternals(SgRoot root, CheckoutConfig co)
-    {
-        var res = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        List<(string Dir, string Value)> props;
-        try { props = root.Svn.PropGetRecursive(co.Path, "svn:externals"); }
-        catch (SgException) { return res; }
-
-        foreach (var (dir, value) in props)
-            foreach (var (url, name) in Externals.Definitions(value))
-            {
-                if (name.Length == 0) continue;
-                var rel = PathUtil.Rel(dir.Length == 0 ? name : dir + "/" + name);
-                res[rel] = Absolute(url, co);
-            }
-        return res;
-    }
-
-    /// <summary>svn:externals may point at the repository root with ^, or give a whole URL.</summary>
-    static string Absolute(string url, CheckoutConfig co) =>
-        url.StartsWith('^') ? co.ReposRoot.TrimEnd('/') + url[1..] : url;
-
-    /// <summary>
-    /// The branches a URL could be pointed at: the siblings of its own branch on the server. A URL
-    /// under branches/&lt;x&gt; lists that branches folder; one under trunk lists the branches folder
-    /// beside it. Empty when the repository does not follow either shape.
-    /// </summary>
-    public static List<string> BranchNames(SgRoot root, string url)
-    {
-        var parts = url.TrimEnd('/').Split('/');
-        for (var i = parts.Length - 1; i >= 0; i--)
-        {
-            if (parts[i] == "branches" && i + 1 < parts.Length)
-                return root.Svn.ListDirs(string.Join("/", parts[..(i + 1)]));
-            if (parts[i] == "trunk")
-                return root.Svn.ListDirs(string.Join("/", parts[..i].Append("branches")));
-        }
-        return new();
-    }
+    /// <summary>The branches a URL could be pointed at: the siblings of its own branch on the server.</summary>
+    public static List<string> BranchNames(SgRoot root, CheckoutConfig co, string url) => root.Vcs(co).BranchNames(root, co, url);
 
     /// <summary>The same URL, pointed at another branch. The rule server branches already use.</summary>
-    public static string UrlForBranch(SgRoot root, string url, string branch) =>
-        BranchRule.NewUrl(url.TrimEnd('/'), branch, root.Config.BranchUrlOverrides);
+    public static string UrlForBranch(SgRoot root, CheckoutConfig co, string url, string branch) =>
+        root.Vcs(co).UrlForBranch(root, co, url, branch);
 
     /// <summary>
-    /// Points one external at another URL, here only. This is svn switch on the external's own working
-    /// copy: the svn:externals property is untouched, so nothing is committed and nobody else sees it.
-    /// The next sync records the new content and the new URL in the snapshot, which is what makes a
-    /// branch built on this checkout build against the switched external. Sync has to put the switch
-    /// back itself after its svn update, because svn update undoes one; see <see cref="Reswitch"/>.
+    /// Points one external at another URL, here only: svn switch on the external's own working copy,
+    /// nothing committed. The next sync records the new content and URL in the snapshot.
     /// </summary>
-    public static SvnUpdateResult SwitchExternal(SgRoot root, CheckoutConfig co, string rel, string url)
-    {
-        rel = PathUtil.Rel(rel);
-        if (rel.Length == 0) throw new SgException("the checkout root is not an external");
-        url = url.Trim().TrimEnd('/');
-        if (url.Length == 0) throw new SgException("give the URL to point it at");
-
-        var dir = PathUtil.Join(co.Path, rel);
-        if (!Directory.Exists(dir)) throw new SgException("no such external in the checkout: " + rel);
-        using var _ = root.Lock();
-        root.Log.Info($"switching {rel} to {url}");
-        var r = root.Svn.Switch(dir, url);
-        root.Log.Info($"{rel} is now at {url}" + (r.Revision.HasValue ? $", r{r.Revision}" : ""));
-        return r;
-    }
+    public static UpstreamUpdate SwitchExternal(SgRoot root, CheckoutConfig co, string rel, string url) =>
+        root.Vcs(co).SwitchExternal(root, co, rel, url);
 
     // ---- sync ----
 
+    /// <summary>
+    /// Brings the checkout up to the server's newest and takes a new snapshot of it: svn update, or a
+    /// fetch and a fast-forward of the clone. Local edits stay where they are and stay out of the snapshot.
+    /// </summary>
     public static SyncResult Sync(SgRoot root, CheckoutConfig co)
     {
         using var _ = root.Lock();
         var git = root.Git;
-        var svn = root.Svn;
+        var vcs = root.Vcs(co);
         var snapRef = root.SnapshotRef(co);
         var prevSha = git.RefSha(snapRef);
         var prev = prevSha != null ? SnapshotMeta.Parse(git.Body(prevSha)) : null;
 
-        // svn update processes externals, and that step points a switched one back at whatever
-        // svn:externals declares, deleting what only existed on the branch it was switched to. It
-        // says nothing about having done it. Read them first, and take the update that keeps them.
-        var switched = SwitchedExternals(root, co);
-
-        var upd = switched.Count == 0 ? svn.Update(co.Path) : UpdateKeepingSwitches(root, co);
-        root.Log.Info($"svn update {co.Name}: " + (upd.Revision.HasValue ? "r" + upd.Revision : "done")
-                      + (upd.Conflicts > 0 ? $", {upd.Conflicts} conflict(s) in the checkout" : ""));
-
-        // The safety net under both paths, and before the snapshot, so the snapshot records the
-        // switched content, which is the point of switching one.
-        Reswitch(root, co, switched);
-
-        var snap = Snapshot.Build(root, co, prevSha, info => LogsSince(root, co, prev, info));
+        var upd = vcs.Update(root, co);
+        var snap = vcs.BuildSnapshot(root, co, prevSha, info => vcs.LogsSince(root, co, prev, info));
         return new SyncResult
         {
             Checkout = co.Name,
             Revision = snap.Revision,
+            Commit = snap.Commit,
             Sha = snap.Sha,
             Externals = snap.Externals,
             Overlaid = snap.Overlaid,
             Conflicts = upd.Conflicts,
             Changed = !snap.Unchanged,
-            KeptSwitched = switched.Select(s => s.Rel).ToList(),
-            Warnings = snap.Warnings,
+            KeptSwitched = upd.KeptSwitched,
+            Warnings = upd.Warnings.Concat(snap.Warnings).ToList(),
         };
-    }
-
-    /// <summary>
-    /// The update for a checkout that has a switched external. A plain svn update points it home and
-    /// then sync points it away again: the whole difference between the two branches crosses the wire
-    /// twice. On a builds folder over a VPN that is tens of gigabytes and hours, so it is not a price
-    /// worth paying for the common case.
-    ///
-    /// Instead the root goes first on its own, and each external is updated inside its own working
-    /// copy, which leaves the URL it sits on alone. That is only safe while svn has no external work
-    /// of its own to do, so the svn:externals text has to come out of the root update exactly as it
-    /// went in, with no pinned revisions in it. Anything else falls back to the plain update, and
-    /// <see cref="Reswitch"/> puts the switches back after it.
-    /// </summary>
-    static SvnUpdateResult UpdateKeepingSwitches(SgRoot root, CheckoutConfig co)
-    {
-        var before = ExternalProps(root, co);
-        var upd = root.Svn.Update(co.Path, ignoreExternals: true);
-        var after = ExternalProps(root, co);
-
-        var blocker = Blocker(before, after);
-        if (blocker != null)
-        {
-            root.Log.Warn($"{blocker}, so svn has to place the externals itself. "
-                          + "It will pull the switched ones home first and sync will send them back out, which transfers each of them twice.");
-            return root.Svn.Update(co.Path);
-        }
-
-        foreach (var rel in ExternalDirs(root, co))
-        {
-            var dir = PathUtil.Join(co.Path, rel);
-            if (!Directory.Exists(dir))
-            {
-                root.Log.Warn($"svn:externals declares {rel} and there is no folder there. Sync leaves it alone.");
-                continue;
-            }
-            // Its own working copy, so this updates whatever URL it is on. That is the whole trick.
-            upd.Conflicts += root.Svn.Update(dir).Conflicts;
-        }
-        return upd;
-    }
-
-    /// <summary>
-    /// Why the cheap update cannot be used, or null when it can. It compares the property text and
-    /// nothing else: resolving the URLs would drag in the relative forms and the pegs that
-    /// <see cref="Externals.Definitions"/> does not carry, and a wrong answer here would leave a
-    /// folder missing rather than a label wrong.
-    /// </summary>
-    static string? Blocker(string? before, string? after)
-    {
-        if (before == null || after == null) return "svn:externals could not be read";
-        if (!string.Equals(before, after, StringComparison.Ordinal)) return "svn:externals changed on the server";
-        // -r 123 or @123 pins an external to one revision, and updating it in place would move it to head.
-        if (Regex.IsMatch(after, @"(?:^|\s)-r\s*\d+|@\d+(?:\s|$)", RegexOptions.Multiline)) return "an external is pinned to a revision";
-        return null;
-    }
-
-    /// <summary>Every svn:externals value in the checkout as one comparable string, or null if unreadable.</summary>
-    static string? ExternalProps(SgRoot root, CheckoutConfig co)
-    {
-        try
-        {
-            return string.Join("\n", root.Svn.PropGetRecursive(co.Path, "svn:externals")
-                .OrderBy(p => p.Dir, StringComparer.Ordinal)
-                .Select(p => p.Dir + " " + p.Value.Replace("\r\n", "\n").Trim()));
-        }
-        catch (SgException) { return null; }
-    }
-
-    /// <summary>Where the externals land. Only the paths: the URLs are svn's business, not sync's.</summary>
-    static List<string> ExternalDirs(SgRoot root, CheckoutConfig co)
-    {
-        try { return DeclaredExternals(root, co).Keys.OrderBy(p => p, StringComparer.Ordinal).ToList(); }
-        catch (SgException) { return new(); }
-    }
-
-    /// <summary>
-    /// The externals pointed somewhere other than svn:externals declares. Reads the properties and
-    /// the URLs only: ExternalsOf walks the whole working copy for its status, and this runs on every
-    /// sync of a 173k file checkout.
-    /// </summary>
-    static List<(string Rel, string Url)> SwitchedExternals(SgRoot root, CheckoutConfig co)
-    {
-        Dictionary<string, string> declared;
-        try { declared = DeclaredExternals(root, co); }
-        catch (SgException) { return new(); }
-        var present = declared.Keys.Where(rel => Directory.Exists(PathUtil.Join(co.Path, rel))).ToList();
-        if (present.Count == 0) return new();
-
-        var res = new List<(string, string)>();
-        try
-        {
-            foreach (var info in root.Svn.InfoMany(co.Path, present, recursive: false))
-            {
-                var want = declared.GetValueOrDefault(info.Path, "");
-                if (want.Length == 0) continue;
-                if (!info.Url.TrimEnd('/').Equals(want.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
-                    res.Add((info.Path, info.Url));
-            }
-        }
-        catch (SgException) { return new(); }
-        return res;
-    }
-
-    /// <summary>
-    /// Points back the externals the update pulled home. This transfers the same difference a second
-    /// time, which is the price of letting svn keep doing everything else it does to externals:
-    /// checking out ones the server added, dropping ones it removed, following a changed definition.
-    /// It only runs where the user deliberately pointed an external somewhere else.
-    /// </summary>
-    static List<string> Reswitch(SgRoot root, CheckoutConfig co, List<(string Rel, string Url)> switched)
-    {
-        var done = new List<string>();
-        foreach (var (rel, url) in switched)
-        {
-            var dir = PathUtil.Join(co.Path, rel);
-            if (!Directory.Exists(dir))
-            {
-                root.Log.Warn($"{rel} was switched to {url}, and the update left no folder there. It stays as it is.");
-                continue;
-            }
-            string now;
-            try { now = root.Svn.Info(co.Path, rel).Url; }
-            catch (SgException) { continue; }
-            // An update that left it alone needs nothing; only a real move is worth a second transfer.
-            if (now.TrimEnd('/').Equals(url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)) continue;
-
-            root.Log.Info($"svn update put {rel} back on {now}; switching it to {url} again");
-            try { root.Svn.Switch(dir, url); }
-            catch (SgException e)
-            {
-                root.Log.Warn($"could not switch {rel} back to {url}: {e.Message}");
-                continue;
-            }
-            done.Add(rel);
-        }
-        return done;
-    }
-
-    static string LogsSince(SgRoot root, CheckoutConfig co, SnapshotMeta? prev, SnapshotInfo info)
-    {
-        if (prev == null) return "";
-        // One section per repository that moved, and each is a round trip to the server. They all go
-        // out together, and the message is built from the answers in the order the sections belong in.
-        var wanted = new List<(string Label, string Target, long From, long To)>();
-        if (info.Revision > prev.Revision) wanted.Add(("root", ".", prev.Revision, info.Revision));
-        foreach (var e in info.Externals)
-            if (prev.Externals.TryGetValue(e.Rel, out var pr) && e.Revision > pr) wanted.Add((e.Rel, e.Rel, pr, e.Revision));
-        if (wanted.Count == 0) return "";
-
-        var logs = Fan.Map(wanted, w => root.Svn.Log(co.Path, w.Target, w.From + 1, w.To, 30));
-        var sb = new StringBuilder();
-        var lines = 0;
-        for (var i = 0; i < wanted.Count && lines <= 200; i++)
-        {
-            if (logs[i].Count == 0) continue;
-            var (label, _, from, to) = wanted[i];
-            sb.Append("== ").Append(label).Append(" r").Append(from + 1).Append("..r").Append(to).Append('\n');
-            foreach (var e in logs[i])
-            {
-                sb.Append('r').Append(e.Revision).Append(' ').Append(e.Author).Append(": ").Append(e.Message.Split('\n')[0].Trim()).Append('\n');
-                lines++;
-            }
-        }
-        return sb.ToString();
     }
 
     // ---- branch ----
@@ -1070,7 +842,7 @@ public static class Ops
 
         foreach (var co in root.Config.Checkouts)
         {
-            var cs = new CheckoutStatus { Name = co.Name, Path = co.Path, Url = co.Url };
+            var cs = new CheckoutStatus { Name = co.Name, Kind = co.Kind, Path = co.Path, Url = co.Url };
             cs.Shelves = shelves.Count(s => s.IsCheckout && s.Checkout.Equals(co.Name, StringComparison.OrdinalIgnoreCase));
             if (refs.TryGetValue(root.SnapshotRef(co), out var snap))
             {
@@ -1078,15 +850,12 @@ public static class Ops
                 cs.SnapshotTaken = snap.Committed;
                 var meta = SnapshotMeta.Parse(snap.Message);
                 cs.Revision = meta.Revision;
+                cs.Commit = meta.Commit;
                 cs.Externals = meta.Externals.Select(kv => new ExternalInfo(kv.Key, kv.Value, "")).ToList();
             }
             if (checkSvn)
             {
-                try
-                {
-                    cs.LocalEdits = root.Svn.Status(co.Path, noIgnore: false)
-                        .Count(e => e.Path.Length > 0 && e.Item is not ("external" or "unversioned" or "ignored"));
-                }
+                try { cs.LocalEdits = root.Vcs(co).Scan(root, co).LocalEdits.Count; }
                 catch (SgException ex) { root.Log.Warn(ex.Message); }
             }
             res.Checkouts.Add(cs);
@@ -1162,58 +931,11 @@ public static class Ops
 
     // ---- edits made directly in the checkout ----
 
-    public sealed class SvnChange
-    {
-        public string Path = "";
-        public string Item = "";
-        public string Props = "";
-        /// <summary>Working copy the change belongs to. "" is the root.</summary>
-        public string Wc = "";
-        public bool Versioned => Item is not ("unversioned" or "ignored");
-
-        public string Code => Item switch
-        {
-            "modified" => "M",
-            "added" => "A",
-            "deleted" => "D",
-            "unversioned" => "?",
-            "missing" => "!",
-            "conflicted" => "C",
-            "replaced" => "R",
-            "obstructed" => "~",
-            "normal" => Props != "none" ? "P" : " ",
-            _ => Item.Length > 0 ? Item[..1].ToUpperInvariant() : " ",
-        };
-    }
-
     /// <summary>Every local change in the checkout and its externals, with the working copy each one belongs to.</summary>
-    public static List<SvnChange> CheckoutChanges(SgRoot root, CheckoutConfig co)
-    {
-        var status = root.Svn.Status(co.Path, noIgnore: false);
-        // Longest first, so the first working copy a path sits under is the innermost one. Sorting once
-        // instead of once per changed path is what a checkout with thousands of edits needs.
-        var wcs = status.Where(e => e.Item == "external" && e.Path.Length > 0).Select(e => e.Path)
-            .OrderByDescending(w => w.Length).ToList();
-        wcs.Add("");
-        string WcOf(string p)
-        {
-            foreach (var w in wcs)
-                if (PathUtil.IsUnder(p, w)) return w;
-            return "";
-        }
-        return status
-            .Where(e => e.Path.Length > 0 && e.Item is not ("external" or "ignored") && !(e.Item == "normal" && e.Props == "none"))
-            .Where(e => e.Path != ".git")
-            .Select(e => new SvnChange { Path = e.Path, Item = e.Item, Props = e.Props, Wc = WcOf(e.Path) })
-            .OrderBy(c => c.Wc, StringComparer.OrdinalIgnoreCase).ThenBy(c => c.Path, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
+    public static List<CheckoutChange> CheckoutChanges(SgRoot root, CheckoutConfig co) => root.Vcs(co).Changes(root, co);
 
     /// <summary>Only the number. The overview asks for it on every refresh, so it skips building and sorting the rows.</summary>
-    public static int LocalEditCount(SgRoot root, CheckoutConfig co) =>
-        root.Svn.Status(co.Path, noIgnore: false)
-            .Count(e => e.Path.Length > 0 && e.Item is not ("external" or "ignored")
-                        && !(e.Item == "normal" && e.Props == "none") && e.Path != ".git");
+    public static int LocalEditCount(SgRoot root, CheckoutConfig co) => root.Vcs(co).LocalEditCount(root, co);
 
     public sealed class SvnCommitGroup
     {
@@ -1221,7 +943,10 @@ public static class Ops
         public List<string> Paths = new();
         public string State = "pending";
         public long? Revision;
+        /// <summary>The commit a git checkout made. Empty for SVN.</summary>
+        public string Commit = "";
         public string? Error;
+        public string Label => new CommitId(Revision, Commit).Label;
     }
 
     public sealed class SvnCommitResult
@@ -1232,12 +957,14 @@ public static class Ops
     }
 
     /// <summary>
-    /// Commits chosen local changes straight to SVN, one commit per working copy. Unversioned files get added first,
-    /// missing files get deleted. A choice of a folder takes everything under it. Then a sync, so the snapshot has the new revisions.
+    /// Commits chosen local changes straight to the server, one commit per working copy: svn commit, or a
+    /// git commit on the server's branch and a push of it. Unversioned files get added first, missing
+    /// files get deleted. A choice of a folder takes everything under it. Then a sync, so the snapshot
+    /// has the new revisions.
     /// </summary>
     public static SvnCommitResult SvnCommit(SgRoot root, CheckoutConfig co, IEnumerable<string> chosen, string message)
     {
-        var svn = root.Svn;
+        var vcs = root.Vcs(co);
         var log = root.Log;
         message = Push.CleanMessage(message);
         if (message.Length < root.Config.MinMessageLength)
@@ -1250,6 +977,8 @@ public static class Ops
         if (selected.Count == 0) throw new SgException("nothing chosen");
         if (selected.Any(c => c.Item is "conflicted" or "obstructed"))
             throw new SgException("some chosen files are in conflict or obstructed. Solve that in the checkout first.");
+        var blockers = vcs.WriteBlockers(root, co);
+        if (blockers.Count > 0) throw new SgException(string.Join("\n", blockers));
 
         var result = new SvnCommitResult();
         foreach (var group in selected.GroupBy(c => c.Wc, StringComparer.OrdinalIgnoreCase)
@@ -1261,25 +990,11 @@ public static class Ops
             log.Info($"committing {g.Paths.Count} change(s) in {label}");
             try
             {
-                var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var unversioned = group.Where(c => c.Item == "unversioned").Select(c => c.Path).ToList();
-                var missing = group.Where(c => c.Item == "missing").Select(c => c.Path).ToList();
-                if (unversioned.Count > 0) svn.Add(co.Path, unversioned);
-                if (missing.Count > 0) svn.Rm(co.Path, missing);
-                foreach (var c in group) targets.Add(c.Path);
-                // svn add on a folder adds everything under it, and --parents may add folders above. All of that must be in the commit.
-                foreach (var p in unversioned)
-                    foreach (var e in svn.StatusOf(co.Path, p).Where(e => e.Item == "added"))
-                        targets.Add(e.Path);
-                var ancestors = targets.SelectMany(PathUtil.Ancestors)
-                    .Where(a => PathUtil.IsUnder(a, g.Wc) && !a.Equals(g.Wc, StringComparison.OrdinalIgnoreCase))
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                if (ancestors.Count > 0)
-                    foreach (var e in svn.StatusTargets(co.Path, ancestors).Where(e => e.Item == "added"))
-                        targets.Add(e.Path);
-                g.Revision = svn.Commit(co.Path, targets.OrderBy(t => t.Length).ToList(), message);
+                var id = vcs.CommitChanges(root, co, g.Wc, group.ToList(), message);
+                g.Revision = id.Revision;
+                g.Commit = id.Commit;
                 g.State = "committed";
-                log.Info($"  {label}: r{g.Revision}");
+                log.Info($"  {label}: {g.Label}");
             }
             catch (SgException ex)
             {
@@ -1297,7 +1012,7 @@ public static class Ops
     /// <summary>Throws away chosen local changes. Versioned ones are reverted, unversioned ones are deleted when asked.</summary>
     public static void SvnRevert(SgRoot root, CheckoutConfig co, IEnumerable<string> chosen, bool deleteUnversioned)
     {
-        var svn = root.Svn;
+        var vcs = root.Vcs(co);
         using var _ = root.Lock();
         var all = CheckoutChanges(root, co);
         var picked = chosen.Select(PathUtil.Rel).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1305,7 +1020,8 @@ public static class Ops
         var versioned = selected.Where(c => c.Versioned).Select(c => c.Path).ToList();
         if (versioned.Count > 0)
         {
-            svn.Revert(co.Path, versioned).EnsureOk();
+            // A revert that did not go through is a failure, not a note: a discard reported as done must be done.
+            if (vcs.Revert(root, co, versioned) is { } said) throw new SgException("revert failed: " + said);
         }
         if (!deleteUnversioned) return;
         foreach (var p in selected.Where(c => !c.Versioned || c.Item == "added").Select(c => c.Path))
@@ -1354,27 +1070,12 @@ public static class Ops
 
     // ---- remote check ----
 
-    /// <summary>Asks the server whether the root or any external moved past the snapshot. One svn info call, then one log call per part that did.</summary>
+    /// <summary>Asks the server whether the root or any external moved past the snapshot.</summary>
     public static RemoteCheckResult RemoteCheck(SgRoot root, CheckoutConfig co, bool countCommits = true)
     {
         var git = root.Git;
-        var svn = root.Svn;
         var sha = git.RefSha(root.SnapshotRef(co)) ?? throw new SgException("no snapshot for " + co.Name);
-        var meta = SnapshotMeta.Parse(git.Body(sha));
-        var entries = new List<RemoteEntry> { new() { Rel = "", Url = meta.Url, Snapshot = meta.Revision } };
-        foreach (var (rel, rev) in meta.Externals)
-            if (meta.ExternalUrls.TryGetValue(rel, out var url)) entries.Add(new RemoteEntry { Rel = rel, Url = url, Snapshot = rev });
-        entries.RemoveAll(e => e.Url.Length == 0);
-
-        var infos = svn.InfoMany(co.Path, entries.Select(e => e.Url), recursive: false);
-        foreach (var e in entries)
-        {
-            var info = infos.FirstOrDefault(i => i.Url.TrimEnd('/').Equals(e.Url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
-            if (info == null) continue;
-            e.Server = info.LastChangedRev;
-            if (e.Behind && countCommits) e.Commits = Math.Max(1, svn.LogCount(co.Path, e.Url, e.Snapshot + 1, 50));
-        }
-        return new RemoteCheckResult { Checkout = co.Name, Entries = entries };
+        return root.Vcs(co).RemoteCheck(root, co, SnapshotMeta.Parse(git.Body(sha)), countCommits);
     }
 
     // ---- helpers ----

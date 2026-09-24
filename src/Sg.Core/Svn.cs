@@ -35,17 +35,6 @@ public sealed class SvnLogEntry
     public string Message = "";
 }
 
-public sealed record SvnChangedPath(string Action, string Path, string Kind, string? CopyFrom);
-
-public sealed class SvnLogRevision
-{
-    public long Revision;
-    public string Author = "";
-    public string Date = "";
-    public string Message = "";
-    public List<SvnChangedPath> Paths = new();
-}
-
 public sealed class SvnUpdateResult
 {
     public long? Revision;
@@ -379,7 +368,7 @@ public sealed class Svn
     }
 
     /// <summary>svn log with changed paths, newest first.</summary>
-    public List<SvnLogRevision> LogVerbose(string? cwd, string target, int limit)
+    public List<LogRevision> LogVerbose(string? cwd, string target, int limit)
     {
         var r = Run(cwd, "log", "--xml", "-v", "--non-interactive", "-l", limit.ToString(), target);
         // An svn that exits 0 and writes something that is not the log is still a failure, and it has to
@@ -387,17 +376,17 @@ public sealed class Svn
         r.EnsureOk();
         if (!r.StdOut.Contains("<log")) throw new SgException("svn log gave no XML for " + target);
         var doc = XDocument.Parse(r.StdOut);
-        return doc.Root!.Elements("logentry").Select(e => new SvnLogRevision
+        return doc.Root!.Elements("logentry").Select(e => new LogRevision
         {
             Revision = long.TryParse(e.Attribute("revision")?.Value, out var rev) ? rev : 0,
             Author = e.Element("author")?.Value ?? "",
             Date = e.Element("date")?.Value ?? "",
             Message = e.Element("msg")?.Value ?? "",
-            Paths = e.Element("paths")?.Elements("path").Select(p => new SvnChangedPath(
+            Paths = e.Element("paths")?.Elements("path").Select(p => new ChangedPath(
                 p.Attribute("action")?.Value ?? "",
                 p.Value,
                 p.Attribute("kind")?.Value ?? "",
-                p.Attribute("copyfrom-path")?.Value)).ToList() ?? new List<SvnChangedPath>(),
+                p.Attribute("copyfrom-path")?.Value)).ToList() ?? new List<ChangedPath>(),
         }).ToList();
     }
 
@@ -479,21 +468,21 @@ public sealed class Svn
     /// Who last changed each line of a file, in file order. A line svn has never seen, because it is a
     /// local edit, is left out; the caller pairs what comes back with the file by line number.
     /// </summary>
-    public List<SvnBlameLine> Blame(string cwd, string path)
+    public List<ServerBlameLine> Blame(string cwd, string path)
     {
         var r = Run(cwd, "blame", "--xml", "--non-interactive", path);
         if (!r.Ok || !r.StdOut.Contains("<blame")) return new();
-        var res = new List<SvnBlameLine>();
+        var res = new List<ServerBlameLine>();
         var doc = XDocument.Parse(r.StdOut);
         foreach (var e in doc.Root!.Elements("target").Elements("entry"))
         {
             var n = int.TryParse(e.Attribute("line-number")?.Value, out var line) ? line : res.Count + 1;
             var commit = e.Element("commit");
             // No commit element means the line is a local edit that has never been committed.
-            if (commit == null) { res.Add(new SvnBlameLine(n, 0, "", "")); continue; }
+            if (commit == null) { res.Add(new ServerBlameLine(n, 0, "", "")); continue; }
             var rev = long.TryParse(commit.Attribute("revision")?.Value, out var v) ? v : 0;
             var date = commit.Element("date")?.Value ?? "";
-            res.Add(new SvnBlameLine(n, rev, commit.Element("author")?.Value ?? "", date.Length >= 10 ? date[..10] : date));
+            res.Add(new ServerBlameLine(n, rev, commit.Element("author")?.Value ?? "", date.Length >= 10 ? date[..10] : date));
         }
         return res;
     }

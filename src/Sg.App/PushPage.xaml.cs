@@ -5,7 +5,7 @@ using Windows.System;
 
 namespace Sg.App;
 
-/// <summary>Review what leaves the machine, then push. One SVN commit per working copy.</summary>
+/// <summary>Review what leaves the machine, then push. One SVN commit per working copy, or one git commit pushed to the clone's branch.</summary>
 public sealed partial class PushPage : SgPage
 {
     void ReviewReadiness_Click(object sender, RoutedEventArgs e)
@@ -97,12 +97,35 @@ public sealed partial class PushPage : SgPage
             var part = p is { Partial: true }
                 ? $" It sends the oldest {p.Sending} of {p.Commits.Count} commits and leaves {p.Commits.Count - p.Sending} on the branch."
                 : "";
+            if (_co?.IsGit == true)
+                return $"This makes one commit on {ServerWords.Target(_co)} and pushes it. Everyone can see it.{part} Continue?";
             return $"This makes {p?.Groups.Count ?? 0} SVN commit(s) that everyone can see: {where}.{part} Continue?";
         };
         Unloaded += (_, _) => OnHidden();
     }
 
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
+
+    /// <summary>The checkout the branch pushes to, known once the first preview names it.</summary>
+    CheckoutConfig? _co;
+
+    /// <summary>The page's words once the checkout is known: a git clone's branch where SVN would be named.</summary>
+    void SayServer(CheckoutConfig co)
+    {
+        if (ReferenceEquals(_co, co)) return;
+        _co = co;
+        if (!co.IsGit) return;
+        var target = ServerWords.Target(co);
+        Title = ServerWords.PushTitle(co);
+        PushLabel.Text = ServerWords.PushTitle(co);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PushButton, ServerWords.PushTitle(co));
+        ToolTipService.SetToolTip(PushButton, $"Write the message, then sync the clone, rebase the branch, and make one commit on {target} and push it. Asks before it commits. Ctrl+Enter opens this too.");
+        ToolTipService.SetToolTip(ApplyItem, "Write the same changes into the clone, staged, and stop there. Nothing goes to the server and the branch does not move: read them, change them, and commit them yourself from the changes window or with git.");
+        FilesHeader.Text = "Files, one commit on " + target;
+        Message.Title = ServerWords.PushTitle(co);
+        Message.PrimaryButtonText = ServerWords.PushTitle(co);
+        Message.Header = "Commit message for " + target;
+    }
     internal override object? CaptureViewState()
     {
         RememberRepoDrafts();
@@ -236,10 +259,12 @@ public sealed partial class PushPage : SgPage
         RangeNotice.IsOpen = _rangeMissing;
         Checkout ??= p.Checkout;
         Branch ??= p.Branch;
+        if (root.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(p.Checkout, StringComparison.OrdinalIgnoreCase)) is { } co) SayServer(co);
+        var server = _co?.IsGit == true ? "server" : "SVN";
         Subtitle = $"{p.Branch}  →  svn/{p.Checkout}   {_worktree}";
         Header.Text = _rangeMissing ? "Select the commits to push" : p.Partial
-            ? $"Sending {p.Sending} of {p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} SVN commit(s)"
-            : $"{p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} SVN commit(s)";
+            ? $"Sending {p.Sending} of {p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} {server} commit(s)"
+            : $"{p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} {server} commit(s)";
         var warnings = new List<string>();
         if (p.Dirty) warnings.Add("The worktree has uncommitted changes. Commit or discard them first.");
         if (p.NeedsRebase) warnings.Add("The branch is behind the snapshot. Push rebases it first. A conflict stops the push.");
@@ -280,7 +305,7 @@ public sealed partial class PushPage : SgPage
             Path = e.Path,
             OldPath = e.OldPath,
             Display = $"{(g.Wc.Length == 0 ? "root" : g.Wc)}  {e.Status}  {e.Path}" + (e.OldPath != null ? $"  (was {e.OldPath})" : ""),
-        })).ToList(), "Files, one SVN commit per working copy");
+        })).ToList(), _co?.IsGit == true ? "Files, one commit on " + ServerWords.Target(_co) : "Files, one SVN commit per working copy");
         if (_returning is { } returning)
         {
             _returning = null;
@@ -477,7 +502,7 @@ public sealed partial class PushPage : SgPage
         var help = _reading ? "Wait for the selected commits' push preview to finish updating."
             : ReadError.IsOpen ? "The push preview could not be read. Retry before pushing or applying changes."
             : _rangeMissing ? "The previously selected commit is no longer on the branch. Choose a commit or Send all to continue."
-            : _canPush ? "Review the messages and push these commits to SVN."
+            : _canPush ? $"Review the messages and push these commits to {(_co != null ? ServerWords.Target(_co) : "SVN")}."
             : _preview == null ? "Wait for the push preview to load."
             : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first."
             : _preview.Problems.Count > 0 ? string.Join("\n", _preview.Problems)
@@ -485,9 +510,9 @@ public sealed partial class PushPage : SgPage
         ActionHint.SetHelp(PushButton, help);
         // The same checks gate both: what stops a push from writing stops an apply from writing too.
         ApplyItem.IsEnabled = _canPush;
-        ActionHint.SetHelp(ApplyItem, _canPush ? "Write the selected changes into the checkout without committing to SVN." : help);
+        ActionHint.SetHelp(ApplyItem, _canPush ? $"Write the selected changes into the checkout without committing to {(_co != null ? ServerWords.Target(_co) : "SVN")}." : help);
         Message.Ready = _canPush;
-        RepoSummary.Text = $"{_repos.Count} SVN commit(s): " + string.Join(", ", _repos.Select(r => r.Repo));
+        RepoSummary.Text = $"{_repos.Count} {(_co?.IsGit == true ? "" : "SVN ")}commit(s): " + string.Join(", ", _repos.Select(r => r.Repo));
         var custom = _repos.Count(r => r.Custom);
         RepoOptionsLabel.Text = custom == 0 ? "Advanced: separate messages" : $"Advanced: {custom} separate message(s)";
     }
@@ -554,7 +579,7 @@ public sealed partial class PushPage : SgPage
     Button ChangesButton()
     {
         var b = new Button { Content = "Open the checkout changes" };
-        ToolTipService.SetToolTip(b, "See what was written, file by file, and commit it to SVN when it is right.");
+        ToolTipService.SetToolTip(b, $"See what was written, file by file, and commit it to {(_co != null ? ServerWords.Target(_co) : "SVN")} when it is right.");
         b.Click += (_, _) =>
         {
             var co = Session.Root?.Checkout(_preview!.Checkout);
@@ -659,16 +684,16 @@ public sealed partial class PushPage : SgPage
                 return;
             }
             foreach (var g in r.Groups)
-                Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}" + (g.Revision.HasValue ? $" r{g.Revision}" : "") + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
+                Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}" + (g.Label.Length > 0 ? " " + g.Label : "") + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
             foreach (var w in r.Warnings) Pane.Append("warning: " + w);
             // Three outcomes, not two: everything went, the part that was picked went and the rest is
             // waiting on purpose, or something failed. Only the last of those is an error.
             var onPurpose = scope.Partial && r.Groups.All(g => g.State == "committed");
             ResultBar.Severity = r.AllCommitted || onPurpose ? InfoBarSeverity.Success : InfoBarSeverity.Error;
             ResultBar.Message = r.AllCommitted
-                ? $"Pushed. {r.Branch} now equals svn/{r.Checkout} at r{r.Revision}."
+                ? $"Pushed. {r.Branch} now equals svn/{r.Checkout} at {r.Label}."
                 : onPurpose
-                    ? $"Pushed what was picked, at r{r.Revision}. {r.BranchState}, ready for the next push."
+                    ? $"Pushed what was picked, at {r.Label}. {r.BranchState}, ready for the next push."
                     : $"Partly pushed. {r.BranchState}. Fix the problem and push again.";
             ResultBar.IsOpen = true;
             _justPushed = r.AllCommitted;

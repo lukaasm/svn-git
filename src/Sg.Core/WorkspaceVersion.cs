@@ -25,7 +25,7 @@ public static class WorkspaceVersion
             + JsonSerializer.Serialize(files) + JsonSerializer.Serialize(hashes.OrderBy(x => x.Key)));
     }
 
-    internal static string OfCheckout(SgRoot root, string path, IReadOnlyList<Ops.SvnChange> entries)
+    internal static string OfCheckout(SgRoot root, string path, IReadOnlyList<CheckoutChange> entries)
     {
         var hashes = HashFiles(root, path, entries.Select(x => x.Path));
         return Hash(JsonSerializer.Serialize(entries.Select(x => new { x.Path, x.Item, x.Props }))

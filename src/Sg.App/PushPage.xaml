@@ -28,7 +28,7 @@
         <!-- A branch that equals its snapshot has no commits to list, no files, no message worth writing:
              the page is the one sentence, and the two buttons that still mean something. -->
         <local:EmptyState x:Name="NothingToPush" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE73E;" Title="Nothing to push"
-                          Text="The branch equals its snapshot: everything on it is already in SVN. Commit something on the branch and it shows up here.">
+                          Text="The branch equals its snapshot: everything on it is already on the server. Commit something on the branch and it shows up here.">
             <local:EmptyState.Action>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <local:IconButton Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the branch again." />
@@ -139,7 +139,7 @@
                                                  ToolTipService.ToolTip="Write the message, then sync the checkout, rebase the branch, and make one svn commit per repository. Asks before it commits. Ctrl+Enter opens this too.">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon Glyph="&#xE898;" FontSize="14" />
-                                <TextBlock Text="Push to SVN" />
+                                <TextBlock x:Name="PushLabel" Text="Push to SVN" />
                             </StackPanel>
                         </Button>
                     </local:TaskGate>

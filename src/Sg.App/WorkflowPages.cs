@@ -143,6 +143,10 @@ public sealed class UpdateBranchPage : WorkflowPage
         _path = path; Subtitle = path; Pane.StopAtBoundary(true);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (_submit != null) _ = _submit(); });
     }
+
+    /// <summary>What the page calls the server of a checkout: SVN, or a git clone's remote.</summary>
+    static string Server(SgRoot root, string checkout) =>
+        root.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(checkout, StringComparison.OrdinalIgnoreCase)) is { IsGit: true } co ? co.Remote ?? "origin" : "SVN";
     protected override async Task Reload()
     {
         _submit = null;
@@ -165,7 +169,7 @@ public sealed class UpdateBranchPage : WorkflowPage
             else Body.Children.Add(new Skeleton { RowCount = 2 });
             if (preview.CheckoutEdits != null) Edits("Checkout edits", preview.CheckoutEdits, root.Checkout(preview.Checkout).Path);
             else Body.Children.Add(new Skeleton { RowCount = 2 });
-            Text("SVN revisions", true);
+            Text(Server(root, preview.Checkout) == "SVN" ? "SVN revisions" : "Server commits", true);
             Body.Children.Add(new Skeleton { RowCount = 3 });
         });
         var state = await generation.Run(Pane, () => (object?)Operations.Pending(root, _path) ?? (_lastResult != null ? (object)Operations.Read(root, _lastResult.Id) : Operations.Plan(root, _path, progress: progress.Report)), _ => { });
@@ -197,7 +201,7 @@ public sealed class UpdateBranchPage : WorkflowPage
             WrapActions(actions);
             var advanced = Body.Children.Count;
             Details("Steps and checkpoint", record.Steps.Select(step => "✓ " + step).Append("Branch checkpoint: " + record.Before
-                + ". Restoring it does not undo SVN updates or published commits."));
+                + $". Restoring it does not undo {Server(root, record.Checkout)} updates or published commits."));
             Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
             if (!record.Terminal)
             {
@@ -209,18 +213,21 @@ public sealed class UpdateBranchPage : WorkflowPage
         else if (state is BranchUpdatePlan plan)
         {
             Branch = plan.Branch; Checkout = plan.Checkout;
+            var server = Server(root, plan.Checkout);
+            var git = server != "SVN";
+            Title = "Pull from " + server;
             Text($"{plan.Branch} · {plan.Commits} local commits", true);
             Body.Children.Add(new StatusChip { Text = plan.Ready ? "Ready to pull" : "Needs attention", Severity = plan.Ready ? ChipSeverity.Success : ChipSeverity.Critical, Glyph = plan.Ready ? "\uE73E" : "\uE7BA" });
-            Text("Save edits → sync SVN → replay commits → restore edits");
+            Text($"Save edits → sync {server} → replay commits → restore edits");
             Edits("Branch edits", plan.BranchEdits, _path);
             Edits("Checkout edits", plan.CheckoutEdits, root.Checkout(plan.Checkout).Path);
             foreach (var blocker in plan.Blockers) Body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Error, Message = blocker });
-            if (plan.Ready) _submit = () => Execute("Pull from SVN", () => _lastResult = Operations.Run(root, plan));
+            if (plan.Ready) _submit = () => Execute("Pull from " + server, () => _lastResult = Operations.Run(root, plan));
             var actions = Body.Children.Count;
-            var updateLabel = plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and pull" : "Pull from SVN";
-            var update = Action(updateLabel, () => Execute("Pull from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true, glyph: "\uE896");
+            var updateLabel = plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and pull" : "Pull from " + server;
+            var update = Action(updateLabel, () => Execute($"Pull from {server} (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true, glyph: "\uE896");
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(update, "PullFromSvnButton");
-            TaskGate.SetHelp(update, plan.Ready ? "Save local edits, pull SVN changes, replay this branch, then restore the saved edits."
+            TaskGate.SetHelp(update, plan.Ready ? $"Save local edits, pull {server} changes, replay this branch, then restore the saved edits."
                 : string.Join("\n", plan.Blockers));
             RefreshPlan();
             Link("Review local commits", "\uE81C", () => new LogPage(_path), "log:" + _path);
@@ -233,15 +240,22 @@ public sealed class UpdateBranchPage : WorkflowPage
                 row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
                 row.Children.Add(new StatusChip { Text = changed ? "Changed" : "Matching", Severity = changed ? ChipSeverity.Caution : ChipSeverity.Success, Glyph = changed ? "\uE895" : "\uE73E" });
-                var description = new TextBlock { Text = $"{revision.WorkingCopy} · r{revision.From} → r{revision.To}", TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+                var description = new TextBlock
+                {
+                    Text = git
+                        ? changed ? $"{revision.WorkingCopy} · the server has moved on" : $"{revision.WorkingCopy} · the snapshot is the server's newest"
+                        : $"{revision.WorkingCopy} · r{revision.From} → r{revision.To}",
+                    TextWrapping = TextWrapping.Wrap,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
                 Grid.SetColumn(description, 1);
                 row.Children.Add(description);
                 Body.Children.Add(row);
             }
             Text("Checked now. Sync may fetch newer work.");
-            Link("View SVN log", "\uE81C", () => new SvnLogPage(root.Checkout(plan.Checkout)), "svnlog:" + plan.Checkout);
+            Link("View " + ServerWords.LogTitle(root.Checkout(plan.Checkout)), "\uE81C", () => new SvnLogPage(root.Checkout(plan.Checkout)), "svnlog:" + plan.Checkout);
             var changedCount = plan.Revisions.Count(r => r.From != r.To);
-            _revisions = CollapseActions(revisions, $"SVN revisions · {changedCount} changed · {plan.Revisions.Count - changedCount} matching", "\uE895");
+            _revisions = CollapseActions(revisions, $"{(git ? "Server commits" : "SVN revisions")} · {changedCount} changed · {plan.Revisions.Count - changedCount} matching", "\uE895");
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_revisions, "PullRevisions");
             var advanced = Body.Children.Count;
             Text("Ignored files stay in place and are outside shelf coverage. Shared links follow the checkout; private shared-folder copies are not refreshed by this pull.");

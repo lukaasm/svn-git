@@ -84,7 +84,8 @@ public sealed partial class NewRootPage : SgPage
         _adding = false;
         if (r == null) { Sync(); Fields.Revalidate(); return; }
 
-        Pane.Append($"{r.Checkout.Name}: r{r.Snapshot.Revision}, snapshot {r.Snapshot.Sha[..10]}, {r.Snapshot.Externals.Count} external(s)");
+        Pane.Append($"{r.Checkout.Name}: {Rev.Label(r.Snapshot.Revision, r.Snapshot.Commit)}, snapshot {r.Snapshot.Sha[..10]}, "
+                    + (r.Checkout.IsGit ? $"git {r.Checkout.Remote}/{r.Checkout.Branch}" : $"{r.Snapshot.Externals.Count} external(s)"));
         foreach (var w in r.Snapshot.Warnings) Pane.Append("warn: " + w);
         _added = true;
         Step2Tick.Visibility = Visibility.Visible;

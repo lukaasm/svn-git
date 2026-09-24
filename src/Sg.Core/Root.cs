@@ -12,6 +12,14 @@ public sealed class SgRoot
     public Git Git { get; }
     public Svn Svn { get; }
 
+    readonly SvnCheckoutVcs _svnVcs = new();
+    readonly GitCheckoutVcs _gitVcs = new();
+
+    /// <summary>The server behind a checkout, as the one seam every workflow goes through.</summary>
+    public ICheckoutVcs Vcs(CheckoutConfig co) => Vcs(co.Kind);
+
+    public ICheckoutVcs Vcs(CheckoutKind kind) => kind == CheckoutKind.Git ? _gitVcs : _svnVcs;
+
     public string StorePath => Path.Combine(RootPath, ".sg");
     public string ConfigPath => Path.Combine(StorePath, "sg.json");
     public string ExcludePath => Path.Combine(StorePath, "info", "exclude");
@@ -27,7 +35,15 @@ public sealed class SgRoot
         Log = log;
         Git = new Git(config.GitExe, StorePath, log);
         Svn = new Svn(config.SvnExe, log, config.SvnMuccExe);
+        RefreshTunnels();
     }
+
+    /// <summary>
+    /// Tells the store's git where the git checkouts are, so a store command run in one reads the store
+    /// and not the clone's own .git. Runs whenever the checkout list may have changed.
+    /// </summary>
+    public void RefreshTunnels() =>
+        Git.SetTunnels(Config.Checkouts.Where(c => c.IsGit).Select(c => new GitTunnel(this, c)));
 
     public static SgRoot Create(string rootPath, SgConfig config, ILog log)
     {
@@ -49,7 +65,11 @@ public sealed class SgRoot
         return root;
     }
 
-    /// <summary>Walks up from a folder. Finds the root from inside the root, a checkout, or a branch worktree.</summary>
+    /// <summary>
+    /// Walks up from a folder. Finds the root from inside the root, a checkout, or a branch worktree. An
+    /// SVN checkout and a worktree have a .git file pointing into the store; a git checkout has its own
+    /// .git, and sg leaves the root's path in it, in a file called sg-root.
+    /// </summary>
     public static SgRoot? Find(string startDir, ILog log)
     {
         var dir = Path.GetFullPath(startDir);
@@ -57,6 +77,7 @@ public sealed class SgRoot
         {
             if (File.Exists(Path.Combine(dir, ".sg", "sg.json"))) return Open(dir, log);
             var gitFile = Path.Combine(dir, ".git");
+            string? gitDir = Directory.Exists(gitFile) ? gitFile : null;
             if (File.Exists(gitFile))
             {
                 var line = File.ReadAllText(gitFile).Trim();
@@ -66,8 +87,11 @@ public sealed class SgRoot
                     if (!Path.IsPathRooted(gd)) gd = Path.Combine(dir, gd);
                     var store = Path.GetFullPath(Path.Combine(gd, "..", ".."));
                     if (File.Exists(Path.Combine(store, "sg.json"))) return Open(Path.GetDirectoryName(store)!, log);
+                    gitDir = gd;
                 }
             }
+            var marked = gitDir == null ? null : GitCheckoutVcs.ReadRootMarker(gitDir);
+            if (marked != null && File.Exists(Path.Combine(marked, ".sg", "sg.json"))) return Open(marked, log);
             dir = Path.GetDirectoryName(dir);
         }
         return null;
@@ -76,7 +100,11 @@ public sealed class SgRoot
     public static SgRoot Require(string startDir, ILog log) =>
         Find(startDir, log) ?? throw new SgException($"no sg root found from {startDir}. Run 'sg init <root>' first, or run from inside a root, a checkout, or a worktree.");
 
-    public void Save() => Config.Save(ConfigPath);
+    public void Save()
+    {
+        Config.Save(ConfigPath);
+        RefreshTunnels();
+    }
 
     public string SnapshotRef(CheckoutConfig c) => SnapshotRefPrefix + c.Name;
 
@@ -221,35 +249,15 @@ public sealed class SgRoot
     public string IgnoreFileFor(CheckoutConfig co) => Path.Combine(IgnoresDir, co.Name + ".gitignore");
 
     /// <summary>
-    /// gitignore lines for one checkout: the skip list, then every svn:ignore and svn:global-ignores property
-    /// in the checkout and its externals. Slow on a big checkout, it walks the svn database.
+    /// gitignore lines for one checkout: the skip list, then what the server's own ignore rules say. For
+    /// SVN that is every svn:ignore and svn:global-ignores property in the checkout and its externals, and
+    /// it is slow on a big checkout; a git checkout's .gitignore files are in its tree already.
     /// </summary>
     public List<string> ComputeIgnoreLines(CheckoutConfig co)
     {
         var lines = new List<string>();
         foreach (var s in co.Skip) lines.Add("/" + s.TrimEnd('/'));
-        var wcs = new List<string> { "" };
-        try
-        {
-            wcs.AddRange(Svn.Status(co.Path, noIgnore: false).Where(e => e.Item == "external").Select(e => e.Path));
-        }
-        catch (SgException ex) { Log.Warn("svn status failed for " + co.Name + ": " + ex.Message); }
-        // Two svn processes per working copy, each walking that copy's whole database. They run side
-        // by side, because a checkout with twenty externals waited for forty of them in a row. The
-        // lines still go in working copy order, so the generated file does not move between runs.
-        var read = Fan.Map(wcs, wc =>
-        {
-            var cwd = PathUtil.Join(co.Path, wc);
-            return (Ignore: Svn.PropGetRecursive(cwd, "svn:ignore"), Global: Svn.PropGetRecursive(cwd, "svn:global-ignores"));
-        });
-        for (var i = 0; i < wcs.Count; i++)
-        {
-            var wc = wcs[i];
-            foreach (var (dir, val) in read[i].Ignore)
-                foreach (var pat in Patterns(val)) lines.Add(Anchor(wc, dir) + Escape(pat));
-            foreach (var (dir, val) in read[i].Global)
-                foreach (var pat in Patterns(val)) lines.Add(Anchor(wc, dir) + "**/" + Escape(pat));
-        }
+        lines.AddRange(Vcs(co).IgnoreLines(this, co));
         return lines.Distinct().ToList();
     }
 
@@ -262,7 +270,9 @@ public sealed class SgRoot
         Directory.CreateDirectory(IgnoresDir);
         foreach (var co in Config.Checkouts)
         {
-            var header = $"# Generated by sg from the svn:ignore and svn:global-ignores properties of {co.Name}. Not tracked. Rebuilt by 'sg sync --ignores'.";
+            var header = co.IsGit
+                ? $"# Generated by sg from the skip list of {co.Name}. Not tracked. Rebuilt by 'sg sync --ignores'."
+                : $"# Generated by sg from the svn:ignore and svn:global-ignores properties of {co.Name}. Not tracked. Rebuilt by 'sg sync --ignores'.";
             File.WriteAllLines(IgnoreFileFor(co), new[] { header }.Concat(ComputeIgnoreLines(co)));
         }
         WriteSharedExclude();
@@ -323,13 +333,13 @@ public sealed class SgRoot
         return true;
     }
 
-    static IEnumerable<string> Patterns(string value) =>
+    internal static IEnumerable<string> IgnorePatterns(string value) =>
         value.Split(['\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).Where(p => p.Length > 0);
 
     /// <summary>A leading # or ! means something else in gitignore.</summary>
-    static string Escape(string pattern) => pattern.Length > 0 && pattern[0] is '#' or '!' ? "\\" + pattern : pattern;
+    internal static string IgnoreEscape(string pattern) => pattern.Length > 0 && pattern[0] is '#' or '!' ? "\\" + pattern : pattern;
 
-    static string Anchor(string wc, string dir)
+    internal static string IgnoreAnchor(string wc, string dir)
     {
         var p = PathUtil.Rel(wc.Length == 0 ? dir : (dir.Length == 0 ? wc : wc + "/" + dir));
         return "/" + (p.Length > 0 ? p + "/" : "");

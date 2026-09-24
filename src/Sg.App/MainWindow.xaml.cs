@@ -756,7 +756,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = content,
                 Tag = row,
-                Icon = CheckoutIcons.Create(c.Name),
+                Icon = CheckoutIcons.Create(row.Config),
                 ContextFlyout = CheckoutMenu(row),
             };
             AutomationProperties.SetName(item, c.Name);
@@ -777,6 +777,12 @@ public sealed partial class MainWindow : Window
 
         _ = CheckRemotesAsync(root, generation);
         if (runStartAction && _startAction != null) await RunStartAction();
+    }
+
+    internal void RefreshCheckoutIcons()
+    {
+        foreach (var item in Nav.MenuItems.OfType<NavigationViewItem>())
+            if (item.Tag is CheckoutRow row) item.Icon = CheckoutIcons.Create(row.Config);
     }
 
     /// <summary>

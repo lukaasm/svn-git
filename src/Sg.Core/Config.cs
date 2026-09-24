@@ -50,6 +50,8 @@ public sealed class SgConfig
 public sealed class CheckoutConfig
 {
     public string Name { get; set; } = "";
+    /// <summary>Managed PNG filename in .sg/icons; null uses the checkout initials.</summary>
+    public string? Icon { get; set; }
     public string Path { get; set; } = "";
     public string Url { get; set; } = "";
     public string ReposRoot { get; set; } = "";

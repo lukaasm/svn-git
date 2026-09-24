@@ -28,7 +28,7 @@ public sealed class ExternalRow
 /// </summary>
 public sealed partial class EditCheckoutPage : SgPage
 {
-    readonly string _name;
+    string _name;
 
     /// <summary>Something changed that the overview has to read again.</summary>
     public bool Changed { get; private set; }
@@ -42,6 +42,7 @@ public sealed partial class EditCheckoutPage : SgPage
         Checkout = co.Name;
         Subtitle = co.Path;
         NameBox.Text = co.Name;
+        ShowIcon(co);
         SkipPick.Paths = co.Skip;
         JunctionPick.Paths = co.Junctions;
         OptionalPick.Paths = co.Optional;
@@ -52,12 +53,58 @@ public sealed partial class EditCheckoutPage : SgPage
         _ = LoadExternalsAsync();
     }
 
+    void ShowIcon(CheckoutConfig co)
+    {
+        IconCard.HeaderIcon = CheckoutIcons.Create(co);
+        ResetIconButton.IsEnabled = co.Icon != null;
+        TaskGate.SetHelp(ResetIconButton, co.Icon == null ? "This checkout already uses initials." : "Restore the checkout initials.");
+    }
+
+    async void ChooseIcon_Click(object sender, RoutedEventArgs e)
+    {
+        var root = Session.Root;
+        var co = CheckoutConfig();
+        if (root == null || co == null) return;
+        try
+        {
+            var path = await WindowHelper.PickOpenFile(this, ".png", ".jpg", ".jpeg", ".bmp", ".gif");
+            if (path == null || Session.Root != root) return;
+            await Busy.During(ChooseIconButton, async () =>
+            {
+                var png = await Task.Run(() => CheckoutImage.ReadAsync(path));
+                await SaveIcon(root, co, png);
+            });
+        }
+        catch (Exception ex)
+        {
+            if (XamlRoot != null) await Dialogs.Info(this, "Could not use this image", ex.Message);
+            else Runner.ReadError(Pane, ex);
+        }
+    }
+
+    async void ResetIcon_Click(object sender, RoutedEventArgs e)
+    {
+        if (Session.Root is { } root && CheckoutConfig() is { } co)
+            await Busy.During(ResetIconButton, () => SaveIcon(root, co, null), restoreEnabled: false);
+    }
+
+    async Task SaveIcon(SgRoot root, CheckoutConfig co, byte[]? png)
+    {
+        if (Session.Root != root) return;
+        var ok = await Runner.Run(Pane, "change checkout icon", () => CheckoutAppearance.SetIcon(root, co.Name, png));
+        if (Session.Root != root) return;
+        ShowIcon(co);
+        if (!ok) return;
+        Changed = true;
+        Result.Text = png == null ? "Checkout initials restored" : "Checkout image saved";
+        if (WindowHelper.WindowOf(this) is MainWindow window) window.RefreshCheckoutIcons();
+    }
+
     CheckoutConfig? CheckoutConfig()
     {
-        // Read it back by name every time: saving a rename replaces what the caller handed over.
+        // Only a saved rename changes the target; text in the name box may name another checkout.
         var root = Session.Root;
-        return root?.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(NameBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
-               ?? root?.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(_name, StringComparison.OrdinalIgnoreCase));
+        return root?.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(_name, StringComparison.OrdinalIgnoreCase));
     }
 
     async Task LoadExternalsAsync()
@@ -138,10 +185,11 @@ public sealed partial class EditCheckoutPage : SgPage
         var ok = await Busy.During(SaveButton, () => Runner.Run(Pane, "edit " + co.Name, () => Ops.UpdateCheckout(root, co, edit)));
         if (!ok) return;
         Changed = true;
+        _name = co.Name;
         Checkout = NameBox.Text.Trim();
         // Shared folders are always skipped too, so show what was actually written rather than what was typed.
         var saved = CheckoutConfig();
-        if (saved != null) SkipPick.Paths = saved.Skip;
+        if (saved != null) { SkipPick.Paths = saved.Skip; ShowIcon(saved); }
         Result.Text = "saved";
     }
 

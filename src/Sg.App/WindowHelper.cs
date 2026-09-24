@@ -57,21 +57,37 @@ public static class WindowHelper
     public static Task<string?> PickFolder(object owner, string? startIn = null)
     {
         var hwnd = HandleOf(owner);
-        return Task.FromResult(hwnd == IntPtr.Zero ? null : NativePicker.Folder(hwnd, startIn));
+        return PickAsync(hwnd, () => NativePicker.Folder(hwnd, startIn));
     }
 
     /// <summary>Asks where to write a file, owned by this window. The shell asks about overwriting.</summary>
     public static Task<string?> PickSaveFile(object owner, string suggestedName, string typeLabel, string extension)
     {
         var hwnd = HandleOf(owner);
-        return Task.FromResult(hwnd == IntPtr.Zero ? null : NativePicker.SaveFile(hwnd, suggestedName, extension));
+        return PickAsync(hwnd, () => NativePicker.SaveFile(hwnd, suggestedName, extension));
     }
 
     /// <summary>Asks for one file of one kind, owned by this window.</summary>
     public static Task<string?> PickOpenFile(object owner, params string[] extensions)
     {
         var hwnd = HandleOf(owner);
-        return Task.FromResult(hwnd == IntPtr.Zero ? null : NativePicker.OpenFile(hwnd, extensions));
+        return PickAsync(hwnd, () => NativePicker.OpenFile(hwnd, extensions));
+    }
+
+    // IFileDialog runs a native modal loop that does not pump WinUI's dispatcher. Give the dialog
+    // its own STA so the owner can still render and answer accessibility requests while it is open.
+    static Task<string?> PickAsync(IntPtr owner, Func<string?> show)
+    {
+        if (owner == IntPtr.Zero) return Task.FromResult<string?>(null);
+        var result = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { result.SetResult(show()); }
+            catch (Exception ex) { result.SetException(ex); }
+        }) { IsBackground = true, Name = "sg file picker" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return result.Task;
     }
 
     /// <summary>Sizes a window in logical pixels, so it looks the same at every screen scaling.</summary>

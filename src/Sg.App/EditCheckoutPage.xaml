@@ -16,6 +16,18 @@
                     </controls:SettingsCard.HeaderIcon>
                     <TextBox x:Name="NameBox" Width="260" />
                 </controls:SettingsCard>
+                <controls:SettingsCard x:Name="IconCard" Header="Checkout icon" Description="A custom image over the folder, or colored initials. Saved immediately in this sg root; your original image stays in place.">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <local:TaskGate>
+                            <local:IconButton x:Name="ChooseIconButton" Glyph="&#xEB9F;" Text="Choose image…" Click="ChooseIcon_Click"
+                                              ToolTipService.ToolTip="Choose a PNG, JPEG, BMP or GIF image. sg saves a small copy in this root." />
+                        </local:TaskGate>
+                        <local:TaskGate>
+                            <local:IconButton x:Name="ResetIconButton" Glyph="&#xE777;" Text="Use initials" Click="ResetIcon_Click"
+                                              ToolTipService.ToolTip="Remove the custom overlay and show the checkout initials inside its folder icon." />
+                        </local:TaskGate>
+                    </StackPanel>
+                </controls:SettingsCard>
                 <controls:SettingsExpander Header="Folders" IsExpanded="True"
                                            Description="Which folders sg leaves alone, shares with every worktree and how, or leaves out of a minimal branch.">
                     <controls:SettingsExpander.HeaderIcon>

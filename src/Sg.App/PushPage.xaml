@@ -9,6 +9,8 @@
         <StackPanel Grid.Row="0" Spacing="6">
             <Button x:Name="ReadinessButton" Content="Review readiness for this version" Click="ReviewReadiness_Click" />
             <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+            <InfoBar x:Name="RangeNotice" Severity="Warning" IsClosable="False" IsOpen="False"
+                     Message="The previously selected commit is no longer on the branch. Choose a commit or Send all to continue." />
             <InfoBar x:Name="ReadError" Title="Could not update the push preview. Any displayed files are from the last successful read."
                      Severity="Error" IsClosable="False" IsOpen="False">
                 <InfoBar.ActionButton>

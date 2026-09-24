@@ -46,14 +46,23 @@ function Wait-For([scriptblock]$read, [string]$message = 'Push message UI assert
 function Invoke-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Enter-Value($control, [string]$value) { $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Read-Value($control) { $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
+$script:fixtureCommits = 3
 function Choose-Range([int]$count) {
     $rows = (Find 'Commits').FindAll([System.Windows.Automation.TreeScope]::Children,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))
-    $rows[3 - $count].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $rows[$script:fixtureCommits - $count].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
 }
 function Select-Range([int]$count) {
     Choose-Range $count
-    $null = Wait-For { (Find 'Header').Current.Name -like "Sending $count of 3 commit*" }
+    $null = Wait-For { (Find 'Header').Current.Name -like "Sending $count of $script:fixtureCommits commit*" }
+}
+function Open-Readiness {
+    Invoke-Control (Find 'ReadinessButton')
+    $null = Wait-For { !(Find 'ReadinessButton') }
+}
+function Return-ToPush {
+    Invoke-Control (Wait-For { Find 'PART_BackButton' })
+    $null = Wait-For { $h = Find 'Header'; $h -and $h.Current.Name -ne 'Updating push preview…' }
 }
 function Set-CommandGate([string]$mode = 'hold') {
     $id = [Guid]::NewGuid().ToString('N')
@@ -148,6 +157,24 @@ try {
     $window = Wait-For { Get-TestAppWindow $process }
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $null = Wait-For { $h = Find 'Header'; $h -and $h.Current.Name -like '3 commit*' }
+
+    Start-UiScenario 'Returning from Readiness restores the selected range and both filters'
+    Select-Range 2
+    Enter-Value (Find 'CommitFilterBox') 'Change 3'
+    Enter-Value (Find 'Filter') 'change-2'
+    $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' }
+    Open-Readiness
+    Return-ToPush
+    if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Returning from Readiness lost the selected commit range.' }
+    if ((Read-Value (Find 'CommitFilterBox')) -ne 'Change 3' -or (Read-Value (Find 'Filter')) -ne 'change-2') { throw 'Returning from Readiness lost the commit or file filter.' }
+    $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' -and (Find 'FilesHeader').Current.Name -like '*showing 1 of 2*' }
+    Assert-Message (Open-Message) 2
+    Close-Message
+    Enter-Value (Find 'CommitFilterBox') ''
+    Enter-Value (Find 'Filter') ''
+    Invoke-Control (Find 'AllCommitsButton')
+    $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
+    Complete-UiScenario
 
     Start-UiScenario 'A pending selection blocks Push until its preview is ready'
     $before = (Find 'Commits').Current.BoundingRectangle
@@ -259,6 +286,85 @@ try {
     Invoke-Control (Find 'ReadinessButton')
     Assert-Cancelled $gate
     $null = Wait-For { !(Find 'ReadinessButton') }
+    Return-ToPush
+    if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Navigation lost a selection whose preview had not finished.' }
+    Assert-Message (Open-Message) 2
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'Commits added while away do not widen the restored range'
+    Open-Readiness
+    [IO.File]::WriteAllText((Join-Path $worktree 'change-4.txt'), "Change 4`n")
+    & git -C $worktree add change-4.txt
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stage the new fixture commit.' }
+    & git -C $worktree -c user.name=Fixture -c user.email=fixture@example.invalid commit -m 'Change 4' -m 'Details for change 4' | Out-File $setupLog -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not append a fixture commit.' }
+    $script:fixtureCommits = 4
+    Return-ToPush
+    if ((Find 'Header').Current.Name -notlike 'Sending 2 of 4 commit*') { throw 'New commits widened the restored range.' }
+    Assert-Message (Open-Message) 2
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'A moved snapshot restores the same boundary with a new commit count'
+    Open-Readiness
+    $snapshotRef = 'refs/remotes/svn/checkout'
+    $snapshot = & git -C $worktree rev-parse $snapshotRef
+    $firstCommit = & git -C $worktree rev-parse 'HEAD~3'
+    # Model a changed base only in this disposable fixture; the SVN repository stays untouched.
+    & git -C $worktree update-ref $snapshotRef $firstCommit $snapshot
+    if ($LASTEXITCODE -ne 0) { throw 'Could not move the fixture snapshot.' }
+    try {
+        Return-ToPush
+        if ((Find 'Header').Current.Name -notlike 'Sending 1 of 3 commit*') { throw 'The restored count targeted a different commit after the snapshot moved.' }
+        $box = Open-Message
+        if ((Read-Value $box).Replace("`r`n", "`n").Replace("`r", "`n").Trim() -ne "Change 2`n`nDetails for change 2") { throw 'The restored message includes commits outside the new range.' }
+        Close-Message
+        Open-Readiness
+    } finally {
+        & git -C $worktree update-ref $snapshotRef $snapshot $firstCommit
+        if ($LASTEXITCODE -ne 0) { throw 'Could not restore the fixture snapshot.' }
+    }
+    Return-ToPush
+    if ((Find 'Header').Current.Name -notlike 'Sending 2 of 4 commit*') { throw 'The boundary did not follow the restored snapshot.' }
+    Complete-UiScenario
+
+    Start-UiScenario 'A replaced boundary requires explicit selection after returning'
+    Open-Readiness
+    $oldTip = & git -C $worktree rev-parse HEAD
+    $commits = @(& git -C $worktree rev-list --reverse "$snapshot..HEAD")
+    $parent = $snapshot
+    $index = 0
+    foreach ($commit in $commits) {
+        $index++
+        $tree = & git -C $worktree rev-parse ($commit + '^{tree}')
+        $parent = & git -C $worktree -c user.name=Fixture -c user.email=fixture@example.invalid commit-tree $tree -p $parent -m "Replayed change $index"
+        if ($LASTEXITCODE -ne 0) { throw 'Could not construct the replacement fixture history.' }
+    }
+    # Preserve the complete working tree and index; only this fixture branch's commit identities change.
+    & git -C $worktree update-ref refs/heads/feature $parent $oldTip
+    if ($LASTEXITCODE -ne 0) { throw 'Could not replace the fixture branch history.' }
+    Return-ToPush
+    if ((Find 'Header').Current.Name -ne 'Select the commits to push') { throw 'A missing boundary silently selected a different range.' }
+    if ((Find 'PushButton').Current.IsEnabled -or (Find 'PushButton').Current.HelpText -notlike '*no longer*') { throw 'A missing boundary does not block and explain Push.' }
+    if (!(Find 'AllCommitsButton').Current.IsEnabled) { throw 'Send all is not available to recover from a missing boundary.' }
+    Invoke-Control (Find 'RefreshPreviewButton')
+    $null = Wait-For { (Find 'Header').Current.Name -eq 'Select the commits to push' }
+    Open-Readiness
+    Return-ToPush
+    if ((Find 'PushButton').Current.IsEnabled) { throw 'Refresh or repeated navigation silently accepted a missing boundary.' }
+    Select-Range 2
+    $box = Open-Message
+    if ((Read-Value $box).Replace("`r`n", "`n").Replace("`r", "`n").Trim() -ne "Replayed change 1`n`nReplayed change 2") { throw 'Explicit reselection did not regenerate the correct message.' }
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'Send all survives returning from Readiness'
+    Invoke-Control (Find 'AllCommitsButton')
+    $null = Wait-For { (Find 'Header').Current.Name -like '4 commit*' }
+    Open-Readiness
+    Return-ToPush
+    if ((Find 'Header').Current.Name -notlike '4 commit*' -or (Find 'AllCommitsButton').Current.IsEnabled) { throw 'Returning did not preserve Send all.' }
     if ((& svnlook youngest $repository) -ne '1') { throw 'Preview testing unexpectedly wrote to SVN.' }
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }

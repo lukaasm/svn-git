@@ -25,6 +25,11 @@ public sealed partial class PushPage : SgPage
     /// ends there; everything above waits for the next push.
     /// </summary>
     PushScope _scope = PushScope.Whole;
+    // Remember the boundary itself across navigation and refresh. A count can name another commit
+    // after the snapshot moves; only Push.Run intentionally keeps a count across its own rebase.
+    string? _through;
+    bool _rangeMissing;
+    sealed record ViewState(PushScope Scope, string? Through, string CommitQuery, string FileQuery);
 
     /// <summary>
     /// The message the page last wrote into the box on its own. When the box still holds exactly that,
@@ -82,6 +87,16 @@ public sealed partial class PushPage : SgPage
     }
 
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
+    internal override object? CaptureViewState() => new ViewState(_scope, _through, CommitFilterBox.Text, Filter.Text);
+    internal override void RestoreViewState(object? state)
+    {
+        if (state is not ViewState view) return;
+        _scope = view.Scope;
+        _through = view.Through;
+        CommitFilterBox.Text = view.CommitQuery;
+        Filter.Text = view.FileQuery;
+    }
+
     public override void OnHidden()
     {
         _hidden = true;
@@ -102,6 +117,7 @@ public sealed partial class PushPage : SgPage
         _canPush = false;
         _reading = true;
         ReadError.IsOpen = false;
+        RangeNotice.IsOpen = false;
         PreviewProgress.IsActive = true;
         PreviewProgress.Opacity = 1;
         Header.Text = "Updating push preview…";
@@ -122,14 +138,32 @@ public sealed partial class PushPage : SgPage
         Session.Log.Sink = Pane;
         var gen = _generation;
         var scope = _scope;
+        var through = _through;
         using var request = _reads.Begin();
         var first = _preview == null;
         if (first) { CommitsSkeleton.Show(); FilesSkeleton.Show(); }
         // Into a local, and published only once it is known to be both current and real. Assigned straight
         // into the field, a read that failed emptied it under a screen still showing a full preview, and an
         // older read that landed late left the field describing something the screen no longer showed.
-        var bundle = await request.Run(Pane, () => new { Preview = Push.Preview(root, _worktree, scope), Readiness = Review.Status(root, _worktree) },
-            error => ReadError.Message = error);
+        var bundle = await request.Run(Pane, () =>
+        {
+            var preview = Push.Preview(root, _worktree, scope);
+            var missing = false;
+            if (through != null)
+            {
+                var index = preview.Commits.FindIndex(c => c.Sha == through);
+                missing = index < 0;
+                // Usually the first read already has the right range. Recalculate only when the
+                // boundary moved, or show all available commits for an explicit new selection.
+                if (missing && preview.Partial) preview = Push.Preview(root, _worktree);
+                else if (!missing && preview.Tip != through)
+                {
+                    preview = Push.Preview(root, _worktree, PushScope.First(preview.Commits.Count - index));
+                    if (preview.Tip != through) throw new SgException("The branch changed while reading the selected range. Retry to read it again.");
+                }
+            }
+            return new { Preview = preview, Readiness = Review.Status(root, _worktree), RangeMissing = missing };
+        }, error => ReadError.Message = error);
         var read = bundle?.Preview;
         if (!request.Current || gen != _generation || _hidden || root != Session.Root) return;
         _reading = false;
@@ -148,10 +182,13 @@ public sealed partial class PushPage : SgPage
         }
         _preview = read;
         var p = _preview;
+        _rangeMissing = bundle!.RangeMissing;
+        if (through != null && !_rangeMissing) _scope = PushScope.First(p.Sending);
+        RangeNotice.IsOpen = _rangeMissing;
         Checkout ??= p.Checkout;
         Branch ??= p.Branch;
         Subtitle = $"{p.Branch}  →  svn/{p.Checkout}   {_worktree}";
-        Header.Text = p.Partial
+        Header.Text = _rangeMissing ? "Select the commits to push" : p.Partial
             ? $"Sending {p.Sending} of {p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} SVN commit(s)"
             : $"{p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} SVN commit(s)";
         var warnings = new List<string>();
@@ -173,12 +210,12 @@ public sealed partial class PushPage : SgPage
             row.Staying = i < p.Commits.Count - p.Sending;
             return row;
         }).ToList();
-        _cut = _commitRows.Count == 0 ? -1 : p.Commits.Count - p.Sending;
+        _cut = _rangeMissing || _commitRows.Count == 0 ? -1 : p.Commits.Count - p.Sending;
         _commitsTitle = p.Partial
             ? $"Commits on the branch, sending the oldest {p.Sending}"
             : "Commits on the branch";
         ShowCommits();
-        AllCommitsButton.IsEnabled = p.Partial;
+        AllCommitsButton.IsEnabled = _scope.Partial;
         PartialBar.Message = p.Partial
             ? $"{p.Commits.Count - p.Sending} commit(s) stay on the branch, over the new snapshot, ready for the next push."
             : "";
@@ -214,8 +251,14 @@ public sealed partial class PushPage : SgPage
         }).ToList();
         Repos.ItemsSource = _repos;
         ShowChecks(p);
+        if (_rangeMissing)
+        {
+            ChecksHeader.Text = "Choose a commit or Send all to continue";
+            ChecksIcon.Glyph = "\uE7BA";
+            ChecksIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorCautionBrush"];
+        }
         Checks.IsEnabled = WarnBar.IsEnabled = true;
-        _canPush = p.Ready;
+        _canPush = p.Ready && !_rangeMissing;
         SyncPushButton();
         if (p.Commits.Count == 0) { Diff.ShowText("", "nothing to push"); return; }
 
@@ -249,8 +292,10 @@ public sealed partial class PushPage : SgPage
         if (index < 0) return;
         var sending = _commitRows.Count - index;
         var scope = sending >= _commitRows.Count ? PushScope.Whole : PushScope.First(sending);
-        if (scope == _scope) return;
+        if (scope == _scope && !_rangeMissing) return;
         _scope = scope;
+        _through = scope.Partial ? picked.Sha : null;
+        _rangeMissing = false;
         _cut = index;
         InvalidatePreview();
         // The preview is a git log, a git diff and an svn status over every path the branch changed.
@@ -282,6 +327,8 @@ public sealed partial class PushPage : SgPage
     {
         if (!_scope.Partial) return;
         _scope = PushScope.Whole;
+        _through = null;
+        _rangeMissing = false;
         _cut = _commitRows.Count > 0 ? 0 : -1;
         ShowCommits();
         await LoadAsync();
@@ -365,6 +412,7 @@ public sealed partial class PushPage : SgPage
         PushButton.IsEnabled = _canPush;
         var help = _reading ? "Wait for the selected commits' push preview to finish updating."
             : ReadError.IsOpen ? "The push preview could not be read. Retry before pushing or applying changes."
+            : _rangeMissing ? "The previously selected commit is no longer on the branch. Choose a commit or Send all to continue."
             : _canPush ? "Review the messages and push these commits to SVN."
             : _preview == null ? "Wait for the push preview to load."
             : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first."
@@ -558,6 +606,7 @@ public sealed partial class PushPage : SgPage
             // The next push starts from the whole of what is left, rather than silently keeping a count
             // that meant something about a branch that has changed under it.
             _scope = PushScope.Whole;
+            _through = null;
             // What went is offered again from the list of recent messages, and the box starts empty, so
             // LoadAsync can fill it from the commits that are left. Both commit pages already do this.
             if (r.AllCommitted || onPurpose) { MessageDialog.Remember(msg); Message.Text = ""; }

@@ -70,7 +70,8 @@ public sealed partial class SvnCommitPage : SgPage
     void SayGit()
     {
         var target = ServerWords.Target(_co);
-        InfoText.Message = $"These are edits made directly in the git clone. Commit makes one commit of the checked ones on {target} and pushes it; other edits stay where they are. Then the snapshot is refreshed.";
+        InfoText.Message = $"These are edits made directly in the git clone. Commit makes one commit of the checked ones on {target} and pushes it; other edits stay where they are. "
+                           + "A submodule's edits go to its own repository first, and the clone then pins the new commit. Then the snapshot is refreshed.";
         ToolTipService.SetToolTip(DiscardButton, "Put the checked files back the way the server has them; untracked files get deleted. The confirmation keeps a recovery shelf by default, with an option to discard permanently.");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CommitButton, ServerWords.CommitButton(_co));
         ToolTipService.SetToolTip(CommitButton, $"Write the message, then commit the checked changes on {target} and push them. Untracked files are added first. Asks first. Ctrl+Enter opens this too.");

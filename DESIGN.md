@@ -85,6 +85,7 @@ Working name `sg`. Change it later.
 | 38 | A backup is a git repository somewhere else that holds every branch, the changes not yet committed, and the shelves, and never the SVN tree. Each branch goes as a thin history: the snapshot becomes a marker with the empty tree and the SVN revisions in its message, every commit keeps only the files the branch wrote, and the version a file started from goes in a base commit under its first edit, so `git merge-tree` can put each change back onto a checkout that moved on. Nothing the branch did not touch leaves the machine. The URL is in `sg.json` and never a git remote, so `git push` keeps having nowhere to go. A backup mirrors with a lease and never deletes; restore replays the way import does, without a worktree. Built 2026-09-11. |
 | 39 | The conflicts a replay stops on go to a resolver before they go to a hand. git settles what it can by lines; what is left is two changes to the same lines, and which survives is a question about what the code means, so it goes to a coding agent run without a terminal - Claude Code in print mode unless `resolveCommand` in `sg.json` names another command - with the worktree, the files, both sides, the base between them and the commit's own message. It edits the files in place and nothing else: no staging, no commits, git only asked to show things. Nothing trusts the answer: a file counts as settled when every marker is gone and it changed, or when it held no markers to begin with - a run stopped half way leaves the work done and the step not carried on, and paying an agent to do it twice is the one thing worse than asking it once; one the agent said it left, or left markers in, stays in conflict for the page. Line endings and a BOM both sides had are put back, because an editor that writes LF into a CRLF file makes a diff of every line. It reads the code before it writes any, so a stop is minutes: the default command asks Claude Code for `stream-json` and sg turns the events into a line per thing it does, and Ctrl+C in the CLI ends the agent with it rather than leaving it writing into a worktree nobody is watching. `sg resolve auto` settles one stop and leaves it to read; `--all` continues and settles the next, skipping a rebase commit left with nothing to commit, until the replay is through or a file comes back unsettled. Underneath, the store now runs rebases with the histogram diff, keeps `rerere` on so a resolution made once is made again by git, and writes `zdiff3` markers. Added 2026-09-15. |
 | 40 | A checkout can be a git clone instead of an SVN working copy, and every workflow above takes it the same way. What a checkout asks of its server is one interface, `ICheckoutVcs` in `CheckoutVcs.cs`: update, snapshot, local changes, commit, the push steps, history, blame, merge, server branches and checkouts, identity. `SvnCheckoutVcs` is the code that was spread over `Ops`, `Push`, `Merge` and `Server`, moved behind it unchanged; `GitCheckoutVcs` is the new one. The clone stays the user's own, with its own `.git`: the store fetches the branch it tracks into `refs/sg/upstream/<checkout>`, and a snapshot is a commit of that branch's tree with the skip list taken out, with `git-rev` (the commit's first-parent height, so newer is larger the way an SVN revision is), `git-url` and `git-commit` trailers. A git checkout's place on the server is written `url#branch`, so every URL match - import, backup restore, drift - keeps working. A push, and a commit from the changes window, is one commit on the server branch built from exactly the files it sends, pushed from the clone; a push the server turns down because someone got there first is made again on top of theirs unless they touched the same files, which is svn's "out of date". Store commands that run inside a git clone go through a tunnel: `.sg/checkouts/<name>` holds a HEAD and an index and points at the store, and the clone's line-ending settings go along, so shelves and restores read and write its files the way its own git would. Added 2026-09-24. |
+| 41 | A git checkout's submodules are its externals, and take every step an external takes. `GitUnit` in `GitSubmodules.cs` is one repository of a checkout - the clone, or a submodule checked out in it at any depth - and every step on a path runs in the innermost one. A snapshot grafts each submodule's own tree where its parent pins it, rebuilding only the trees above it with `mktree` (`Git.ReplaceEntry`), after fetching the commit out of the submodule's clone into the store; a `git-submodule` trailer per submodule records its height, commit, location and path. A submodule is pinned - HEAD detached at the commit its parent pins, how git leaves one - or switched, on a branch that tracks a remote branch: the snapshot holds the pin or the branch, sync moves it to the new pin or up the branch, and Edit checkout moves it between the two, here only. A commit goes to the submodule's own server first: a switched one's branch, a pinned one's `.gitmodules` branch or the remote's default branch, after which its parent commits the new pin, even with no change of its own, and so on up while the parent is pinned too. `ICheckoutVcs.CommitOrder` gives that order and who pins whom, and SVN keeps its own order. A file of a pinned submodule changed on its branch after the pin is out of date from the start. A new server branch branches each submodule not kept and names the new branches in `.gitmodules` on the new branch. Added 2026-09-24. |
 
 ## The picture
 
@@ -290,16 +291,17 @@ above it does not branch on the kind. What git answers, step by step:
 |---|---|---|
 | Register | `svn info`, a `.git` file pointing into the store | the clone's branch and the remote branch it tracks; a tunnel folder and an `sg-root` file in the clone's git folder |
 | Check out a URL | `svn checkout` | `git clone`, the branch after a `#` |
-| Sync | `svn update`, switched externals kept | `git fetch` of the tracked branch, then a fast-forward, local edits stashed around it when they are in the way |
-| Snapshot | hash the working copy, pristine copies over local edits | fetch the branch into `refs/sg/upstream/<name>`; its tree, the skip list taken out |
-| Local changes | `svn status` | `git status`, in svn's words: modified, added, deleted, missing, unversioned, conflicted |
-| Commit from the checkout | `svn commit` per working copy | one commit on the server branch of the chosen paths only, pushed |
+| Sync | `svn update`, switched externals kept | `git fetch` of the tracked branch, then a fast-forward, local edits stashed around it when they are in the way; each submodule cloned, moved to its new pin, or up its branch when switched |
+| Snapshot | hash the working copy, pristine copies over local edits | fetch the branch into `refs/sg/upstream/<name>`; its tree with each submodule's tree grafted in, the skip list taken out |
+| Local changes | `svn status` | `git status` in the clone and each submodule, in svn's words: modified, added, deleted, missing, unversioned, conflicted |
+| Commit from the checkout | `svn commit` per working copy | one commit per repository of the chosen paths only, pushed; submodules first, then the parents that pin them |
 | Push a branch | write the files, `svn add/rm/mv`, `svn commit` | carry the files over in a commit of the store's, check them out staged, commit and push as above |
 | Revert | `svn revert` | unstage and check out from HEAD; an added file stays on disk, as svn leaves it |
-| Log, blame | `svn log -v`, `svn blame` | `git log --first-parent`, `git blame` in the clone |
-| Merge | `svn merge`, cherry pick or all | `git cherry-pick --no-commit`, `git revert --no-commit`, or `git merge --squash`; `git merge-tree` for a dry run |
-| New server branch | `svnmucc cp` per repository | a push of the server branch's tip under the new name, only if it is free |
-| New server checkout | copy the nearest checkout, `svn switch` | `git clone --reference-if-able <nearest> --dissociate` |
+| Log, blame | `svn log -v`, `svn blame` | `git log --first-parent`, `git blame` in the clone or the submodule |
+| Merge | `svn merge`, cherry pick or all | `git cherry-pick --no-commit`, `git revert --no-commit`, or `git merge --squash`, in the clone or a submodule; `git merge-tree` for a dry run |
+| Switch an external | `svn switch` on it | check out a branch of the submodule's repository, or its pin again |
+| New server branch | `svnmucc cp` per repository | a push of the server branch's tip under the new name, only if it is free; one per submodule not kept, named in `.gitmodules` |
+| New server checkout | copy the nearest checkout, `svn switch` | `git clone --recurse-submodules --reference-if-able <nearest> --dissociate` |
 | Identity for import | repository uuid and path | the first commit of the history and the branch |
 
 **The clone stays the user's.** sg writes nothing into the working files except what a push, a shelf or a
@@ -327,8 +329,20 @@ convert line endings, so its files are the repository's bytes, usually LF. `.git
 applies. What a branch commits goes back through the clone's own git, so the server gets what it would from
 the clone.
 
-**Not covered.** Submodules are kept as they are in the tree and never written by a push. LFS files are
-pointers in the store. A shallow clone is refused: the snapshot reads the branch's history.
+**Submodules.** A submodule is an external: a repository of its own at a folder of the checkout (`GitUnit`).
+The snapshot holds its files, not its pin - each submodule's tree is grafted in where its parent pins it, with
+`mktree` over the trees above it, after its commit is fetched out of its clone into the store - so a worktree
+has plain folders and knows nothing of submodules. A submodule is pinned, at the commit its parent pins, or
+switched, on a branch that tracks a remote branch; the snapshot holds whichever it is. A commit goes to the
+submodule's own server first - a switched one's branch, a pinned one's `.gitmodules` branch or its remote's
+default - and a pinned one's parent then commits the new pin, even with nothing else to commit, up to the first
+parent that is not pinned. The two commits of one push are two server commits, as an external and its root are
+two SVN revisions. A pinned submodule's files are those of its pin, so a file its branch changed since then is
+out of date before anything is sent; switching it to the branch is how to work on its newest.
+
+**Not covered.** LFS files are pointers in the store. A shallow clone is refused, and a shallow submodule is
+left out of the snapshot with a warning: the snapshot reads the history. The store reads and writes a
+submodule's files with the clone's line-ending settings, which a global setting keeps the same.
 
 ### Backup remote
 

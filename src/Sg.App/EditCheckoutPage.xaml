@@ -58,7 +58,7 @@
                     </controls:SettingsExpander.Items>
                 </controls:SettingsExpander>
 
-                <!-- SVN only: a git clone is one working copy, and this whole section goes away for one. -->
+                <!-- SVN externals, or a git clone's submodules: the page says which in code. -->
                 <TextBlock x:Name="ExternalsHeader" Text="Externals" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
                 <TextBlock x:Name="ExternalsIntro" Style="{StaticResource Secondary}" Margin="0,0,0,4"
                            Text="Point an external at another branch on this machine only. This is svn switch on that external's own working copy: the svn:externals property is left alone, so nothing is committed and nobody else sees it. Sync afterwards and the snapshot records the switched content." />
@@ -70,7 +70,7 @@
                                     <DataTemplate x:DataType="local:ExternalRow">
                                         <Grid ColumnDefinitions="180,Auto,*" ColumnSpacing="10" ToolTipService.ToolTip="{x:Bind Tip}">
                                             <TextBlock Text="{x:Bind Rel}" Style="{StaticResource RowMono}" />
-                                            <local:StatusChip Grid.Column="1" Severity="Attention" Glyph="&#xE8AB;" Text="switched"
+                                            <local:StatusChip Grid.Column="1" Severity="Attention" Glyph="&#xE8AB;" Text="{x:Bind ChipText}"
                                                               Visibility="{x:Bind SwitchedVisibility}" />
                                             <TextBlock Grid.Column="2" Text="{x:Bind Url}" Style="{StaticResource RowMonoDim}" />
                                         </Grid>

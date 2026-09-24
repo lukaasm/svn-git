@@ -210,7 +210,8 @@ static class Cli
                  [--keep <external>]... [--as <external>=<name>]...
                                                       copy the branch on the server, every repository, then check it out
                                                       --keep leaves an external on its branch, --as gives one a name of its own.
-                                                      For a git checkout: push a new branch at the server branch's tip
+                                                      For a git checkout: push a new branch at the server branch's tip, and one per
+                                                      submodule, named in .gitmodules; --keep and --as name submodules there
             sg server-checkout <name|url> [--near <checkout>] [--name <n>]
                                                       new checkout of a server branch: copy the nearest one, svn switch;
                                                       for git, a clone that borrows the nearest clone's objects
@@ -361,7 +362,9 @@ static class Cli
         else
         {
             Console.WriteLine($"{res.Checkout.Name}: {Rev.Label(res.Snapshot.Revision, res.Snapshot.Commit)}, snapshot {res.Snapshot.Sha[..10]}"
-                              + (res.Checkout.IsGit ? $", git {res.Checkout.Remote}/{res.Checkout.Branch}" : $", {res.Snapshot.Externals.Count} externals"));
+                              + (res.Checkout.IsGit
+                                  ? $", git {res.Checkout.Remote}/{res.Checkout.Branch}" + (res.Snapshot.Externals.Count > 0 ? $", {res.Snapshot.Externals.Count} submodules" : "")
+                                  : $", {res.Snapshot.Externals.Count} externals"));
             Warn(res.Snapshot.Warnings);
         }
         return 0;
@@ -721,7 +724,9 @@ static class Cli
     {
         Console.WriteLine($"checkout {res.Checkout.Name}: {res.Checkout.Path}");
         Console.WriteLine($"  {res.Checkout.Url} {Rev.Label(res.Snapshot.Revision, res.Snapshot.Commit)}, snapshot {res.Snapshot.Sha[..10]}"
-                          + (res.Checkout.IsGit ? "" : $", {res.Snapshot.Externals.Count} externals"));
+                          + (res.Checkout.IsGit
+                              ? (res.Snapshot.Externals.Count > 0 ? $", {res.Snapshot.Externals.Count} submodules" : "")
+                              : $", {res.Snapshot.Externals.Count} externals"));
         Console.WriteLine($"  next: sg branch <name> --from {res.Checkout.Name}");
         Warn(res.Snapshot.Warnings);
     }

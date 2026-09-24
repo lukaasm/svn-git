@@ -221,6 +221,7 @@ public static class Export
                 Rel = rel,
                 Url = (snap.ExternalUrls.TryGetValue(rel, out var u) ? u : "").TrimEnd('/'),
                 Revision = rev,
+                Commit = snap.ExternalCommits.TryGetValue(rel, out var c) ? c : null,
             });
         Identify(root, co, list);
         return list;
@@ -489,6 +490,7 @@ public static class Export
         {
             var isRoot = b.Rel.Length == 0;
             var mine = isRoot ? here.Revision : here.Externals.TryGetValue(b.Rel, out var r) ? r : -1;
+            var myCommit = isRoot ? here.Commit : here.ExternalCommits.GetValueOrDefault(b.Rel, "");
             var myUrl = (isRoot ? here.Url : here.ExternalUrls.TryGetValue(b.Rel, out var u) ? u : "").TrimEnd('/');
             // A snapshot written before sg recorded external URLs has the revision and not the URL, so a
             // URL is only compared when both sides have one to compare - and compared the lenient way, or
@@ -497,10 +499,10 @@ public static class Export
                 drift.Add(new ExportDrift(b.Where, b.Url, b.Revision, mine, myUrl));
             // A git base is its commit: two histories can reach the same height, and one pushed over the
             // other is exactly that. The height alone decides only where the export did not record one.
-            else if (isRoot && b.Commit is { Length: > 0 } && here.Commit.Length > 0
-                     ? !b.Commit.Equals(here.Commit, StringComparison.OrdinalIgnoreCase)
+            else if (b.Commit is { Length: > 0 } && myCommit.Length > 0
+                     ? !b.Commit.Equals(myCommit, StringComparison.OrdinalIgnoreCase)
                      : mine != b.Revision)
-                drift.Add(new ExportDrift(b.Where, b.Url, b.Revision, mine) { ExportedCommit = b.Commit, LocalCommit = isRoot && here.Commit.Length > 0 ? here.Commit : null });
+                drift.Add(new ExportDrift(b.Where, b.Url, b.Revision, mine) { ExportedCommit = b.Commit, LocalCommit = myCommit.Length > 0 ? myCommit : null });
         }
         return drift;
     }

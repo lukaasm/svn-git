@@ -157,7 +157,29 @@ public sealed partial class ServerBranchPage : SgPage
         foreach (var r in _rows) r.Changed += OnRowChanged;
         Parts.ItemsSource = _rows;
         NoParts.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        PartsHeader.Text = _rows.Count == 0 ? "Externals" : $"Externals ({_rows.Count})";
+        var title = ServerWords.ExternalsTitle(co);
+        PartsHeader.Text = _rows.Count == 0 ? title : $"{title} ({_rows.Count})";
+        SayServer(co);
+    }
+
+    /// <summary>The page's words for the picked checkout: SVN copies and externals, or git branches and submodules.</summary>
+    void SayServer(CheckoutConfig co)
+    {
+        if (co.IsGit)
+        {
+            Intro.Text = "Pushes a new branch to the remote at the newest commit of the server branch, and one to each submodule's own repository "
+                         + "unless it is kept; the new branch names them in .gitmodules. Each submodule can get a branch name of its own. "
+                         + "Then it clones the new branch beside the source checkout. Run the dry run first.";
+            NoParts.Title = "No submodules";
+            NoParts.Text = "This clone has no submodules checked out. The branch is one branch of it.";
+        }
+        else
+        {
+            Intro.Text = "Copies the branch on the server, one revision per repository, and rewrites every svn:externals. Each external can get a branch name "
+                         + "of its own, or stay on the branch it points at now. Then it makes a checkout by copying the source checkout and svn switch. Run the dry run first.";
+            NoParts.Title = "No externals";
+            NoParts.Text = "This checkout is one working copy. The branch is one copy of it.";
+        }
     }
 
     void OnRowChanged()
@@ -210,7 +232,8 @@ public sealed partial class ServerBranchPage : SgPage
         if (_plan == null || co == null) return;
         var plan = _plan;
         if (!await Dialogs.Confirm(this, "Create server branch " + plan.Name, co.IsGit
-                ? $"This pushes a new branch {plan.Name} to {co.Remote}, at the newest commit of {ServerWords.Target(co)}. Everyone can see it. Continue?"
+                ? $"This pushes a new branch {plan.Name} to {co.Remote}, at the newest commit of {ServerWords.Target(co)}"
+                  + (plan.Repos.Count > 1 ? $", and {plan.Repos.Count - 1} to submodule repositories" : "") + ". Everyone can see them. Continue?"
                 : $"This makes {plan.Repos.Count} revision(s) on the server that everyone can see. Continue?", "Create")) return;
         await Busy.During(CreateButton, async () =>
         {

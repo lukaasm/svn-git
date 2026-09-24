@@ -97,7 +97,7 @@ public static class Thin
             if (line.StartsWith("svn-rev: ", StringComparison.Ordinal) || line.StartsWith("svn-url: ", StringComparison.Ordinal)
                 || line.StartsWith("svn-external: ", StringComparison.Ordinal)
                 || line.StartsWith(SnapshotMeta.GitRev, StringComparison.Ordinal) || line.StartsWith(SnapshotMeta.GitUrl, StringComparison.Ordinal)
-                || line.StartsWith(SnapshotMeta.GitCommit, StringComparison.Ordinal))
+                || line.StartsWith(SnapshotMeta.GitCommit, StringComparison.Ordinal) || line.StartsWith(SnapshotMeta.GitSubmodule, StringComparison.Ordinal))
                 sb.Append(line).Append('\n');
         sb.Append(KeyVersion).Append(": ").Append(Version).Append('\n');
         sb.Append(KeyKind).Append(": marker\n");
@@ -981,7 +981,13 @@ public static partial class Backup
         var meta = new ExportMeta { Branch = name, Version = ExportMeta.Current };
         meta.Bases.Add(new ExportWc { Rel = "", Url = snap.Url.TrimEnd('/'), Revision = snap.Revision, Commit = snap.Commit.Length > 0 ? snap.Commit : null });
         foreach (var (rel, rev) in snap.Externals.OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase))
-            meta.Bases.Add(new ExportWc { Rel = rel, Url = (snap.ExternalUrls.TryGetValue(rel, out var u) ? u : "").TrimEnd('/'), Revision = rev });
+            meta.Bases.Add(new ExportWc
+            {
+                Rel = rel,
+                Url = (snap.ExternalUrls.TryGetValue(rel, out var u) ? u : "").TrimEnd('/'),
+                Revision = rev,
+                Commit = snap.ExternalCommits.TryGetValue(rel, out var c) ? c : null,
+            });
         return meta;
     }
 

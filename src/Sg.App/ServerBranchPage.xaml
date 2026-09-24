@@ -6,7 +6,7 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
     <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
         <StackPanel Grid.Row="0" Spacing="10">
-            <TextBlock Style="{StaticResource Secondary}"
+            <TextBlock x:Name="Intro" Style="{StaticResource Secondary}"
                        Text="Copies the branch on the server, one revision per repository, and rewrites every svn:externals. Each external can get a branch name of its own, or stay on the branch it points at now. Then it makes a checkout by copying the source checkout and svn switch. Run the dry run first." />
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <TextBox x:Name="NameBox" Header="Branch name" Width="240" PlaceholderText="rel-1" TextChanged="Name_TextChanged" />

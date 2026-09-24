@@ -3,7 +3,8 @@ using System.Text;
 
 namespace Sg.Core;
 
-public sealed record ExternalInfo(string Rel, long Revision, string Url);
+/// <summary>One external of a snapshot, or one git submodule: where it is, what it came from, and the commit a submodule holds.</summary>
+public sealed record ExternalInfo(string Rel, long Revision, string Url, string Commit = "");
 
 public sealed class SnapshotInfo
 {
@@ -21,13 +22,15 @@ public sealed class SnapshotInfo
 /// <summary>
 /// What a snapshot commit says about itself, read back from its trailers. An SVN snapshot writes
 /// svn-rev, svn-url and one svn-external per external; a git snapshot writes git-rev, the height of its
-/// commit on the branch, git-url, and git-commit.
+/// commit on the branch, git-url, git-commit, and one git-submodule per submodule: its height, its
+/// commit, where it came from, and its path last, since a path may hold spaces.
 /// </summary>
 public sealed class SnapshotMeta
 {
     public const string GitRev = "git-rev: ";
     public const string GitUrl = "git-url: ";
     public const string GitCommit = "git-commit: ";
+    public const string GitSubmodule = "git-submodule: ";
 
     public long Revision;
     public string Url = "";
@@ -38,6 +41,8 @@ public sealed class SnapshotMeta
     public string Label => Rev.Label(Revision, Commit);
     public Dictionary<string, long> Externals = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> ExternalUrls = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The commit each git submodule holds. Empty for SVN.</summary>
+    public Dictionary<string, string> ExternalCommits = new(StringComparer.OrdinalIgnoreCase);
 
     public static SnapshotMeta Parse(string body)
     {
@@ -50,6 +55,17 @@ public sealed class SnapshotMeta
             else if (line.StartsWith(GitRev)) long.TryParse(line[GitRev.Length..].Trim(), out m.Revision);
             else if (line.StartsWith(GitUrl)) m.Url = line[GitUrl.Length..].Trim();
             else if (line.StartsWith(GitCommit)) m.Commit = line[GitCommit.Length..].Trim();
+            else if (line.StartsWith(GitSubmodule))
+            {
+                var parts = line[GitSubmodule.Length..].Split(' ', 4);
+                if (parts.Length == 4 && long.TryParse(parts[0], out var height))
+                {
+                    var rel = parts[3].Trim();
+                    m.Externals[rel] = height;
+                    m.ExternalCommits[rel] = parts[1];
+                    m.ExternalUrls[rel] = parts[2].Replace("%20", " ");
+                }
+            }
             else if (line.StartsWith("svn-external: "))
             {
                 var parts = line[14..].Split(' ', 3);

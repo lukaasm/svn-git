@@ -32,7 +32,7 @@ static class McpHost
         ("import", "Inspect --show or import an sgexport file. arguments: file [--name branch] [--into checkout].", false),
         ("backup", "Backup branches, edits, shelves and code reviews. All CLI actions: --check, --force [--only kind/name], --worktree name; pull, set, exclude, include, list, restore, prune. Use sg_help for options.", false),
         ("status", "Read checkout and worktree status. arguments: optional --full. JSON is always enabled.", true),
-        ("server-branch", "Copy a server branch: svnmucc copies for SVN, a new branch pushed at the tip for git. arguments: name [--from checkout] [--dry-run] [--no-checkout] [-m message] [--keep external] [--as external=name].", false),
+        ("server-branch", "Copy a server branch: svnmucc copies for SVN, a new branch pushed at the tip for git, with one per submodule. arguments: name [--from checkout] [--dry-run] [--no-checkout] [-m message] [--keep external] [--as external=name].", false),
         ("server-checkout", "Create a checkout of a server branch. arguments: name-or-url [--near checkout] [--name local-name].", false),
         ("update", "Check --check or install the latest SG release. Supports --repo, --dir, --force. Installation can affect other SG processes.", false),
         ("version", "Read SG build version.", true),

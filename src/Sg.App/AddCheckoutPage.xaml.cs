@@ -74,7 +74,9 @@ public sealed partial class AddCheckoutPage : SgPage
 
         Added = true;
         var at = Rev.Label(r.Snapshot.Revision, r.Snapshot.Commit);
-        var parts = r.Checkout.IsGit ? $"git {r.Checkout.Remote}/{r.Checkout.Branch}" : $"{r.Snapshot.Externals.Count} external(s)";
+        var parts = r.Checkout.IsGit
+            ? $"git {r.Checkout.Remote}/{r.Checkout.Branch}" + (r.Snapshot.Externals.Count > 0 ? $", {r.Snapshot.Externals.Count} submodule(s)" : "")
+            : $"{r.Snapshot.Externals.Count} external(s)";
         Result.Text = $"{r.Checkout.Name}: {at}, {parts}";
         Pane.Append($"{r.Checkout.Name}: {at}, snapshot {r.Snapshot.Sha[..10]}, {parts}");
         foreach (var w in r.Snapshot.Warnings) Pane.Append("warn: " + w);

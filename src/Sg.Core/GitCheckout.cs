@@ -310,6 +310,10 @@ public sealed class GitTunnel
 /// fetch, and a snapshot is a commit of the server branch's tree, so a branch worktree builds on
 /// exactly what the server has. Sending goes the other way: the change is carried into the clone,
 /// committed there on top of the server branch, and pushed, which is the git shape of one SVN commit.
+///
+/// Submodules are its externals. Each is a repository of its own (<see cref="GitUnit"/>), its tree goes
+/// into the snapshot where its parent pins it, its files are read and written in it, and a push commits
+/// in it first and pins the new commit in its parent after.
 /// </summary>
 public sealed class GitCheckoutVcs : ICheckoutVcs
 {
@@ -318,6 +322,9 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
 
     /// <summary>A commit holding only the files a push is about to write, for the clone to fetch.</summary>
     public const string OutgoingPrefix = "refs/sg/outgoing/";
+
+    /// <summary>Where a submodule's commit lands in the store on its way into a snapshot, for as long as that takes.</summary>
+    const string SubmoduleRef = "refs/sg/submodule";
 
     /// <summary>The file in the clone's git folder that names the root, for finding it from inside the clone.</summary>
     public const string RootMarker = "sg-root";
@@ -332,6 +339,8 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     static string TrackingOf(CheckoutConfig co, string branch) => $"refs/remotes/{Remote(co)}/{branch}";
     public static string UpstreamRef(CheckoutConfig co) => UpstreamPrefix + co.Name;
     static string OutgoingRef(CheckoutConfig co) => OutgoingPrefix + co.Name;
+    static List<GitUnit> Units(SgRoot root, CheckoutConfig co) => GitSubmodules.Units(root, co);
+    static string FirstLine(string text) => text.Trim().Split('\n')[0].Trim();
 
     /// <summary>The root a clone was registered in, from the file sg left in its git folder. Null when there is none.</summary>
     public static string? ReadRootMarker(string gitDir)
@@ -383,11 +392,12 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         };
     }
 
+    /// <summary>git clone, submodules and all, the way svn checkout brings its externals along.</summary>
     public void CheckoutUrl(SgRoot root, string url, string folder)
     {
         var (repoUrl, branch) = GitLocation.Parse(url);
         root.Log.Info($"git clone {repoUrl}" + (branch != null ? $" ({branch})" : "") + $" into {folder}");
-        var args = new List<string> { "clone", "--quiet" };
+        var args = new List<string> { "clone", "--quiet", "--recurse-submodules" };
         if (branch != null) { args.Add("--branch"); args.Add(branch); }
         args.Add("--");
         args.Add(repoUrl);
@@ -454,7 +464,8 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     /// a fast-forward, with local edits stashed around it when they are in the way, and a conflict where
     /// the stash will not go back cleanly. A clone that has commits of its own is replayed onto the
     /// server, and left where it was when that does not go cleanly. A clone on another branch keeps its
-    /// files; the snapshot is of the server branch either way.
+    /// files; the snapshot is of the server branch either way. Then every submodule, the way svn update
+    /// brings the externals along.
     /// </summary>
     public UpstreamUpdate Update(SgRoot root, CheckoutConfig co)
     {
@@ -478,7 +489,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             res.Warnings.Add($"the clone has {repo.Count(upstream + ".." + head)} commit(s) the server does not. They stay; push them with git, or take them back out.");
         else
         {
-            var r = repo.Run("rebase", "--autostash", "--quiet", upstream);
+            var r = repo.Run("-c", "submodule.recurse=false", "rebase", "--autostash", "--quiet", upstream);
             if (r.Ok) root.Log.Info("the clone's own commits were replayed onto the server's");
             else
             {
@@ -487,19 +498,109 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             }
         }
         res.Conflicts = Math.Max(res.Conflicts, repo.Conflicted().Count);
+        UpdateSubmodules(root, co, res);
         root.Log.Info($"git fetch {co.Name}: {Rev.Short(upstream)}" + (res.Conflicts > 0 ? $", {res.Conflicts} conflict(s) in the checkout" : ""));
         return res;
     }
 
+    /// <summary>
+    /// Every submodule brought to where its parent says: one not cloned yet is cloned, a pinned one is
+    /// moved to the commit its parent pins now, a switched one is moved up its branch the way the clone
+    /// is. One with work in the way is left where it is, with a warning, rather than forced.
+    /// </summary>
+    static void UpdateSubmodules(SgRoot root, CheckoutConfig co, UpstreamUpdate res)
+    {
+        var queue = new List<GitUnit> { GitUnit.Clone(root, co) };
+        for (var i = 0; i < queue.Count; i++)
+        {
+            var parent = queue[i];
+            if (!File.Exists(Path.Combine(parent.Repo.Path, ".gitmodules"))) continue;
+            foreach (var e in GitSubmodules.Declared(a => parent.Repo.Run(a), "HEAD"))
+            {
+                var wc = parent.Full(e.Path);
+                if (GitSubmodules.Skipped(co, wc)) continue;
+                var dir = PathUtil.Join(co.Path, wc);
+                if (!GitSubmodules.CheckedOut(dir))
+                {
+                    root.Log.Info($"cloning submodule {wc}");
+                    var init = parent.Repo.Run("submodule", "update", "--init", "--", e.Path);
+                    if (!init.Ok || !GitSubmodules.CheckedOut(dir))
+                    {
+                        res.Warnings.Add($"submodule {wc} could not be cloned: {FirstLine(init.StdErr + "\n" + init.StdOut)}");
+                        continue;
+                    }
+                }
+                var unit = GitUnit.Submodule(root, parent, e, wc, dir);
+                UpdateSubmodule(unit, res);
+                res.Conflicts += unit.Repo.Conflicted().Count;
+                queue.Add(unit);
+            }
+        }
+    }
+
+    static void UpdateSubmodule(GitUnit unit, UpstreamUpdate res)
+    {
+        var repo = unit.Repo;
+        if (repo.InProgress() is { } op)
+        {
+            res.Warnings.Add($"a {op} is in progress in {unit.Wc}, so it was left alone. Finish it with git, then sync again.");
+            return;
+        }
+        var head = repo.Rev("HEAD");
+        if (unit.Switched)
+        {
+            var (_, remote, branch) = unit.Tracking;
+            res.KeptSwitched.Add(unit.Wc);
+            var f = repo.Run("fetch", "--quiet", remote!, $"+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+            if (!f.Ok)
+            {
+                res.Warnings.Add($"git fetch {remote} {branch} failed in {unit.Wc}, so it stays where it is: {FirstLine(f.StdErr)}");
+                return;
+            }
+            var tip = repo.Rev($"refs/remotes/{remote}/{branch}");
+            if (tip == null || head == tip) return;
+            if (head == null || repo.IsAncestor(head, tip)) FastForward(repo, tip, res);
+            else if (repo.IsAncestor(tip, head))
+                res.Warnings.Add($"{unit.Wc} has {repo.Count(tip + ".." + head)} commit(s) {remote}/{branch} does not. They stay; push them with git, or take them back out.");
+            else
+                res.Warnings.Add($"{unit.Wc} and {remote}/{branch} went separate ways, so {unit.Wc} was left where it was. Rebase it with git.");
+            return;
+        }
+        if (unit.Tracking.Local is { } localBranch)
+        {
+            res.Warnings.Add($"{unit.Wc} is on branch {localBranch}, which tracks no remote branch, so it was left alone. The snapshot holds the commit its parent pins.");
+            return;
+        }
+        var pin = unit.Pin;
+        if (head == pin) return;
+        if (repo.Rev(pin) == null)
+        {
+            repo.Run("fetch", "--quiet", unit.Remote);
+            if (repo.Rev(pin) == null) repo.Run("fetch", "--quiet", unit.Remote, pin);
+            if (repo.Rev(pin) == null)
+            {
+                res.Warnings.Add($"{unit.Wc}: {Rev.Short(pin)}, the commit its parent pins, is not on {unit.Url}.");
+                return;
+            }
+        }
+        if (head != null && repo.IsAncestor(head, pin)) FastForward(repo, pin, res);
+        else
+        {
+            var r = repo.Run("-c", "submodule.recurse=false", "checkout", "--detach", "--quiet", pin);
+            if (!r.Ok) res.Warnings.Add($"{unit.Wc} could not be moved to {Rev.Short(pin)}, the commit its parent pins: {FirstLine(r.StdErr)}");
+        }
+    }
+
     static void FastForward(GitRepo repo, string target, UpstreamUpdate res)
     {
-        var r = repo.Run("merge", "--ff-only", "--quiet", target);
+        // A submodule stays where sg puts it, not where a submodule.recurse setting would take it along.
+        var r = repo.Run("-c", "submodule.recurse=false", "merge", "--ff-only", "--quiet", target);
         if (r.Ok) return;
         // Local edits on files the server changed. svn update merges into them; the nearest git has is
         // putting them aside for the move and back after it, and a conflict when they will not go back.
-        r = repo.Run("merge", "--ff-only", "--autostash", "--quiet", target);
+        r = repo.Run("-c", "submodule.recurse=false", "merge", "--ff-only", "--autostash", "--quiet", target);
         res.Output = (r.StdOut + r.StdErr).Trim();
-        if (!r.Ok) res.Warnings.Add("the clone could not be moved to the server's commit: " + res.Output);
+        if (!r.Ok) res.Warnings.Add($"{repo.Path} could not be moved to the server's commit: " + res.Output);
         else if (res.Output.Contains("resulted in conflicts", StringComparison.Ordinal)) res.Conflicts = Math.Max(1, res.Conflicts);
     }
 
@@ -512,9 +613,11 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     }
 
     /// <summary>
-    /// The server branch's tree, as a commit of the store. The branch's history is fetched out of the
-    /// clone first - all of it the first time, only what is new after that - so the snapshot's objects
-    /// are the store's own and outlive anything done to the clone. Skipped paths are taken out.
+    /// The server branch's tree, as a commit of the store, with every submodule's own tree where its
+    /// parent pins it. The branch's history is fetched out of the clone first - all of it the first
+    /// time, only what is new after that - and each submodule's commit out of its own clone, so the
+    /// snapshot's objects are the store's own and outlive anything done to the clones. Skipped paths
+    /// are taken out.
     /// </summary>
     public SnapshotInfo BuildSnapshot(SgRoot root, CheckoutConfig co, string? parentSha, Func<SnapshotInfo, string>? extraMessage)
     {
@@ -534,10 +637,11 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         info.Commit = upstream;
         info.Revision = long.TryParse(git.Out(null, "rev-list", "--count", "--first-parent", upstream), out var h) ? h : 0;
 
-        var tree = co.Skip.Count == 0 ? git.TreeOf(upstream) : WithoutSkipped(root, co, upstream);
+        var tree = Graft(root, co, upstream, git.TreeOf(upstream), info);
+        if (co.Skip.Count > 0) tree = WithoutSkipped(root, co, tree);
 
         var snapRef = root.SnapshotRef(co);
-        if (parentSha != null && git.TreeOf(parentSha) == tree && SnapshotMeta.Parse(git.Body(parentSha)).Commit == upstream)
+        if (parentSha != null && git.TreeOf(parentSha) == tree && SameServerState(SnapshotMeta.Parse(git.Body(parentSha)), info))
         {
             info.Sha = parentSha;
             info.Unchanged = true;
@@ -554,17 +658,84 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         return info;
     }
 
-    /// <summary>The commit's tree with every skipped path taken out, built in an index of the store's own.</summary>
-    static string WithoutSkipped(SgRoot root, CheckoutConfig co, string commit)
+    /// <summary>The same commits, and the submodules at the same places: the snapshot need not be taken again.</summary>
+    static bool SameServerState(SnapshotMeta prev, SnapshotInfo info) =>
+        prev.Commit == info.Commit
+        && prev.ExternalCommits.Count == info.Externals.Count
+        && info.Externals.All(e => prev.ExternalCommits.TryGetValue(e.Rel, out var c) && c == e.Commit
+                                   && prev.ExternalUrls.TryGetValue(e.Rel, out var u) && u == e.Url);
+
+    /// <summary>
+    /// The tree with every submodule's own tree where the commit pins it, at any depth: a switched one's
+    /// branch, a pinned one's pinned commit. Each commit is fetched out of the submodule's clone into the
+    /// store first. A submodule that cannot go in is taken out, with a warning that says why, rather
+    /// than left as a pin nothing in a branch worktree could open.
+    /// </summary>
+    static string Graft(SgRoot root, CheckoutConfig co, string commit, string tree, SnapshotInfo info)
+    {
+        var git = root.Git;
+        var queue = new List<(GitUnit Unit, string Commit)> { (GitUnit.Clone(root, co), commit) };
+        for (var i = 0; i < queue.Count; i++)
+        {
+            var (parent, parentCommit) = queue[i];
+            foreach (var e in GitSubmodules.Declared(a => git.Run(null, a), parentCommit))
+            {
+                var wc = parent.Full(e.Path);
+                if (GitSubmodules.Skipped(co, wc)) continue;   // taken out with the rest of the skipped paths
+                var dir = PathUtil.Join(co.Path, wc);
+                GitUnit? unit = null;
+                string used = e.Pin, why = "";
+                try
+                {
+                    if (!GitSubmodules.CheckedOut(dir)) why = "it is not cloned. Sync clones it";
+                    else
+                    {
+                        unit = GitUnit.Submodule(root, parent, e, wc, dir);
+                        if (unit.Repo.Out("rev-parse", "--is-shallow-repository") == "true")
+                            why = $"it is a shallow clone. Fetch it whole: git -C \"{dir}\" fetch --unshallow";
+                        else if (unit.Switched && unit.Repo.Rev(unit.TrackingRef) == null)
+                            why = $"{unit.Remote}/{unit.Branch} is not in it. Sync fetches it";
+                        else
+                        {
+                            if (unit.Switched) used = unit.Repo.Rev(unit.TrackingRef)!;
+                            if (unit.Repo.Rev(used) == null) why = $"it does not have {Rev.Short(used)}, the commit its parent pins. Sync fetches it";
+                            else if (git.Run(null, "cat-file", "-e", used + "^{commit}").ExitCode != 0)
+                            {
+                                var f = git.Run(null, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet", dir, $"+{used}:{SubmoduleRef}");
+                                git.DeleteRef(SubmoduleRef);
+                                if (!f.Ok) why = "its commit could not be copied into the store: " + FirstLine(f.StdErr);
+                            }
+                        }
+                    }
+                }
+                catch (SgException ex) { why = ex.Message; }
+
+                if (why.Length > 0 || unit == null)
+                {
+                    info.Warnings.Add($"submodule {wc} is left out of the snapshot: {why}.");
+                    tree = git.ReplaceEntry(tree, wc, null, null);
+                    continue;
+                }
+                tree = git.ReplaceEntry(tree, wc, "040000", git.TreeOf(used));
+                var height = long.TryParse(git.Out(null, "rev-list", "--count", "--first-parent", used), out var n) ? n : 0;
+                info.Externals.Add(new ExternalInfo(wc, height, unit.Location, used));
+                queue.Add((unit, used));
+            }
+        }
+        return tree;
+    }
+
+    /// <summary>The tree with every skipped path taken out, built in an index of the store's own.</summary>
+    static string WithoutSkipped(SgRoot root, CheckoutConfig co, string tree)
     {
         var git = root.Git;
         var idx = root.NewTempFile(".index");
         try
         {
-            git.ReadTree(null!, commit, idx);
+            git.ReadTree(null!, tree, idx);
             var gone = new List<(string, string, string)>();
             foreach (var chunk in co.Skip.Chunk(100))
-                foreach (var e in git.LsTree(commit, chunk.Select(PathUtil.Rel), recursive: true))
+                foreach (var e in git.LsTree(tree, chunk.Select(PathUtil.Rel), recursive: true))
                     gone.Add(("0", new string('0', 40), e.Path));
             git.UpdateIndexInfo(null!, gone, idx);
             return git.WriteTree(null!, idx);
@@ -584,50 +755,80 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         sb.Append(SnapshotMeta.GitRev).Append(info.Revision).Append('\n');
         sb.Append(SnapshotMeta.GitUrl).Append(info.Url).Append('\n');
         sb.Append(SnapshotMeta.GitCommit).Append(info.Commit).Append('\n');
+        foreach (var e in info.Externals)
+            sb.Append(SnapshotMeta.GitSubmodule).Append(e.Revision).Append(' ').Append(e.Commit).Append(' ').Append(e.Url.Replace(" ", "%20")).Append(' ').Append(e.Rel).Append('\n');
         return sb.ToString();
     }
 
+    /// <summary>What came in since the last snapshot: the branch's new commits, then each submodule's.</summary>
     public string LogsSince(SgRoot root, CheckoutConfig co, SnapshotMeta? prev, SnapshotInfo info)
     {
-        if (prev == null || prev.Commit.Length == 0 || prev.Commit == info.Commit) return "";
-        var repo = Repo(root, co);
-        if (!repo.IsAncestor(prev.Commit, info.Commit))
-            return $"== root: the server's history of {Branch(co)} was rewritten since {Rev.Short(prev.Commit)}\n";
-        var r = repo.Run("log", "--first-parent", "-n", "30", "--format=%H%x1f%an%x1f%s", prev.Commit + ".." + info.Commit);
-        if (!r.Ok) return "";
+        if (prev == null) return "";
         var sb = new StringBuilder();
-        sb.Append("== root ").Append(Rev.Short(prev.Commit)).Append("..").Append(Rev.Short(info.Commit)).Append('\n');
+        if (prev.Commit.Length > 0 && prev.Commit != info.Commit)
+            LogBetween(Repo(root, co), "root", Branch(co), prev.Commit, info.Commit, sb);
+        foreach (var e in info.Externals)
+        {
+            if (!prev.ExternalCommits.TryGetValue(e.Rel, out var was) || was == e.Commit) continue;
+            LogBetween(new GitRepo(root.Config.GitExe, PathUtil.Join(co.Path, e.Rel), root.Log), e.Rel, e.Rel, was, e.Commit, sb);
+        }
+        return sb.ToString();
+    }
+
+    static void LogBetween(GitRepo repo, string label, string what, string from, string to, StringBuilder sb)
+    {
+        if (!repo.IsAncestor(from, to))
+        {
+            sb.Append($"== {label}: moved from {Rev.Short(from)} to {Rev.Short(to)}, which is not further along the history of {what}\n");
+            return;
+        }
+        var r = repo.Run("log", "--first-parent", "-n", "30", "--format=%H%x1f%an%x1f%s", from + ".." + to);
+        if (!r.Ok) return;
+        sb.Append("== ").Append(label).Append(' ').Append(Rev.Short(from)).Append("..").Append(Rev.Short(to)).Append('\n');
         foreach (var line in r.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             var p = line.TrimEnd('\r').Split('\x1f');
             if (p.Length < 3) continue;
             sb.Append(Rev.Short(p[0])).Append(' ').Append(p[1]).Append(": ").Append(p[2].Trim()).Append('\n');
         }
-        return sb.ToString();
     }
 
     /// <summary>
     /// ls-remote says where the branch is on the server without fetching anything. Only when it moved is
-    /// it fetched, to count what came in and to know its height.
+    /// it fetched, to count what came in and to know its height. A switched submodule is asked the same
+    /// about its branch; a pinned one moves only when the clone's branch pins it elsewhere.
     /// </summary>
     public RemoteCheckResult RemoteCheck(SgRoot root, CheckoutConfig co, SnapshotMeta snapshot, bool countCommits)
     {
-        var repo = Repo(root, co);
-        var entry = new RemoteEntry { Rel = "", Url = co.Url, Snapshot = snapshot.Revision, Server = snapshot.Revision };
-        var r = LsRemoteHeads(root, co.Path, Remote(co), Branch(co));
-        var sha = r.Ok ? r.StdOut.Split('\t', '\n')[0].Trim() : "";
-        if (!r.Ok) throw new SgException($"git ls-remote {Remote(co)} failed in {co.Path}: " + r.StdErr.Trim());
-        if (sha.Length > 0 && !sha.Equals(snapshot.Commit, StringComparison.OrdinalIgnoreCase))
+        var res = new RemoteCheckResult { Checkout = co.Name };
+        foreach (var unit in Units(root, co))
         {
-            Fetch(root, co);
-            var now = repo.Rev(Tracking(co)) ?? sha;
-            entry.Server = Math.Max(repo.Height(now), snapshot.Revision + 1);
-            if (countCommits)
-                entry.Commits = Math.Max(1, snapshot.Commit.Length > 0 && repo.Rev(snapshot.Commit) != null
-                    ? repo.Count($"{snapshot.Commit}..{now}")
-                    : 1);
+            if (unit.Pinned) continue;
+            var isRoot = unit.Wc.Length == 0;
+            var snapRev = isRoot ? snapshot.Revision : snapshot.Externals.GetValueOrDefault(unit.Wc);
+            var snapCommit = isRoot ? snapshot.Commit : snapshot.ExternalCommits.GetValueOrDefault(unit.Wc, "");
+            var entry = new RemoteEntry { Rel = unit.Wc, Url = unit.Location, Snapshot = snapRev, Server = snapRev };
+            var r = LsRemoteHeads(root, unit.Repo.Path, unit.Remote, unit.Branch);
+            if (!r.Ok)
+            {
+                if (isRoot) throw new SgException($"git ls-remote {unit.Remote} failed in {co.Path}: " + r.StdErr.Trim());
+                root.Log.Warn($"git ls-remote {unit.Remote} failed in {unit.Wc}: " + FirstLine(r.StdErr));
+                continue;
+            }
+            var sha = r.StdOut.Split('\t', '\n')[0].Trim();
+            if (sha.Length > 0 && !sha.Equals(snapCommit, StringComparison.OrdinalIgnoreCase))
+            {
+                unit.Fetch();
+                var now = unit.Repo.Rev(unit.TrackingRef) ?? sha;
+                entry.Server = Math.Max(unit.Repo.Height(now), snapRev + 1);
+                if (countCommits)
+                    entry.Commits = Math.Max(1, snapCommit.Length > 0 && unit.Repo.Rev(snapCommit) != null
+                        ? unit.Repo.Count($"{snapCommit}..{now}")
+                        : 1);
+            }
+            res.Entries.Add(entry);
         }
-        return new RemoteCheckResult { Checkout = co.Name, Entries = [entry] };
+        return res;
     }
 
     static ProcResult LsRemoteHeads(SgRoot root, string cwd, string remote, string? branch)
@@ -643,14 +844,21 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     // ---- local changes ----
 
     /// <summary>
-    /// git status, in svn's words. A staged new file is added, a staged removal deleted, a file gone from
-    /// disk without git being told is missing, an untracked one unversioned, one git cannot merge is
-    /// conflicted. A rename is its two halves: the new path added, the old one deleted. Untracked files
-    /// are listed one by one, so a folder of them never brings along what .gitignore keeps out of it.
+    /// git status, in svn's words, in the clone and in every submodule, each change with the repository
+    /// it belongs to. A staged new file is added, a staged removal deleted, a file gone from disk without
+    /// git being told is missing, an untracked one unversioned, one git cannot merge is conflicted. A
+    /// rename is its two halves: the new path added, the old one deleted. Untracked files are listed one
+    /// by one, so a folder of them never brings along what .gitignore keeps out of it. A submodule at
+    /// another commit than its parent pins is not a change of the parent's: that is sync's to settle.
     /// </summary>
-    public List<CheckoutChange> Changes(SgRoot root, CheckoutConfig co)
+    public List<CheckoutChange> Changes(SgRoot root, CheckoutConfig co) => ChangesIn(Units(root, co));
+
+    static List<CheckoutChange> ChangesIn(List<GitUnit> units) =>
+        Fan.Map(units, StatusOf).SelectMany(x => x).OrderBy(c => c.Path, StringComparer.OrdinalIgnoreCase).ToList();
+
+    static List<CheckoutChange> StatusOf(GitUnit unit)
     {
-        var r = Repo(root, co).Run("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames");
+        var r = unit.Repo.Run("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=all");
         r.EnsureOk();
         var res = new List<CheckoutChange>();
         var parts = r.StdOut.Split('\0');
@@ -673,15 +881,19 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
                 _ => "modified",
             };
             if (item == "ignored") continue;
-            res.Add(new CheckoutChange { Path = path, Item = item, Props = "none", Wc = "" });
+            res.Add(new CheckoutChange { Path = unit.Full(path), Item = item, Props = "none", Wc = unit.Wc });
         }
-        return res.OrderBy(c => c.Path, StringComparer.OrdinalIgnoreCase).ToList();
+        return res;
     }
 
     public int LocalEditCount(SgRoot root, CheckoutConfig co) => Changes(root, co).Count;
 
-    public CheckoutScan Scan(SgRoot root, CheckoutConfig co) =>
-        new(Changes(root, co).Where(c => c.Versioned).Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase), new List<string>());
+    public CheckoutScan Scan(SgRoot root, CheckoutConfig co)
+    {
+        var units = Units(root, co);
+        return new(ChangesIn(units).Where(c => c.Versioned).Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            units.Skip(1).Select(u => u.Wc).ToList());
+    }
 
     public HashSet<string> LocalEditsOn(SgRoot root, CheckoutConfig co, IReadOnlyList<string> paths)
     {
@@ -689,30 +901,40 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         return Scan(root, co).LocalEdits.Where(wanted.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    public bool HasConflicts(SgRoot root, CheckoutConfig co) => Repo(root, co).Conflicted().Count > 0;
+    public bool HasConflicts(SgRoot root, CheckoutConfig co) => Units(root, co).Any(u => u.Repo.Conflicted().Count > 0);
 
     /// <summary>
     /// What would make a commit from the clone send more, or other, than it was asked to: HEAD off the
     /// branch that tracks the server, a replay half done, or commits of the clone's own that the server
-    /// does not have yet, which a push of the branch would carry along unasked.
+    /// does not have yet, which a push of the branch would carry along unasked. The same of every
+    /// submodule, where a pinned one has to be at the commit its parent pins.
     /// </summary>
     public List<string> WriteBlockers(SgRoot root, CheckoutConfig co)
     {
-        var repo = Repo(root, co);
         var res = new List<string>();
-        var (local, remote, branch) = repo.Tracking();
-        if (local == null)
-            res.Add($"HEAD is detached in {co.Path}. Check out the branch that tracks {Remote(co)}/{Branch(co)}.");
-        else if (remote != Remote(co) || branch != Branch(co))
-            res.Add($"the clone is on {local}, which does not track {Remote(co)}/{Branch(co)}. Check that branch out again.");
-        if (repo.InProgress() is { } op) res.Add($"a {op} is in progress in the clone. Finish or abort it with git first.");
-        var tracking = repo.Rev(Tracking(co));
-        var head = repo.Rev("HEAD");
-        if (local != null && tracking != null && head != null && head != tracking)
+        foreach (var unit in Units(root, co))
         {
+            var repo = unit.Repo;
+            var (local, remote, branch) = unit.Tracking;
+            var head = repo.Rev("HEAD");
+            if (unit.Wc.Length == 0)
+            {
+                if (local == null)
+                    res.Add($"HEAD is detached in {co.Path}. Check out the branch that tracks {Remote(co)}/{Branch(co)}.");
+                else if (remote != Remote(co) || branch != Branch(co))
+                    res.Add($"the clone is on {local}, which does not track {Remote(co)}/{Branch(co)}. Check that branch out again.");
+            }
+            else if (unit.Pinned && local != null)
+                res.Add($"{unit.Wc} is on branch {local}, which tracks no remote branch. Check out the commit its parent pins, or a branch that tracks one.");
+            else if (unit.Pinned && head != unit.Pin)
+                res.Add($"{unit.Wc} is at {Rev.Short(head ?? "")}, not at {Rev.Short(unit.Pin)}, the commit its parent pins. Sync moves it back.");
+            if (repo.InProgress() is { } op) res.Add($"a {op} is in progress in {(unit.Wc.Length == 0 ? "the clone" : unit.Wc)}. Finish or abort it with git first.");
+            if (unit.Pinned || local == null || head == null) continue;
+            var tracking = repo.Rev($"refs/remotes/{remote}/{branch}");
+            if (tracking == null || head == tracking) continue;
             var ahead = repo.Count(tracking + ".." + head);
             if (ahead > 0)
-                res.Add($"the clone has {ahead} commit(s) {Remote(co)}/{Branch(co)} does not. Push them or take them back out with git first, so a commit from sg sends only what it was asked to.");
+                res.Add($"{(unit.Wc.Length == 0 ? "the clone" : unit.Wc)} has {ahead} commit(s) {remote}/{branch} does not. Push them or take them back out with git first, so a commit from sg sends only what it was asked to.");
         }
         return res;
     }
@@ -720,13 +942,15 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     public void Add(SgRoot root, CheckoutConfig co, IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) return;
-        Repo(root, co).WithPaths(["add", "-f"], paths).EnsureOk();
+        foreach (var (unit, rels) in GitSubmodules.ByUnit(Units(root, co), paths))
+            unit.Repo.WithPaths(["add", "-f"], rels).EnsureOk();
     }
 
     public void Remove(SgRoot root, CheckoutConfig co, IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) return;
-        Repo(root, co).WithPaths(["rm", "-r", "-f", "-q", "--ignore-unmatch"], paths).EnsureOk();
+        foreach (var (unit, rels) in GitSubmodules.ByUnit(Units(root, co), paths))
+            unit.Repo.WithPaths(["rm", "-r", "-f", "-q", "--ignore-unmatch"], rels).EnsureOk();
         foreach (var p in paths)
         {
             var abs = PathUtil.Join(co.Path, p);
@@ -735,21 +959,24 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     }
 
     /// <summary>
-    /// Back to what the clone's HEAD holds, which is what the server has. A file the server does not have
-    /// is only unstaged and stays on disk, the way svn revert leaves an added file behind.
+    /// Back to what the repository's HEAD holds, which is what the server has. A file the server does
+    /// not have is only unstaged and stays on disk, the way svn revert leaves an added file behind.
     /// </summary>
     public string? Revert(SgRoot root, CheckoutConfig co, IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) return null;
-        var repo = Repo(root, co);
         var said = new List<string>();
-        var unstage = repo.WithPaths(["reset", "-q", "HEAD"], paths);
-        if (!unstage.Ok) said.Add(unstage.StdErr.Trim());
-        var inHead = InTree(repo, "HEAD", paths);
-        if (inHead.Count > 0)
+        foreach (var (unit, rels) in GitSubmodules.ByUnit(Units(root, co), paths))
         {
-            var restore = repo.WithPaths(["checkout", "HEAD"], inHead);
-            if (!restore.Ok) said.Add(restore.StdErr.Trim());
+            var repo = unit.Repo;
+            var unstage = repo.WithPaths(["reset", "-q", "HEAD"], rels);
+            if (!unstage.Ok) said.Add(unstage.StdErr.Trim());
+            var inHead = InTree(repo, "HEAD", rels);
+            if (inHead.Count > 0)
+            {
+                var restore = repo.WithPaths(["checkout", "HEAD"], inHead);
+                if (!restore.Ok) said.Add(restore.StdErr.Trim());
+            }
         }
         return said.Count == 0 ? null : string.Join("\n", said);
     }
@@ -758,7 +985,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     static List<string> InTree(GitRepo repo, string commit, IReadOnlyCollection<string> paths)
     {
         var files = ListUnder(repo, ["ls-tree", "-r", "-z", "--name-only", commit], paths);
-        return paths.Where(p => files.Any(f => PathUtil.IsUnder(f, p))).ToList();
+        return paths.Where(p => p == "." ? files.Count > 0 : files.Any(f => PathUtil.IsUnder(f, p))).ToList();
     }
 
     /// <summary>
@@ -783,18 +1010,33 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         return tab < 0 ? line : line[(tab + 1)..];
     }
 
+    /// <summary>
+    /// git diff against HEAD, in the repository the path belongs to, with paths written from the
+    /// checkout root. A folder with submodules inside it takes in their diffs too.
+    /// </summary>
     public string DiffLocal(SgRoot root, CheckoutConfig co, string path)
     {
-        var args = new List<string> { "diff", "--no-color", "HEAD" };
-        if (path.Length > 0 && path != ".") { args.Add("--"); args.Add(":(literal)" + path); }
-        var r = Repo(root, co).Run(args);
-        return r.Ok ? r.StdOut : r.StdErr;
+        var units = Units(root, co);
+        var at = path.Length == 0 || path == "." ? "" : PathUtil.Rel(path);
+        var owner = GitSubmodules.Innermost(units, at);
+        var sb = new StringBuilder();
+        foreach (var unit in units.Where(u => u == owner || (u.Wc.Length > owner.Wc.Length && PathUtil.IsUnder(u.Wc, at))))
+        {
+            var prefix = unit.Wc.Length == 0 ? "" : unit.Wc + "/";
+            var args = new List<string> { "diff", "--no-color", "--ignore-submodules=all", "--src-prefix=a/" + prefix, "--dst-prefix=b/" + prefix, "HEAD" };
+            var rel = unit == owner ? unit.RelOf(at) : "";
+            if (rel.Length > 0) { args.Add("--"); args.Add(":(literal)" + rel); }
+            var r = unit.Repo.Run(args);
+            sb.Append(r.Ok ? r.StdOut : r.StdErr);
+        }
+        return sb.ToString();
     }
 
     /// <summary>The server's version, written the way the clone would write it to disk, so a diff against the file lines up.</summary>
     public string BaseText(SgRoot root, CheckoutConfig co, string path)
     {
-        var r = Repo(root, co).Run("cat-file", "--filters", "HEAD:" + PathUtil.Rel(path));
+        var unit = GitSubmodules.Innermost(Units(root, co), path);
+        var r = unit.Repo.Run("cat-file", "--filters", "HEAD:" + unit.RelOf(path));
         return r.Ok ? r.StdOut : "";
     }
 
@@ -813,76 +1055,147 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         File.WriteAllText(file, sb.ToString());
     }
 
-    /// <summary>The chosen changes staged in the clone, then one commit of them on the server branch, pushed.</summary>
-    public CommitId CommitChanges(SgRoot root, CheckoutConfig co, string wc, IReadOnlyList<CheckoutChange> changes, string message)
+    /// <summary>
+    /// The chosen changes staged in their repository, then one commit of them on its server branch,
+    /// pushed, with the new commits of the submodules it pins.
+    /// </summary>
+    public CommitId CommitChanges(SgRoot root, CheckoutConfig co, string wc, IReadOnlyList<CheckoutChange> changes, string message,
+        IReadOnlyDictionary<string, string> pins)
     {
-        var paths = changes.Select(c => c.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        Repo(root, co).WithPaths(["add", "-A"], paths).EnsureOk();
-        return CommitPaths(root, co, paths, message);
+        var unit = GitSubmodules.Of(Units(root, co), wc);
+        var paths = changes.Select(c => unit.RelOf(c.Path)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (paths.Count > 0) unit.Repo.WithPaths(["add", "-A"], paths).EnsureOk();
+        return CommitIn(root, unit, paths, PinsIn(unit, pins), message);
+    }
+
+    /// <summary>Submodule pins keyed by their path from the checkout root, as paths in the repository that pins them.</summary>
+    static Dictionary<string, string> PinsIn(GitUnit unit, IReadOnlyDictionary<string, string> pins) =>
+        pins.ToDictionary(kv => unit.RelOf(kv.Key), kv => kv.Value, StringComparer.Ordinal);
+
+    /// <summary>
+    /// The working copies to commit, submodules before what pins them. A pinned submodule's new commit
+    /// is only half a change until its parent pins it, so the parent commits too, and so on up while
+    /// the parent is itself pinned. A switched one is pinned by nobody: its parent is left alone.
+    /// </summary>
+    public List<(string Wc, string? PinnedIn)> CommitOrder(SgRoot root, CheckoutConfig co, IReadOnlyList<string> wcs)
+    {
+        if (wcs.All(w => w.Length == 0)) return wcs.Select(w => (w, (string?)null)).ToList();
+        var units = Units(root, co);
+        var want = new Dictionary<string, (string? PinnedIn, int Depth)>(StringComparer.OrdinalIgnoreCase);
+        int Depth(GitUnit u) => u.Parent == null ? 0 : Depth(u.Parent) + 1;
+        foreach (var wc in wcs)
+        {
+            var u = GitSubmodules.Of(units, wc);
+            if (!want.ContainsKey(wc)) want[wc] = (null, Depth(u));
+            var key = wc;
+            while (u.Parent != null && u.Pinned && u.Wc.Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                want[key] = (u.Parent.Wc, Depth(u));
+                key = u.Parent.Wc;
+                if (!want.ContainsKey(key)) want[key] = (null, Depth(u.Parent));
+                u = u.Parent;
+            }
+        }
+        return want.OrderByDescending(kv => kv.Value.Depth).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv => (kv.Key, kv.Value.PinnedIn)).ToList();
     }
 
     /// <summary>
-    /// One commit on the server branch holding exactly what the clone's index holds for these paths, and
-    /// nothing else of the clone: parent the server's tip, tree the server's tree with these paths as
-    /// staged. Other staged or unstaged edits stay where they are, the way svn commits only its targets.
-    /// A push the server turns down because someone else got there first is made again on top of theirs,
-    /// unless they touched the same files: that is svn's "out of date", and it stops.
+    /// One commit on the repository's server branch holding exactly what its index holds for these
+    /// paths, and nothing else of it: parent the server's tip, tree the server's tree with these paths
+    /// as staged and the submodules at their new pins. Other staged or unstaged edits stay where they
+    /// are, the way svn commits only its targets. A push the server turns down because someone else got
+    /// there first is made again on top of theirs, unless they touched the same files: that is svn's
+    /// "out of date", and it stops. A pinned submodule's files are those of the commit its parent pins,
+    /// which need not be its branch's newest, so a file changed on the branch since then is out of date
+    /// from the start.
     /// </summary>
-    CommitId CommitPaths(SgRoot root, CheckoutConfig co, IReadOnlyCollection<string> targets, string message)
+    static CommitId CommitIn(SgRoot root, GitUnit unit, IReadOnlyCollection<string> targets, IReadOnlyDictionary<string, string> pins, string message)
     {
-        var repo = Repo(root, co);
-        var tracking = Tracking(co);
+        var repo = unit.Repo;
+        var tracking = unit.TrackingRef;
+        var at = unit.Remote + "/" + unit.Branch;
+        if (unit.Pinned || repo.Rev(tracking) == null) unit.Fetch();
+        var basis = unit.Pinned ? repo.Rev("HEAD") : null;
         for (var attempt = 0; ; attempt++)
         {
-            var parent = repo.Rev(tracking) ?? throw new SgException($"{Remote(co)}/{Branch(co)} is not in the clone. Sync first.");
-            var tree = TreeWith(root, repo, parent, targets);
-            if (tree == repo.TreeOf(parent)) throw new SgException("nothing to commit: those paths hold what the server has already");
+            var parent = repo.Rev(tracking) ?? throw new SgException($"{at} is not in {unit.Label}. Sync first.");
+            var tree = TreeWith(root, repo, parent, targets, pins);
+            if (tree == repo.TreeOf(parent))
+            {
+                // Pins the branch has already, or a submodule change an earlier push sent without its
+                // parent's pin: what is wanted is on the server, and that commit is the one to pin.
+                if (unit.Pinned || targets.Count == 0) return new CommitId(repo.Height(parent), parent);
+                throw new SgException("nothing to commit: those paths hold what the server has already");
+            }
+            if (basis != null && basis != parent)
+            {
+                var moved = ListUnder(repo, ["diff", "--name-only", "-z", basis, parent], targets);
+                if (moved.Count > 0)
+                    throw new SgException($"out of date: {Few(moved.Select(unit.Full).ToList())} changed on {at} after {Rev.Short(basis)}, the commit {unit.Wc} is pinned at. "
+                                          + $"Switch {unit.Wc} to {unit.Branch} in Edit checkout, sync, then commit again.");
+            }
             var commit = repo.CommitTree(tree, [parent], message.TrimEnd() + "\n");
-            var push = repo.Run("push", "--porcelain", Remote(co), $"{commit}:refs/heads/{Branch(co)}");
+            var push = repo.Run("push", "--porcelain", unit.Remote, $"{commit}:refs/heads/{unit.Branch}");
             if (push.Ok)
             {
                 repo.Run("update-ref", "-m", "sg: pushed", tracking, commit);
-                MoveHead(root, repo, co, parent, commit);
+                if (MoveHead(root, unit, parent, commit))
+                    foreach (var (rel, pin) in pins) repo.Run("update-index", "--cacheinfo", $"160000,{pin},{rel}");
                 return new CommitId(repo.Height(commit), commit);
             }
             var said = (push.StdErr + "\n" + push.StdOut).Trim();
             var behind = said.Contains("[rejected]", StringComparison.Ordinal) || said.Contains("non-fast-forward", StringComparison.Ordinal)
                          || said.Contains("fetch first", StringComparison.Ordinal);
-            if (!behind || attempt >= 2) throw new SgException($"git push to {Remote(co)}/{Branch(co)} failed: " + said);
+            if (!behind || attempt >= 2) throw new SgException($"git push to {at} failed: " + said);
 
-            Fetch(root, co);
+            unit.Fetch();
             var now = repo.Rev(tracking)!;
-            var touched = ListUnder(repo, ["diff", "--name-only", "-z", parent, now], targets);
+            var touched = ListUnder(repo, ["diff", "--name-only", "-z", parent, now], targets.Concat(pins.Keys).ToList());
             if (touched.Count > 0)
-                throw new SgException("out of date: " + string.Join(", ", touched.Take(5)) + (touched.Count > 5 ? $" and {touched.Count - 5} more" : "")
-                                      + $" changed on the server since the last sync. Sync {co.Name}, then commit again.");
-            root.Log.Info($"{Remote(co)}/{Branch(co)} moved on; committing on top of it again");
+                throw new SgException($"out of date: {Few(touched.Select(unit.Full).ToList())} changed on the server since the last sync. Sync, then commit again.");
+            root.Log.Info($"{at} moved on; committing on top of it again");
         }
     }
 
-    /// <summary>The parent's tree with the index's version of every path under the targets, built in an index of its own.</summary>
-    static string TreeWith(SgRoot root, GitRepo repo, string parent, IReadOnlyCollection<string> targets)
+    static string Few(List<string> paths) =>
+        string.Join(", ", paths.Take(5)) + (paths.Count > 5 ? $" and {paths.Count - 5} more" : "");
+
+    /// <summary>
+    /// The parent's tree with the index's version of every path under the targets, and every pin as a
+    /// submodule entry at its new commit, built in an index of its own.
+    /// </summary>
+    static string TreeWith(SgRoot root, GitRepo repo, string parent, IReadOnlyCollection<string> targets, IReadOnlyDictionary<string, string> pins)
     {
         var idx = root.NewTempFile(".index");
         var env = new Dictionary<string, string> { ["GIT_INDEX_FILE"] = idx };
         try
         {
             repo.Run(["read-tree", parent], null, env).EnsureOk();
-            var staged = ListUnder(repo, ["ls-files", "-s", "-z"], targets);
-            var inIndex = new HashSet<string>(StringComparer.Ordinal);
             var sb = new StringBuilder();
-            foreach (var line in staged)
+            if (targets.Count > 0)
             {
-                // "<mode> <sha> <stage>\t<path>"
-                var tab = line.IndexOf('\t');
-                var meta = line[..tab].Split(' ');
-                var path = line[(tab + 1)..];
-                if (meta.Length < 3 || meta[2] != "0") throw new SgException(path + " is in conflict in the clone. Settle it first.");
-                inIndex.Add(path);
-                sb.Append(meta[0]).Append(' ').Append(meta[1]).Append('\t').Append(path).Append('\0');
+                var staged = ListUnder(repo, ["ls-files", "-s", "-z"], targets);
+                var inIndex = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var line in staged)
+                {
+                    // "<mode> <sha> <stage>\t<path>"
+                    var tab = line.IndexOf('\t');
+                    var meta = line[..tab].Split(' ');
+                    var path = line[(tab + 1)..];
+                    if (meta.Length < 3 || meta[2] != "0") throw new SgException(path + " is in conflict in the clone. Settle it first.");
+                    if (meta[0] == "160000") continue;   // a submodule's pin moves only with a commit of it
+                    inIndex.Add(path);
+                    sb.Append(meta[0]).Append(' ').Append(meta[1]).Append('\t').Append(path).Append('\0');
+                }
+                foreach (var line in ListUnder(repo, ["ls-tree", "-r", "-z", parent], targets))
+                {
+                    var path = TreePath(line);
+                    if (!line.StartsWith("160000 ", StringComparison.Ordinal) && !inIndex.Contains(path))
+                        sb.Append("0 ").Append(new string('0', 40)).Append('\t').Append(path).Append('\0');
+                }
             }
-            foreach (var path in ListUnder(repo, ["ls-tree", "-r", "-z", "--name-only", parent], targets))
-                if (!inIndex.Contains(path)) sb.Append("0 ").Append(new string('0', 40)).Append('\t').Append(path).Append('\0');
+            foreach (var (rel, pin) in pins) sb.Append("160000 ").Append(pin).Append('\t').Append(rel).Append('\0');
             if (sb.Length > 0) repo.Run(["update-index", "-z", "--index-info"], Encoding.UTF8.GetBytes(sb.ToString()), env).EnsureOk();
             return repo.Run(["write-tree"], null, env).EnsureOk().StdOut.Trim();
         }
@@ -893,41 +1206,47 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     }
 
     /// <summary>
-    /// Puts the clone on the commit it just pushed. When HEAD was the commit's parent, the branch simply
-    /// moves: the index already holds the committed files, so they read as unchanged and every other edit
-    /// stays an edit. When the server moved first, the clone takes the whole way through a fast-forward.
+    /// Puts the repository on the commit it just pushed, and says whether it got there. When HEAD was
+    /// the commit's parent, it simply moves: the index already holds the committed files, so they read
+    /// as unchanged and every other edit stays an edit. Otherwise it takes the whole way through a
+    /// fast-forward: the server moved first, or a pinned submodule's pin was behind its branch. A clone
+    /// off its branch, or a submodule off the state the commit was made for, is left alone.
     /// </summary>
-    static void MoveHead(SgRoot root, GitRepo repo, CheckoutConfig co, string parent, string commit)
+    static bool MoveHead(SgRoot root, GitUnit unit, string parent, string commit)
     {
+        var repo = unit.Repo;
         var (local, remote, branch) = repo.Tracking();
-        if (local == null || remote != Remote(co) || branch != Branch(co)) return;
+        if (unit.Pinned ? local != null : local == null || remote != unit.Remote || branch != unit.Branch) return false;
         var head = repo.Rev("HEAD");
         if (head == parent)
         {
-            repo.Ok("update-ref", "-m", "sg: commit to " + Remote(co) + "/" + Branch(co), "HEAD", commit, parent);
-            return;
+            repo.Ok("update-ref", "-m", $"sg: commit to {unit.Remote}/{unit.Branch}", "HEAD", commit, parent);
+            return true;
         }
         var res = new UpstreamUpdate();
         if (head != null && repo.IsAncestor(head, commit)) FastForward(repo, commit, res);
         foreach (var w in res.Warnings) root.Log.Warn(w);
+        return repo.Rev("HEAD") == commit;
     }
 
     // ---- push ----
 
     public void FillRepositories(SgRoot root, CheckoutConfig co, List<PushGroup> groups)
     {
-        foreach (var g in groups) g.ReposRoot = co.ReposRoot;
+        var units = Units(root, co);
+        foreach (var g in groups) g.ReposRoot = GitSubmodules.Of(units, g.Wc).Url;
     }
 
     /// <summary>
-    /// Carries the branch's files into the clone and stages them: deletions removed, the new content
-    /// written. The bytes come across as a commit of the store's that holds nothing but those files, which
-    /// the clone fetches: its git then writes them the way it writes any checkout, and stages exactly the
-    /// blobs the branch has.
+    /// Carries the branch's files into the repository they belong to and stages them: deletions
+    /// removed, the new content written. The bytes come across as a commit of the store's that holds
+    /// nothing but those files, which the repository fetches: its git then writes them the way it
+    /// writes any checkout, and stages exactly the blobs the branch has.
     /// </summary>
     public void WriteInto(SgRoot root, CheckoutConfig co, PushGroup g, string tip)
     {
-        var repo = Repo(root, co);
+        var unit = GitSubmodules.Of(Units(root, co), g.Wc);
+        var repo = unit.Repo;
         var renames = g.Entries.Where(e => e.Status == 'R' && e.OldPath != null).ToList();
         var adds = g.Entries.Where(e => e.Status == 'A').Select(e => e.Path).ToList();
         var mods = g.Entries.Where(e => e.Status is 'M' or 'T').Select(e => e.Path).ToList();
@@ -938,26 +1257,28 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         g.Targets = new List<string>();
         if (gone.Count > 0)
         {
-            repo.WithPaths(["rm", "-f", "-q", "--ignore-unmatch"], gone).EnsureOk();
-            g.Targets.AddRange(gone);
+            var rels = gone.Select(unit.RelOf).ToList();
+            repo.WithPaths(["rm", "-f", "-q", "--ignore-unmatch"], rels).EnsureOk();
+            g.Targets.AddRange(rels);
         }
         if (write.Count > 0)
         {
-            var carrier = Carrier(root, co, tip, write);
+            var carrier = Carrier(root, co, unit, tip, write);
             repo.Run("fetch", "--no-tags", "--quiet", root.StorePath, OutgoingRef(co)).EnsureOk();
-            repo.WithPaths(["checkout", carrier], write).EnsureOk();
-            g.Targets.AddRange(write);
+            var rels = write.Select(unit.RelOf).ToList();
+            repo.WithPaths(["checkout", carrier], rels).EnsureOk();
+            g.Targets.AddRange(rels);
         }
     }
 
-    /// <summary>A parentless commit of the store holding the tip's version of these files and nothing else.</summary>
-    static string Carrier(SgRoot root, CheckoutConfig co, string tip, IReadOnlyList<string> paths)
+    /// <summary>A parentless commit of the store holding the tip's version of these files and nothing else, at their paths in the repository.</summary>
+    static string Carrier(SgRoot root, CheckoutConfig co, GitUnit unit, string tip, IReadOnlyList<string> paths)
     {
         var git = root.Git;
         var entries = new List<(string, string, string)>();
         foreach (var chunk in paths.Chunk(100))
             foreach (var e in git.LsTree(tip, chunk).Where(e => e.Type == "blob"))
-                entries.Add((e.Mode, e.Sha, e.Path));
+                entries.Add((e.Mode, e.Sha, unit.RelOf(e.Path)));
         var idx = root.NewTempFile(".index");
         try
         {
@@ -973,21 +1294,27 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         }
     }
 
-    public CommitId CommitWritten(SgRoot root, CheckoutConfig co, PushGroup g, string message) =>
-        CommitPaths(root, co, g.Targets, message);
+    public CommitId CommitWritten(SgRoot root, CheckoutConfig co, PushGroup g, string message)
+    {
+        var unit = GitSubmodules.Of(Units(root, co), g.Wc);
+        return CommitIn(root, unit, g.Targets, PinsIn(unit, g.Pins), message);
+    }
 
     /// <summary>
-    /// Back to the clone's HEAD, which is where this step started: a step that went through moved HEAD
-    /// with it, so an earlier batch that reached the server stays. restoreFrom is the store's name for the
-    /// same content, and is not needed here.
+    /// Back to the repository's HEAD, which is where this step started: a step that went through moved
+    /// HEAD with it, so an earlier batch that reached the server stays. restoreFrom is the store's name
+    /// for the same content, and is not needed here.
     /// </summary>
     public void Rollback(SgRoot root, CheckoutConfig co, PushGroup g, string restoreFrom, List<string> warnings)
     {
-        var repo = Repo(root, co);
         var label = g.Wc.Length == 0 ? "root" : g.Wc;
         try
         {
-            var all = g.Targets.Concat(g.Entries.Select(e => e.Path)).Concat(g.Entries.Where(e => e.OldPath != null).Select(e => e.OldPath!))
+            var unit = GitSubmodules.Of(Units(root, co), g.Wc);
+            var repo = unit.Repo;
+            var all = g.Targets
+                .Concat(g.Entries.Select(e => unit.RelOf(e.Path)))
+                .Concat(g.Entries.Where(e => e.OldPath != null).Select(e => unit.RelOf(e.OldPath!)))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (all.Count == 0) return;
             repo.WithPaths(["reset", "-q", "HEAD"], all);
@@ -995,33 +1322,41 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             if (inHead.Count > 0) repo.WithPaths(["checkout", "HEAD"], inHead).EnsureOk();
             foreach (var p in all.Except(inHead, StringComparer.OrdinalIgnoreCase))
             {
-                var abs = PathUtil.Join(co.Path, p);
+                var abs = PathUtil.Join(repo.Path, p);
                 if (File.Exists(abs)) File.Delete(abs);
             }
         }
         catch (Exception ex) when (ex is SgException or IOException or UnauthorizedAccessException)
         {
-            warnings.Add($"rollback of {label} hit a problem: {ex.Message}. Check 'git status' in {co.Path}.");
+            warnings.Add($"rollback of {label} hit a problem: {ex.Message}. Check 'git status' in {PathUtil.Join(co.Path, g.Wc)}.");
         }
     }
 
     // ---- history ----
 
+    /// <summary>The clone and every submodule, each with where it is and where the snapshot has it.</summary>
     public List<HistorySource> HistorySources(SgRoot root, CheckoutConfig co)
     {
-        var repo = Repo(root, co);
-        var head = repo.Rev("HEAD") ?? "";
         var snapSha = root.Git.RefSha(root.SnapshotRef(co));
         var meta = snapSha != null ? SnapshotMeta.Parse(root.Git.Body(snapSha)) : null;
-        return [new HistorySource("", co.Url, co.ReposRoot, head.Length > 0 ? repo.Height(head) : 0, head, meta?.Revision)];
+        return Units(root, co).Select(u =>
+        {
+            var head = u.Repo.Rev("HEAD") ?? "";
+            long? snap = meta == null ? null : u.Wc.Length == 0 ? meta.Revision : meta.Externals.TryGetValue(u.Wc, out var r) ? r : null;
+            return new HistorySource(u.Wc, u.Location, u.Url, head.Length > 0 ? u.Repo.Height(head) : 0, head, snap);
+        }).ToList();
     }
 
-    /// <summary>The server branch's first-parent history, newest first, fetched fresh the way svn log reads the server.</summary>
+    /// <summary>
+    /// The server branch's first-parent history, newest first, fetched fresh the way svn log reads the
+    /// server. A pinned submodule's is the branch its commits go to, which is where its pins come from.
+    /// </summary>
     public List<LogRevision> Log(SgRoot root, CheckoutConfig co, HistorySource source, int limit)
     {
-        Fetch(root, co);
-        var repo = Repo(root, co);
-        var tip = repo.Rev(Tracking(co)) ?? throw new SgException($"{Remote(co)}/{Branch(co)} is not in the clone.");
+        var unit = GitSubmodules.Of(Units(root, co), source.Wc);
+        unit.Fetch();
+        var repo = unit.Repo;
+        var tip = repo.Rev(unit.TrackingRef) ?? throw new SgException($"{unit.Remote}/{unit.Branch} is not in {unit.Label}.");
         var list = repo.Log(["--first-parent", "-n", limit.ToString(System.Globalization.CultureInfo.InvariantCulture), tip]);
         var height = repo.Height(tip);
         for (var i = 0; i < list.Count; i++) list[i].Revision = height - i;
@@ -1029,29 +1364,30 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     }
 
     public string RevisionDiff(SgRoot root, CheckoutConfig co, HistorySource source, LogRevision rev, string? folder) =>
-        Repo(root, co).CommitDiff(rev.Commit, folder);
+        GitSubmodules.Of(Units(root, co), source.Wc).Repo.CommitDiff(rev.Commit, folder);
 
     public string FileAt(SgRoot root, CheckoutConfig co, HistorySource source, LogRevision rev, ChangedPath path, bool before) =>
-        Repo(root, co).FileAt(rev, path, before);
+        GitSubmodules.Of(Units(root, co), source.Wc).Repo.FileAt(rev, path, before);
 
     /// <summary>
-    /// git blame in the clone. In the snapshot's reading it blames the server commit the snapshot holds,
-    /// so its line numbers are the snapshot's; otherwise the file on disk, where a line nobody committed
-    /// yet has no answer.
+    /// git blame in the repository the file belongs to. In the snapshot's reading it blames the server
+    /// commit the snapshot holds for that repository, so its line numbers are the snapshot's; otherwise
+    /// the file on disk, where a line nobody committed yet has no answer.
     /// </summary>
     public List<ServerBlameLine> Blame(SgRoot root, CheckoutConfig co, string path, bool asInSnapshot)
     {
-        var repo = Repo(root, co);
+        var unit = GitSubmodules.Innermost(Units(root, co), path);
         var args = new List<string> { "blame", "--line-porcelain" };
         if (asInSnapshot)
         {
             var snap = root.Git.RefSha(root.SnapshotRef(co));
-            var commit = snap != null ? SnapshotMeta.Parse(root.Git.Body(snap)).Commit : "";
+            var meta = snap != null ? SnapshotMeta.Parse(root.Git.Body(snap)) : null;
+            var commit = meta == null ? "" : unit.Wc.Length == 0 ? meta.Commit : meta.ExternalCommits.GetValueOrDefault(unit.Wc, "");
             if (commit.Length > 0) args.Add(commit);
         }
         args.Add("--");
-        args.Add(PathUtil.Rel(path));
-        var r = repo.Run(args);
+        args.Add(unit.RelOf(path));
+        var r = unit.Repo.Run(args);
         if (!r.Ok) return new();
         return Git.ParseBlame(r.StdOut).Select(l => l.Sha.All(c => c == '0')
             ? new ServerBlameLine(l.Number, 0, "", "")
@@ -1061,27 +1397,105 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     public (LogRevision? Log, string Diff) BlameDetails(SgRoot root, CheckoutConfig co, string path, ServerBlameLine line)
     {
         if (line.Commit.Length == 0) return (null, "");
-        var repo = Repo(root, co);
+        var repo = GitSubmodules.Innermost(Units(root, co), path).Repo;
         var log = repo.Log(["-1", line.Commit]).FirstOrDefault();
         return (log, repo.CommitDiff(line.Commit));
     }
 
     // ---- externals ----
 
-    public List<Ops.ExternalState> Externals(SgRoot root, CheckoutConfig co) => new();
+    /// <summary>
+    /// Every submodule checked out: where it points, and its repository as what is declared, which for a
+    /// git submodule means the commit its parent pins. One on a branch of its own is switched.
+    /// </summary>
+    public List<Ops.ExternalState> Externals(SgRoot root, CheckoutConfig co) =>
+        Units(root, co).Skip(1).Select(u =>
+        {
+            var head = u.Repo.Rev("HEAD") ?? "";
+            return new Ops.ExternalState
+            {
+                Rel = u.Wc,
+                Url = u.Location,
+                Declared = u.Url,
+                ReposRoot = u.Url,
+                Commit = head,
+                Revision = head.Length > 0 ? u.Repo.Height(head) : 0,
+            };
+        }).ToList();
 
-    public UpstreamUpdate SwitchExternal(SgRoot root, CheckoutConfig co, string rel, string url) =>
-        throw new SgException($"{co.Name} is a git checkout; it has no externals to switch.");
+    /// <summary>
+    /// Points one submodule elsewhere, here only: onto a branch of its repository, which it then follows
+    /// the way the clone follows its own, or, given the bare repository, back to the commit its parent
+    /// pins. Nothing is committed; the parent's pin stays what it was.
+    /// </summary>
+    public UpstreamUpdate SwitchExternal(SgRoot root, CheckoutConfig co, string rel, string url)
+    {
+        rel = PathUtil.Rel(rel);
+        if (rel.Length == 0) throw new SgException("the checkout root is not a submodule");
+        var unit = Units(root, co).FirstOrDefault(u => u.Wc.Equals(rel, StringComparison.OrdinalIgnoreCase))
+                   ?? throw new SgException("no such submodule checked out in the checkout: " + rel);
+        var (repoUrl, branch) = GitLocation.Parse(url.Trim());
+        if (!GitSubmodules.SameRepo(repoUrl, unit.Url))
+            throw new SgException($"{rel} stays on its own repository, {unit.Url}. Name one of its branches: {unit.Url}#<branch>");
+        var repo = unit.Repo;
+        if (repo.InProgress() is { } op) throw new SgException($"a {op} is in progress in {rel}. Finish or abort it with git first.");
+        using var _ = root.Lock();
+        var res = new UpstreamUpdate();
+        ProcResult r;
+        if (branch == null)
+        {
+            var pin = unit.Pin;
+            root.Log.Info($"putting {rel} back on {Rev.Short(pin)}, the commit its parent pins");
+            if (repo.Rev(pin) == null) repo.Run("fetch", "--quiet", unit.Remote);
+            r = repo.Run("-c", "submodule.recurse=false", "checkout", "--detach", "--quiet", pin);
+        }
+        else
+        {
+            root.Log.Info($"switching {rel} to {branch}");
+            var remote = unit.Remote;
+            var tracking = $"refs/remotes/{remote}/{branch}";
+            var f = repo.Run("fetch", "--quiet", remote, $"+refs/heads/{branch}:{tracking}");
+            if (!f.Ok) throw new SgException($"{branch} is not on {unit.Url}: " + FirstLine(f.StdErr));
+            if (repo.Rev("refs/heads/" + branch) != null)
+            {
+                r = repo.Run("-c", "submodule.recurse=false", "checkout", "--quiet", branch);
+                if (r.Ok)
+                {
+                    repo.Run("branch", "--quiet", "--set-upstream-to=" + remote + "/" + branch, branch);
+                    var head = repo.Rev("HEAD");
+                    var tip = repo.Rev(tracking)!;
+                    if (head != tip && head != null && repo.IsAncestor(head, tip)) FastForward(repo, tip, res);
+                    else if (head != tip) res.Warnings.Add($"{rel} is on its own {branch}, which is not where {remote}/{branch} is. Bring them together with git.");
+                }
+            }
+            else r = repo.Run("-c", "submodule.recurse=false", "checkout", "--quiet", "--track", "-b", branch, remote + "/" + branch);
+        }
+        if (!r.Ok) throw new SgException($"git checkout in {rel} failed: " + (r.StdErr + "\n" + r.StdOut).Trim());
+        var now = repo.Rev("HEAD") ?? "";
+        res.Commit = now;
+        res.Revision = now.Length > 0 ? repo.Height(now) : null;
+        res.Conflicts = repo.Conflicted().Count;
+        root.Log.Info($"{rel} is now at {(branch == null ? unit.Url : GitLocation.Format(unit.Url, branch))}, {Rev.Short(now)}");
+        return res;
+    }
 
-    /// <summary>The branches on the checkout's remote.</summary>
-    public List<string> BranchNames(SgRoot root, CheckoutConfig co, string url) => RemoteBranches(root, co);
+    /// <summary>The branches of the repository a location names: the clone's remote, a submodule's, or any other.</summary>
+    public List<string> BranchNames(SgRoot root, CheckoutConfig co, string url)
+    {
+        var repoUrl = GitLocation.Parse(url).Url;
+        if (repoUrl.Length == 0 || GitSubmodules.SameRepo(repoUrl, co.ReposRoot)) return RemoteBranches(root, co.Path, Remote(co));
+        var unit = Units(root, co).FirstOrDefault(u => GitSubmodules.SameRepo(u.Url, repoUrl));
+        return unit != null ? RemoteBranches(root, unit.Repo.Path, unit.Remote) : RemoteBranches(root, Path.GetTempPath(), repoUrl);
+    }
 
     public string UrlForBranch(SgRoot root, CheckoutConfig co, string url, string branch) => GitLocation.WithBranch(url, branch);
 
-    static List<string> RemoteBranches(SgRoot root, CheckoutConfig co)
+    static List<string> RemoteBranches(SgRoot root, CheckoutConfig co) => RemoteBranches(root, co.Path, Remote(co));
+
+    static List<string> RemoteBranches(SgRoot root, string cwd, string remote)
     {
-        var r = LsRemoteHeads(root, co.Path, Remote(co), null);
-        if (!r.Ok) throw new SgException($"git ls-remote {Remote(co)} failed in {co.Path}: " + r.StdErr.Trim());
+        var r = LsRemoteHeads(root, cwd, remote, null);
+        if (!r.Ok) throw new SgException($"git ls-remote {remote} failed in {cwd}: " + r.StdErr.Trim());
         return r.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.Split('\t'))
             .Where(p => p.Length == 2 && p[1].Trim().StartsWith("refs/heads/", StringComparison.Ordinal))
@@ -1092,46 +1506,88 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
 
     // ---- server branches and checkouts ----
 
-    public List<BranchPart> Parts(SgRoot root, CheckoutConfig co) => [new BranchPart { Wc = "", Url = co.Url }];
+    public List<BranchPart> Parts(SgRoot root, CheckoutConfig co) =>
+        Units(root, co).Select(u => new BranchPart { Wc = u.Wc, Url = u.Location }).ToList();
 
-    /// <summary>A new git branch is one ref on the remote, at the server branch's tip. Git takes no message for it.</summary>
+    /// <summary>
+    /// A new git branch is one ref on the remote, at the server branch's tip. Git takes no message for
+    /// it. Each submodule not kept gets a branch of its own in its own repository, at the commit the
+    /// checkout has it at, and the repository around it names that branch in .gitmodules on its own new
+    /// branch, so commits made from the new branch go to the submodule's new branch too.
+    /// </summary>
     public ServerBranchPlan PlanBranch(SgRoot root, CheckoutConfig co, string name, string? message, IReadOnlyList<BranchPart>? parts)
     {
         root.Git.CheckBranchName(name);
-        if ((parts ?? []).Any(p => PathUtil.Rel(p.Wc).Length == 0 && (p.Keep || p.Branch is { Length: > 0 })))
+        parts ??= [];
+        if (parts.Any(p => PathUtil.Rel(p.Wc).Length == 0 && (p.Keep || p.Branch is { Length: > 0 })))
             throw new SgException("the root of the checkout is the branch itself: it cannot be kept or given another name");
-        if ((parts ?? []).Any(p => PathUtil.Rel(p.Wc).Length > 0))
-            throw new SgException($"{co.Name} is a git checkout; it has no externals to branch apart");
-        var dst = GitLocation.WithBranch(co.Url, name);
-        if (RemoteBranches(root, co).Contains(name, StringComparer.Ordinal)) throw new SgException("already on the server: " + dst);
-        return new ServerBranchPlan
+        var units = Units(root, co);
+        foreach (var p in parts.Where(p => PathUtil.Rel(p.Wc).Length > 0))
+            if (!units.Any(u => u.Wc.Equals(PathUtil.Rel(p.Wc), StringComparison.OrdinalIgnoreCase)))
+                throw new SgException($"{p.Wc} is not a submodule checked out in {co.Name}");
+
+        var plan = new ServerBranchPlan
         {
             Kind = CheckoutKind.Git,
             Name = name,
             Source = co.Name,
-            NewRootUrl = dst,
+            NewRootUrl = GitLocation.WithBranch(co.Url, name),
             Message = message ?? "",
-            Repos = [new RepoPlan { ReposRoot = co.ReposRoot, Copies = [(co.Url, dst)] }],
         };
+        var branched = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "" };
+        foreach (var u in units.Skip(1))
+        {
+            var part = parts.FirstOrDefault(p => PathUtil.Rel(p.Wc).Equals(u.Wc, StringComparison.OrdinalIgnoreCase));
+            // Inside a kept submodule is kept with it: nothing would name a branch of it.
+            if (part is { Keep: true } || !branched.Contains(u.Parent!.Wc))
+            {
+                plan.Kept.Add((u.Wc, u.Location));
+                continue;
+            }
+            var own = part?.Branch is { Length: > 0 } b ? b.Trim() : name;
+            root.Git.CheckBranchName(own);
+            var dst = GitLocation.Format(u.Url, own);
+            if (RemoteBranches(root, u.Repo.Path, u.Remote).Contains(own, StringComparer.Ordinal)) throw new SgException("already on the server: " + dst);
+            plan.Repos.Add(new RepoPlan { Wc = u.Wc, ReposRoot = u.Url, Copies = [(u.Location, dst)] });
+            branched.Add(u.Wc);
+        }
+        if (RemoteBranches(root, co).Contains(name, StringComparer.Ordinal)) throw new SgException("already on the server: " + plan.NewRootUrl);
+        plan.Repos.Add(new RepoPlan { Wc = "", ReposRoot = co.ReposRoot, Copies = [(co.Url, plan.NewRootUrl)] });
+        // Deepest first and the root last: a repository's new branch names its submodules' new ones, so those go first.
+        plan.Repos = plan.Repos.OrderByDescending(r => r.Wc.Length == 0 ? -1 : r.Wc.Count(c => c == '/')).ToList();
+        return plan;
     }
 
     /// <summary>
-    /// Pushes the server branch's newest commit as the new branch, and only if the name is still free:
-    /// a lease on "not there" is git's way of saying copy, never overwrite.
+    /// Pushes each new branch, and only where the name is still free: a lease on "not there" is git's way
+    /// of saying copy, never overwrite. A repository whose submodules got branches too starts its new
+    /// branch with one commit on top of the tip that names them in .gitmodules.
     /// </summary>
     public void ExecuteBranch(SgRoot root, CheckoutConfig co, ServerBranchPlan plan)
     {
-        var repo = Repo(root, co);
+        var units = Units(root, co);
+        var made = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var rp in plan.Repos)
         {
             try
             {
-                Fetch(root, co);
-                var at = repo.Rev(Tracking(co)) ?? throw new SgException($"{Remote(co)}/{Branch(co)} is not in the clone.");
-                root.Log.Info($"{rp.ReposRoot}: branch {plan.Name} at {Rev.Short(at)}");
-                var r = repo.Run("push", "--porcelain", $"--force-with-lease=refs/heads/{plan.Name}:", Remote(co), $"{at}:refs/heads/{plan.Name}");
+                var unit = GitSubmodules.Of(units, rp.Wc);
+                var repo = unit.Repo;
+                var own = GitLocation.Parse(rp.Copies[0].Dst).Branch ?? plan.Name;
+                string at;
+                if (unit.Pinned) at = repo.Rev("HEAD") ?? throw new SgException($"{unit.Wc} has no commit checked out.");
+                else
+                {
+                    unit.Fetch();
+                    at = repo.Rev(unit.TrackingRef) ?? throw new SgException($"{unit.Remote}/{unit.Branch} is not in {unit.Label}.");
+                }
+                var children = units.Where(u => u.Parent == unit && made.ContainsKey(u.Wc)).ToList();
+                if (children.Count > 0) at = NamingBranches(root, unit, at, children.Select(c => (c, made[c.Wc])).ToList(), plan.Name);
+                root.Log.Info($"{rp.ReposRoot}: branch {own} at {Rev.Short(at)}");
+                var r = repo.Run("push", "--porcelain", $"--force-with-lease=refs/heads/{own}:", unit.Remote, $"{at}:refs/heads/{own}");
                 if (!r.Ok) throw new SgException((r.StdErr + "\n" + r.StdOut).Trim());
-                repo.Run("update-ref", TrackingOf(co, plan.Name), at);
+                repo.Run("update-ref", $"refs/remotes/{unit.Remote}/{own}", at);
+                made[unit.Wc] = own;
                 rp.Commit = at;
                 rp.Revision = repo.Height(at);
                 rp.State = "committed";
@@ -1139,15 +1595,44 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             catch (SgException ex)
             {
                 rp.State = "failed";
+                foreach (var rest in plan.Repos.Where(x => x.State == "planned")) rest.State = "skipped";
                 throw new SgException($"branch creation stopped at {rp.ReposRoot}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>A commit on top of at whose .gitmodules sends each of these submodules to its new branch.</summary>
+    static string NamingBranches(SgRoot root, GitUnit unit, string at, List<(GitUnit Sub, string Branch)> subs, string name)
+    {
+        var repo = unit.Repo;
+        var file = root.NewTempFile(".gitmodules");
+        var idx = root.NewTempFile(".index");
+        var env = new Dictionary<string, string> { ["GIT_INDEX_FILE"] = idx };
+        try
+        {
+            var blob = repo.Run("cat-file", "blob", at + ":.gitmodules");
+            File.WriteAllText(file, blob.Ok ? blob.StdOut : "");
+            foreach (var (sub, branch) in subs)
+                repo.Ok("config", "-f", file, $"submodule.{sub.Entry!.Name}.branch", branch);
+            var sha = repo.Out("hash-object", "-w", "--no-filters", file);
+            repo.Run(["read-tree", at], null, env).EnsureOk();
+            repo.Run(["update-index", "--cacheinfo", "100644," + sha + ",.gitmodules"], null, env).EnsureOk();
+            var tree = repo.Run(["write-tree"], null, env).EnsureOk().StdOut.Trim();
+            return repo.CommitTree(tree, [at], $"Point submodules at the {name} branches\n\n"
+                                                + string.Join("\n", subs.Select(s => $"{s.Sub.Entry!.Path}: {s.Branch}")) + "\n");
+        }
+        finally
+        {
+            if (File.Exists(file)) File.Delete(file);
+            if (File.Exists(idx)) File.Delete(idx);
         }
     }
 
     /// <summary>
     /// A new clone of a server branch that borrows every object the nearest clone already has, so only
     /// what differs comes over the network, then keeps its own copies of them (git clone --reference
-    /// --dissociate): the git shape of copying the nearest checkout and switching it.
+    /// --dissociate): the git shape of copying the nearest checkout and switching it. Its submodules are
+    /// cloned with it.
     /// </summary>
     public CheckoutResult ServerCheckout(SgRoot root, CheckoutConfig near, string target, string? name)
     {
@@ -1169,7 +1654,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         root.Log.Info($"cloning {location} into {dir}, borrowing what {near.Name} already has");
         var args = new List<string>
         {
-            "clone", "--quiet", "--reference-if-able", near.Path, "--dissociate",
+            "clone", "--quiet", "--recurse-submodules", "--reference-if-able", near.Path, "--dissociate",
             "--origin", Remote(near), "--branch", branch, "--", url, dir,
         };
         new GitRepo(root.Config.GitExe, root.RootPath, root.Log).Run(args).EnsureOk();
@@ -1178,27 +1663,35 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
 
     // ---- merging ----
 
-    public List<MergeTarget> MergeTargets(SgRoot root, CheckoutConfig co) => [new MergeTarget("", co.Url, co.ReposRoot)];
+    /// <summary>The clone and every submodule: a merge goes into one repository, from another branch of the same one.</summary>
+    public List<MergeTarget> MergeTargets(SgRoot root, CheckoutConfig co) =>
+        Units(root, co).Select(u => new MergeTarget(u.Wc, u.Location, u.Url)).ToList();
 
-    public List<MergeSource> MergeSources(SgRoot root, CheckoutConfig co, MergeTarget target) =>
-        RemoteBranches(root, co).Where(b => b != Branch(co)).Select(b => new MergeSource(b, GitLocation.WithBranch(co.Url, b))).ToList();
+    public List<MergeSource> MergeSources(SgRoot root, CheckoutConfig co, MergeTarget target)
+    {
+        var unit = GitSubmodules.Of(Units(root, co), target.Wc);
+        var current = unit.Pinned ? null : unit.Branch;
+        return RemoteBranches(root, unit.Repo.Path, unit.Remote).Where(b => b != current)
+            .Select(b => new MergeSource(b, GitLocation.Format(unit.Url, b))).ToList();
+    }
 
     public List<MergePair> MergePairs(SgRoot root, CheckoutConfig co, MergeTarget target, string sourceUrl) => [new MergePair(target, sourceUrl)];
 
     /// <summary>
     /// The source branch's commits, newest first, merges left out: a merge commit is not a change one can
-    /// pick. One is marked merged when the clone has it, or has a commit with the same change, which is
-    /// how git cherry tells a cherry-picked commit apart from one still to take.
+    /// pick. One is marked merged when the repository has it, or has a commit with the same change, which
+    /// is how git cherry tells a cherry-picked commit apart from one still to take.
     /// </summary>
     public List<MergeRevision> MergeOffered(SgRoot root, CheckoutConfig co, IReadOnlyList<MergePair> pairs, int limit)
     {
-        var repo = Repo(root, co);
+        var units = Units(root, co);
         var res = new List<MergeRevision>();
         foreach (var pair in pairs)
         {
+            var unit = GitSubmodules.Of(units, pair.Target.Wc);
+            var repo = unit.Repo;
             var branch = GitLocation.Parse(pair.SourceUrl).Branch ?? throw new SgException("no branch in " + pair.SourceUrl);
-            FetchBranch(root, co, branch);
-            var src = TrackingOf(co, branch);
+            var src = FetchSource(unit, branch);
             var log = repo.Log(["--no-merges", "-n", limit.ToString(System.Globalization.CultureInfo.InvariantCulture), src]);
             var cherry = repo.Run("cherry", "HEAD", src);
             var eligible = cherry.Ok
@@ -1211,22 +1704,35 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         return res.OrderByDescending(r => r.Entry.Date, StringComparer.Ordinal).ThenByDescending(r => r.Revision).ToList();
     }
 
+    /// <summary>The source branch fetched into the repository's remote-tracking refs, and its name there.</summary>
+    static string FetchSource(GitUnit unit, string branch)
+    {
+        var src = $"refs/remotes/{unit.Remote}/{branch}";
+        var r = unit.Repo.Run("fetch", "--quiet", unit.Remote, $"+refs/heads/{branch}:{src}");
+        if (!r.Ok) throw new SgException($"git fetch {unit.Remote} {branch} failed in {unit.Repo.Path}: " + r.StdErr.Trim());
+        return src;
+    }
+
     public List<string> MergeProblems(SgRoot root, CheckoutConfig co, MergeTarget target, string sourceUrl)
     {
         var problems = new List<string>();
-        var branch = GitLocation.Parse(sourceUrl).Branch;
+        var (sourceRepo, branch) = GitLocation.Parse(sourceUrl);
         if (branch == null) { problems.Add("no branch in " + sourceUrl); return problems; }
-        if (branch == Branch(co)) problems.Add("the source and the target are the same branch");
-        if (!GitLocation.Parse(sourceUrl).Url.Equals(co.ReposRoot, StringComparison.OrdinalIgnoreCase))
-            problems.Add($"{sourceUrl} is in another repository than {co.Name}. A merge stays inside one repository.");
-        var repo = Repo(root, co);
-        var (local, remote, tracked) = repo.Tracking();
-        if (local == null || remote != Remote(co) || tracked != Branch(co))
+        var units = Units(root, co);
+        var unit = GitSubmodules.Of(units, target.Wc);
+        if (!unit.Pinned && branch == unit.Branch) problems.Add("the source and the target are the same branch");
+        if (!GitSubmodules.SameRepo(sourceRepo, unit.Url))
+            problems.Add($"{sourceUrl} is in another repository than {unit.Label}. A merge stays inside one repository.");
+        var repo = unit.Repo;
+        var (local, remote, tracked) = unit.Tracking;
+        if (unit.Wc.Length == 0 && (local == null || remote != Remote(co) || tracked != Branch(co)))
             problems.Add($"the clone is not on the branch that tracks {Remote(co)}/{Branch(co)}");
-        if (repo.InProgress() is { } op) problems.Add($"a {op} is in progress in the clone. Finish or abort it with git first.");
-        var local4 = Changes(root, co).Where(c => c.Versioned).Select(c => c.Path).Take(4).ToList();
+        if (unit.Pinned && (local != null || repo.Rev("HEAD") != unit.Pin))
+            problems.Add($"{unit.Wc} is not at {Rev.Short(unit.Pin)}, the commit its parent pins. Sync first.");
+        if (repo.InProgress() is { } op) problems.Add($"a {op} is in progress in {(unit.Wc.Length == 0 ? "the clone" : unit.Wc)}. Finish or abort it with git first.");
+        var local4 = StatusOf(unit).Where(c => c.Versioned).Select(c => c.Path).Take(4).ToList();
         if (local4.Count > 0)
-            problems.Add($"root has local changes ({string.Join(", ", local4)}). Commit or revert them first, so what the merge brings in stands on its own.");
+            problems.Add($"{unit.Label} has local changes ({string.Join(", ", local4)}). Commit or revert them first, so what the merge brings in stands on its own.");
         return problems;
     }
 
@@ -1235,7 +1741,8 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
     /// way svn merge leaves local changes for the changes window to send. Picked commits: cherry-pick, or
     /// revert when taking them back out, with --no-commit either way. A conflict stops it with the files
     /// in conflict and the sequencer let go, so what is on disk is all there is. A dry run asks git
-    /// merge-tree the same questions and touches no file.
+    /// merge-tree the same questions and touches no file. It runs in the target's own repository, and
+    /// the paths it reports are from the checkout root.
     /// </summary>
     public MergeResult MergeRun(SgRoot root, CheckoutConfig co, MergePair pair, IReadOnlyList<LogRevision>? picked, bool dryRun, bool reverse)
     {
@@ -1245,10 +1752,9 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         var problems = MergeProblems(root, co, pair.Target, pair.SourceUrl);
         if (!dryRun && problems.Count > 0) throw new SgException("merge refused:\n  " + string.Join("\n  ", problems));
 
-        var repo = Repo(root, co);
-        var branch = GitLocation.Parse(pair.SourceUrl).Branch!;
-        FetchBranch(root, co, branch);
-        var src = TrackingOf(co, branch);
+        var unit = GitSubmodules.Of(Units(root, co), pair.Target.Wc);
+        var repo = unit.Repo;
+        var src = FetchSource(unit, GitLocation.Parse(pair.SourceUrl).Branch!);
         var result = new MergeResult { DryRun = dryRun, SourceUrl = pair.SourceUrl, Target = pair.Label, Reverse = reverse };
 
         var commits = Ordered(repo, (picked ?? []).Select(p => p.Commit).Where(c => c.Length > 0).Distinct().ToList(), reverse);
@@ -1261,7 +1767,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             foreach (var line in repo.Out("diff-tree", "-r", "--name-status", "--no-renames", "HEAD", tree).Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 var p = line.Split('\t');
-                if (p.Length >= 2) result.Changed.Add((p[0][0], p[1]));
+                if (p.Length >= 2) result.Changed.Add((p[0][0], unit.Full(p[1])));
             }
         }
         else
@@ -1276,9 +1782,10 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             foreach (var line in repo.Out("diff", "--cached", "--name-status", "--no-renames", "HEAD").Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 var p = line.Split('\t');
-                if (p.Length >= 2) result.Changed.Add((result.Conflicts.Contains(p[1]) ? 'C' : p[0][0], p[1]));
+                if (p.Length >= 2) result.Changed.Add((result.Conflicts.Contains(p[1]) ? 'C' : p[0][0], unit.Full(p[1])));
             }
         }
+        for (var i = 0; i < result.Conflicts.Count; i++) result.Conflicts[i] = unit.Full(result.Conflicts[i]);
         result.Output = output;
         return result;
     }

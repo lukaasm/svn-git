@@ -208,8 +208,21 @@ public interface ICheckoutVcs
     /// <summary>Stops listing these names in a folder: svn:ignore, or the folder's .gitignore.</summary>
     void Ignore(SgRoot root, CheckoutConfig co, string folder, IEnumerable<string> names);
 
-    /// <summary>Sends one working copy's share of chosen local changes to the server, as one commit.</summary>
-    CommitId CommitChanges(SgRoot root, CheckoutConfig co, string wc, IReadOnlyList<CheckoutChange> changes, string message);
+    /// <summary>
+    /// Sends one working copy's share of chosen local changes to the server, as one commit. pins are
+    /// the new commits of git submodules inside it that went first, by their path from the checkout
+    /// root, for the commit to pin; SVN has none.
+    /// </summary>
+    CommitId CommitChanges(SgRoot root, CheckoutConfig co, string wc, IReadOnlyList<CheckoutChange> changes, string message,
+        IReadOnlyDictionary<string, string> pins);
+
+    /// <summary>
+    /// The working copies a commit of these has to make, in the order it has to make them, and for each
+    /// the working copy that pins what it commits, if one does. SVN: these, as given. Git: a submodule
+    /// before the repository around it, and that repository too when it pins the submodule, even with
+    /// no change of its own, since a new pin is its change.
+    /// </summary>
+    List<(string Wc, string? PinnedIn)> CommitOrder(SgRoot root, CheckoutConfig co, IReadOnlyList<string> wcs);
 
     // ---- push ----
 
@@ -223,7 +236,7 @@ public interface ICheckoutVcs
     /// </summary>
     void WriteInto(SgRoot root, CheckoutConfig co, PushGroup g, string tip);
 
-    /// <summary>Commits what WriteInto left, to the server.</summary>
+    /// <summary>Commits what WriteInto left, to the server, with the group's pins.</summary>
     CommitId CommitWritten(SgRoot root, CheckoutConfig co, PushGroup g, string message);
 
     /// <summary>Puts a working copy back the way the failed step found it; restoreFrom is that step's start in the store.</summary>

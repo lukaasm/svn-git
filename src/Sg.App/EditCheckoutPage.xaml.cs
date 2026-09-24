@@ -12,19 +12,34 @@ public sealed class ExternalRow
     public string Declared { get; set; } = "";
     public bool Switched { get; set; }
     public long Revision { get; set; }
+    /// <summary>What the server calls where it is: r266, or the short commit.</summary>
+    public string Label { get; set; } = "";
+    /// <summary>A git submodule, whose declared place is the commit its parent pins.</summary>
+    public bool Git { get; set; }
 
     public Visibility SwitchedVisibility => Switched ? Visibility.Visible : Visibility.Collapsed;
 
-    public string Tip => Switched
-        ? $"{Rel}\nnow: {Url}  r{Revision}\nsvn:externals declares: {Declared}\nSwitched here only. Nobody else sees it."
-        : $"{Rel}\n{Url}  r{Revision}";
+    /// <summary>The chip's word: an external is switched, a submodule is on a branch of its own.</summary>
+    public string ChipText => Git ? "on a branch" : "switched";
+
+    /// <summary>What a screen reader announces for the row: the list item's name is its item's text.</summary>
+    public override string ToString() => Switched ? $"{Rel}, {(Git ? "on a branch" : "switched")}: {Url}" : $"{Rel}: {Url}";
+
+    public string Tip => (Switched, Git) switch
+    {
+        (true, true) => $"{Rel}\nnow: {Url}  {Label}\nthe parent pins a commit of {Declared}\nOn a branch here only. Nobody else sees it.",
+        (true, false) => $"{Rel}\nnow: {Url}  {Label}\nsvn:externals declares: {Declared}\nSwitched here only. Nobody else sees it.",
+        (false, true) => $"{Rel}\n{Url}  {Label}, the commit the parent pins",
+        _ => $"{Rel}\n{Url}  {Label}",
+    };
 }
 
 /// <summary>
 /// What a checkout is called, which folders sg leaves alone, and where each external points. The
 /// externals half is a working copy state and not a commit: switching one is svn switch on that
 /// external's own directory, which is how a checkout runs against another branch of one repository
-/// without changing it for anyone.
+/// without changing it for anyone. A git clone's submodules take the same place: one is put on a branch
+/// of its own repository, or back on the commit its parent pins.
 /// </summary>
 public sealed partial class EditCheckoutPage : SgPage
 {
@@ -51,13 +66,25 @@ public sealed partial class EditCheckoutPage : SgPage
         _ = SharedBox.DetectAsync(co.Path, Session.Root?.Config.WorktreeRoot ?? Session.Root?.RootPath);
         var path = co.Path;
         _ = PathPicker.OfferFoldersOf(path, SkipPick, JunctionPick, OptionalPick);
-        if (co.IsGit)
-        {
-            // A git clone has no externals to point anywhere: the section would only ever say so.
-            ExternalsHeader.Visibility = ExternalsIntro.Visibility = ExternalsCard.Visibility = Visibility.Collapsed;
-            return;
-        }
+        if (co.IsGit) SayGit();
         _ = LoadExternalsAsync();
+    }
+
+    /// <summary>The section's words for a git clone, whose externals are its submodules.</summary>
+    void SayGit()
+    {
+        ExternalsHeader.Text = "Submodules";
+        ExternalsIntro.Text = "Put a submodule on a branch of its own repository, on this machine only. This is git checkout in that submodule: "
+                              + "the commit its parent pins is left alone, so nothing is committed and nobody else sees it. Commits made in it go to that branch. "
+                              + "Sync afterwards and the snapshot records the branch's content.";
+        NoExternals.Title = "No submodules";
+        NoExternals.Text = "This clone has no submodules checked out. There is nothing to point elsewhere.";
+        BranchBox.Header = "Put the selected submodule on";
+        BranchBox.PlaceholderText = "pick a branch";
+        ToolTipService.SetToolTip(BranchBox, "The branches of this submodule's repository, read from the server.");
+        RevertButton.Content = "Back to the pin";
+        ToolTipService.SetToolTip(RevertButton, "Check out the commit the parent pins again, which is what everyone else has.");
+        ToolTipService.SetToolTip(SwitchButton, "Checks the branch out in this submodule only, following its remote branch. The parent's pin and the server are left alone.");
     }
 
     void ShowIcon(CheckoutConfig co)
@@ -120,7 +147,7 @@ public sealed partial class EditCheckoutPage : SgPage
         var co = CheckoutConfig();
         if (root == null || co == null) return;
         NoExternals.Visibility = Visibility.Collapsed;
-        ExternalsReading.Show("Reading checkout externals…", Externals.ItemsSource == null);
+        ExternalsReading.Show($"Reading checkout {ServerWords.Externals(co)}…", Externals.ItemsSource == null);
         var list = await Runner.Quiet(Pane, () => Ops.ExternalsOf(root, co));
         ExternalsReading.Hide();
         if (list == null) return;
@@ -131,11 +158,15 @@ public sealed partial class EditCheckoutPage : SgPage
             Declared = e.Declared,
             Switched = e.Switched,
             Revision = e.Revision,
+            Label = e.Label,
+            Git = co.IsGit,
         }).ToList();
         NoExternals.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         Result.Text = list.Count == 0
             ? ""
-            : $"{list.Count} external(s), {list.Count(e => e.Switched)} switched here";
+            : co.IsGit
+                ? $"{list.Count} submodule(s), {list.Count(e => e.Switched)} on a branch here"
+                : $"{list.Count} external(s), {list.Count(e => e.Switched)} switched here";
     }
 
     /// <summary>The branch names offered for the external in hand, so a switch is a pick and not a URL.</summary>
@@ -214,10 +245,15 @@ public sealed partial class EditCheckoutPage : SgPage
         if (root == null || co == null || Externals.SelectedItem is not ExternalRow row) return;
         if (url.Length == 0 || url.TrimEnd('/').Equals(row.Url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)) return;
 
-        if (!await Dialogs.Confirm(this, "Switch " + row.Rel,
-                $"Point {row.Rel} at:\n{url}\n\nThis machine only. svn:externals is left alone, so nothing is committed and nobody else sees it. "
-                + "Sync afterwards so the snapshot records the switched content. Sync keeps the switch: "
-                + "svn update pulls an external back to the declared URL, and sync points it away again.", "Switch"))
+        var text = !co.IsGit
+            ? $"Point {row.Rel} at:\n{url}\n\nThis machine only. svn:externals is left alone, so nothing is committed and nobody else sees it. "
+              + "Sync afterwards so the snapshot records the switched content. Sync keeps the switch: "
+              + "svn update pulls an external back to the declared URL, and sync points it away again."
+            : url.Contains('#')
+                ? $"Put {row.Rel} on:\n{url}\n\nThis machine only. The commit its parent pins is left alone, so nothing is committed and nobody else sees it. "
+                  + "Sync follows the branch from now on, and commits made in the submodule go to it."
+                : $"Put {row.Rel} back on the commit its parent pins.\n\nSync keeps it there from now on, and commits made in it are pinned by the parent.";
+        if (!await Dialogs.Confirm(this, (co.IsGit ? "Move " : "Switch ") + row.Rel, text, "Switch"))
             return;
 
         var rel = row.Rel;

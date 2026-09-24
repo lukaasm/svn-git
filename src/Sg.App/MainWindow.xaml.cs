@@ -806,14 +806,14 @@ public sealed partial class MainWindow : Window
     {
         var menu = new MenuFlyout();
         menu.Items.Add(Item("Edit checkout", "", () => EditCheckout(row),
-            "Its name, the folders sg leaves alone, and where each external points."));
+            $"Its name, the folders sg leaves alone, and where each {(row.Config.IsGit ? "submodule" : "external")} points."));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Sync", "", () => SyncOrPreview(row.Config),
             row.Config.IsGit ? "Fetch the server branch and fast-forward the clone, then take a new snapshot." : "svn update the checkout, then take a new snapshot."));
         menu.Items.Add(Item("Changes in the checkout", "", () => ShowSvnChanges(row),
             $"Edits made directly in the checkout: diffs, discard, or commit them straight to {ServerWords.Target(row.Config)}."));
         menu.Items.Add(Item(ServerWords.LogTitle(row.Config), "", () => ShowSvnLog(row),
-            row.Config.IsGit ? $"The history of {ServerWords.Target(row.Config)} on the server." : "The SVN history of the checkout root or any external."));
+            row.Config.IsGit ? $"The history of {ServerWords.Target(row.Config)} and its submodules on the server." : "The SVN history of the checkout root or any external."));
         menu.Items.Add(Item("Merge from another branch", "", () => ShowMerge(row),
             "Take changes from another branch of the same repository, all of them or a few revisions."));
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -1252,6 +1252,7 @@ public sealed partial class MainWindow : Window
     static void ShowSync(ReportCard card, SyncResult r)
     {
         var severity = r.Conflicts > 0 ? ChipSeverity.Critical : r.Overlaid + r.Warnings.Count > 0 ? ChipSeverity.Caution : ChipSeverity.Success;
+        var git = r.Commit.Length > 0;
         var headline = r.Conflicts > 0 ? $"{r.Checkout} is at {r.Label}, with {r.Conflicts} conflict(s) in the checkout"
             : $"{r.Checkout} is at {r.Label}" + (r.Changed ? "" : ", nothing new");
         var detail = r.Changed ? "A new snapshot. Rebase the worktrees when you want what came in." : "The snapshot was already at this revision.";
@@ -1260,10 +1261,13 @@ public sealed partial class MainWindow : Window
             new(ChipSeverity.Critical, "", r.Conflicts, $"{r.Conflicts} conflict(s) in the checkout. Resolve them there; the snapshot holds the server's side."),
             new(ChipSeverity.Attention, "", r.Overlaid, $"{r.Overlaid} local edit(s) of the checkout are not in the snapshot, which holds what the server has."),
             new(ChipSeverity.Caution, "", r.Warnings.Count, $"{r.Warnings.Count} warning(s), one per row."),
-            new(ChipSeverity.Neutral, "", r.KeptSwitched.Count, $"{r.KeptSwitched.Count} external(s) kept switched away from what svn:externals declares."),
+            new(ChipSeverity.Neutral, "", r.KeptSwitched.Count, git
+                ? $"{r.KeptSwitched.Count} submodule(s) on a branch of their own, not at the commit the parent pins."
+                : $"{r.KeptSwitched.Count} external(s) kept switched away from what svn:externals declares."),
         ];
         var rows = r.Warnings.Select(w => new ReportRow(ChipSeverity.Caution, "", "warning", "", w, w))
-            .Concat(r.KeptSwitched.Select(k => new ReportRow(ChipSeverity.Neutral, "", k, "external, kept switched", "Sync left it pointed where it is.", k)));
+            .Concat(r.KeptSwitched.Select(k => new ReportRow(ChipSeverity.Neutral, "", k, git ? "submodule, on its branch" : "external, kept switched",
+                git ? "Sync moved it up its branch, not to the pin." : "Sync left it pointed where it is.", k)));
         card.Show(severity, "", headline, detail, counts, rows);
     }
 }

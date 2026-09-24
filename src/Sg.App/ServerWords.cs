@@ -23,6 +23,12 @@ static class ServerWords
     /// <summary>The page title of a branch push: where the branch goes.</summary>
     public static string PushTitle(CheckoutConfig? co) => co?.IsGit == true ? $"Push to {co.Remote}/{co.Branch}" : "Push to SVN";
 
+    /// <summary>What the working copies inside a checkout are called: SVN externals, or git submodules.</summary>
+    public static string Externals(CheckoutConfig? co) => co?.IsGit == true ? "submodules" : "externals";
+
+    /// <summary>The same, as a heading.</summary>
+    public static string ExternalsTitle(CheckoutConfig? co) => co?.IsGit == true ? "Submodules" : "Externals";
+
     /// <summary>The history of the server, as the checkout's log page calls it.</summary>
     public static string LogTitle(CheckoutConfig co) => co.IsGit ? "Server log" : "SVN log";
 }

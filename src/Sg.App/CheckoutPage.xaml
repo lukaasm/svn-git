@@ -124,7 +124,7 @@
                         <AppBarButton.Icon><FontIcon Glyph="&#xE753;" /></AppBarButton.Icon>
                     </AppBarButton>
                     <AppBarSeparator />
-                    <AppBarButton Label="Edit checkout" Click="Edit_Click"
+                    <AppBarButton x:Name="EditButton" Label="Edit checkout" Click="Edit_Click"
                                   ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
                     </AppBarButton>

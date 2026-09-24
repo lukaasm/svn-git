@@ -4,6 +4,8 @@ namespace Sg.Core;
 
 public sealed class RepoPlan
 {
+    /// <summary>The working copy it branches, for a git checkout: "" the clone, else a submodule's path. Unused for SVN.</summary>
+    public string Wc = "";
     public string ReposRoot = "";
     public List<string> Mkdirs = new();
     public List<(string Src, string Dst)> Copies = new();
@@ -32,7 +34,9 @@ public sealed class ServerBranchPlan
         var sb = new StringBuilder();
         if (Kind == CheckoutKind.Git)
         {
-            sb.Append("new server branch ").Append(Name).Append(" from ").Append(Source).Append(", one git branch pushed to the remote:\n");
+            sb.Append("new server branch ").Append(Name).Append(" from ").Append(Source)
+                .Append(Repos.Count == 1 ? ", one git branch pushed to the remote:\n" : $", {Repos.Count} git branches, one per repository:\n");
+            foreach (var (wc, url) in Kept) sb.Append("  kept  ").Append(wc).Append(" stays at ").Append(url).Append('\n');
             foreach (var r in Repos)
                 foreach (var (src, dst) in r.Copies) sb.Append("  branch ").Append(dst).Append("\n     at ").Append(src).Append('\n');
             return sb.ToString().TrimEnd('\n');

@@ -190,6 +190,52 @@ public sealed class Git
 
     public string Version() => Out(null, "--version");
 
+    /// <summary>
+    /// The tree with the entry at path set to (mode, sha), or taken out when mode is null, every tree
+    /// above it rebuilt with mktree. This is how a submodule's own tree goes where its parent only pins
+    /// a commit: one mktree per folder on the way down, however big the trees around it are. Objects it
+    /// names need not be in the store.
+    /// </summary>
+    public string ReplaceEntry(string tree, string path, string? mode, string? sha)
+    {
+        var parts = PathUtil.Rel(path).Split('/');
+        string Rebuild(string at, int depth)
+        {
+            var listing = Ok(null, "ls-tree", "-z", at).StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            var sb = new StringBuilder();
+            var found = false;
+            foreach (var line in listing)
+            {
+                var tab = line.IndexOf('\t');
+                var name = line[(tab + 1)..];
+                var meta = line[..tab].Split(' ');
+                if (name == parts[depth])
+                {
+                    found = true;
+                    if (depth == parts.Length - 1)
+                    {
+                        if (mode != null) sb.Append(mode).Append(' ').Append(TypeOf(mode)).Append(' ').Append(sha).Append('\t').Append(name).Append('\0');
+                    }
+                    else if (meta[1] == "tree")
+                        sb.Append(meta[0]).Append(" tree ").Append(Rebuild(meta[2], depth + 1)).Append('\t').Append(name).Append('\0');
+                    else throw new SgException($"{string.Join("/", parts[..(depth + 1)])} is not a folder in {tree}");
+                    continue;
+                }
+                sb.Append(line).Append('\0');
+            }
+            if (!found) throw new SgException($"{path} is not in the tree {tree}");
+            return Run(null, ["mktree", "-z", "--missing"], Encoding.UTF8.GetBytes(sb.ToString())).EnsureOk().StdOut.Trim();
+        }
+        return Rebuild(tree, 0);
+    }
+
+    static string TypeOf(string mode) => mode switch
+    {
+        "040000" or "40000" => "tree",
+        "160000" => "commit",
+        _ => "blob",
+    };
+
     public string EnsureRootCommit()
     {
         var sha = RefSha(SgRoot.RootRef);

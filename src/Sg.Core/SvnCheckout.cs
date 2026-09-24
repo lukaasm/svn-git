@@ -162,7 +162,8 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
     /// deleted; svn add on a folder adds everything under it and --parents may add folders above, and
     /// all of that must be in the commit.
     /// </summary>
-    public CommitId CommitChanges(SgRoot root, CheckoutConfig co, string wc, IReadOnlyList<CheckoutChange> changes, string message)
+    public CommitId CommitChanges(SgRoot root, CheckoutConfig co, string wc, IReadOnlyList<CheckoutChange> changes, string message,
+        IReadOnlyDictionary<string, string> pins)
     {
         var svn = root.Svn;
         var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -186,6 +187,10 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
     // ---- push ----
 
     public void FillRepositories(SgRoot root, CheckoutConfig co, List<PushGroup> groups) => FillReposRoots(root.Svn, co, groups);
+
+    /// <summary>An SVN external is committed on its own: nothing pins it, so the order is the one given.</summary>
+    public List<(string Wc, string? PinnedIn)> CommitOrder(SgRoot root, CheckoutConfig co, IReadOnlyList<string> wcs) =>
+        wcs.Select(w => (w, (string?)null)).ToList();
 
     public CommitId CommitWritten(SgRoot root, CheckoutConfig co, PushGroup g, string message) =>
         new(root.Svn.Commit(co.Path, g.Targets, message), "");

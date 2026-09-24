@@ -15,6 +15,10 @@ public sealed class PushGroup
     public List<DiffEntry> Entries = new();
     internal List<string> Targets = new();
     internal List<string> AddedDirs = new();
+    /// <summary>The working copy that pins what this one commits: a git submodule's parent. Null for SVN.</summary>
+    internal string? PinnedIn;
+    /// <summary>New commits of the submodules this one pins, by path, filled in as they are made.</summary>
+    internal Dictionary<string, string> Pins = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>What the server calls what this group made: r266, or the short commit. Empty before it made one.</summary>
     public string Label => new CommitId(Revision, Commit).Label;
@@ -263,7 +267,7 @@ public static class Push
                 continue;
             }
 
-            br.Groups = GroupsFor(entries, wcs, co);
+            br.Groups = InCommitOrder(root, co, vcs, GroupsFor(entries, wcs, co));
             vcs.FillRepositories(root, co, br.Groups);
             br.Attempted = true;
             if (plan.Count > 1) log.Info($"batch {i + 1} of {plan.Count}: {entries.Count} change(s) in {br.Groups.Count} working cop" + (br.Groups.Count == 1 ? "y" : "ies"));
@@ -271,7 +275,8 @@ public static class Push
             foreach (var g in br.Groups)
             {
                 var label = g.Wc.Length == 0 ? "root" : g.Wc;
-                log.Info($"committing {g.Entries.Count} change(s) in {label} ({g.ReposRoot})" + (own.ContainsKey(g.Wc) ? ", under its own message" : ""));
+                log.Info((g.Entries.Count == 0 ? $"committing the new pin(s) in {label}" : $"committing {g.Entries.Count} change(s) in {label}")
+                         + $" ({g.ReposRoot})" + (own.ContainsKey(g.Wc) ? ", under its own message" : ""));
                 try
                 {
                     Operations.Receipt(root, server + " publication started", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Outcome unknown until a revision receipt follows. Do not retry based solely on this record."], required: true);
@@ -280,6 +285,8 @@ public static class Push
                     g.Revision = made.Revision;
                     g.Commit = made.Commit;
                     g.State = "committed";
+                    if (g.PinnedIn != null && br.Groups.FirstOrDefault(x => x.Wc.Equals(g.PinnedIn, StringComparison.OrdinalIgnoreCase)) is { } around)
+                        around.Pins[g.Wc] = made.Commit;
                     Operations.Receipt(root, server + " revision published", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Repository: " + g.ReposRoot, "Revision: " + g.Label]);
                     log.Info($"  {label}: {g.Label}");
                 }
@@ -503,6 +510,21 @@ public static class Push
             })
             .ThenBy(g => g.Wc, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// The groups in the order the checkout commits them. A git submodule goes before the repository
+    /// that pins it, and that repository gets a group of its own when it has no change but the pin.
+    /// </summary>
+    static List<PushGroup> InCommitOrder(SgRoot root, CheckoutConfig co, ICheckoutVcs vcs, List<PushGroup> groups)
+    {
+        var order = vcs.CommitOrder(root, co, groups.Select(g => g.Wc).ToList());
+        return order.Select(o =>
+        {
+            var g = groups.FirstOrDefault(x => x.Wc.Equals(o.Wc, StringComparison.OrdinalIgnoreCase)) ?? new PushGroup { Wc = o.Wc };
+            g.PinnedIn = o.PinnedIn;
+            return g;
+        }).ToList();
     }
 
     /// <summary>A commit on top of the new snapshot that carries the paths of the failed groups as they were on the old tip.</summary>

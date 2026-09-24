@@ -145,7 +145,7 @@ public sealed partial class SvnLogPage : SgPage
                 ? (wc.SnapshotRevision == wc.WcRevision ? "the snapshot matches it"
                     : _co.IsGit ? $"the snapshot svn/{_co.Name} is older, run Sync" : $"the snapshot svn/{_co.Name} is at r{wc.SnapshotRevision}, run Sync")
                 : "no snapshot yet";
-            var tip = $"{wc.Label}\n{wc.Url}\n{(_co.IsGit ? "Clone" : "Working copy")} at {wc.WcLabel}, {snap}. "
+            var tip = $"{wc.Label}\n{wc.Url}\n{(!_co.IsGit ? "Working copy" : wc.Wc.Length == 0 ? "Clone" : "Submodule")} at {wc.WcLabel}, {snap}. "
                       + (pending == 0 ? "Nothing newer on the server." : $"{pending}{(pending >= limit ? "+" : "")} newer revision(s) on the server, not synced yet.");
             if (pending > 0) behind.Add($"{wc.Label} {pending}{(pending >= limit ? "+" : "")}");
             rows.AddRange(entries.Where(r => !_incoming || r.Revision > floor).Select(r => new SvnRevRow

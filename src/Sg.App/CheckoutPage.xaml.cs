@@ -283,11 +283,12 @@ public sealed partial class CheckoutPage : SgPage
         var git = co?.IsGit == true;
         SvnLogButton.Label = co != null ? ServerWords.LogTitle(co) : "SVN log";
         ToolTipService.SetToolTip(SvnLogButton, git
-            ? $"The history of {_target} on the server, with changed paths and diffs."
+            ? $"The history of {_target} and each submodule on the server, with changed paths and diffs."
             : "The SVN history of the checkout root and every external, with changed paths and diffs.");
         ToolTipService.SetToolTip(ServerBranchButton, git
-            ? $"Push a new branch to {co!.Remote} at the newest commit of {_target}, then check it out beside this clone. A dry run comes first."
+            ? $"Push a new branch to {co!.Remote} at the newest commit of {_target}, and one per submodule unless kept, then check it out beside this clone. A dry run comes first."
             : "Copy this branch on the SVN server, one revision per repository. Each external follows, keeps its branch, or gets a name of its own. A dry run comes first.");
+        ToolTipService.SetToolTip(EditButton, $"Its name, the folders sg leaves alone, and where each {(git ? "submodule" : "external")} points.");
         ToolTipService.SetToolTip(CoRemoteRing, git ? $"Asking {co!.Remote} for new commits on {co.Branch}." : "Asking the SVN server for new commits.");
         ToolTipService.SetToolTip(CoRemoteBadge, git
             ? $"Commits on {_target} that the snapshot does not have yet. Sync brings them in."

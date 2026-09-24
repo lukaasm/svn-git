@@ -395,7 +395,11 @@ public static class Ops
         /// <summary>Where svn:externals says it goes. Empty when it could not be read.</summary>
         public string Declared = "";
         public long Revision;
+        /// <summary>The commit a git submodule is at. Empty for SVN.</summary>
+        public string Commit = "";
         public string ReposRoot = "";
+        /// <summary>What the server calls where it is: r266, or the short commit.</summary>
+        public string Label => Rev.Label(Revision, Commit);
         /// <summary>Switched away from what the property declares, here and not on the server.</summary>
         public bool Switched => Declared.Length > 0 && !Url.TrimEnd('/').Equals(Declared.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
     }
@@ -403,7 +407,8 @@ public static class Ops
     /// <summary>
     /// Every external of a checkout: where it points now, and where the committed svn:externals says it
     /// should. The two differ when someone switched one locally, which is a working copy state and not
-    /// a commit anyone else sees. A git checkout has none.
+    /// a commit anyone else sees. A git checkout's are its submodules: declared is the repository,
+    /// which means the commit the parent pins, and a submodule on a branch of its own is switched.
     /// </summary>
     public static List<ExternalState> ExternalsOf(SgRoot root, CheckoutConfig co) => root.Vcs(co).Externals(root, co);
 
@@ -981,25 +986,44 @@ public static class Ops
         if (blockers.Count > 0) throw new SgException(string.Join("\n", blockers));
 
         var result = new SvnCommitResult();
-        foreach (var group in selected.GroupBy(c => c.Wc, StringComparer.OrdinalIgnoreCase)
-                     .OrderBy(g => g.Key.Length == 0 ? 0 : 1).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        var byWc = selected.GroupBy(c => c.Wc, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key.Length == 0 ? 0 : 1).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        // A git submodule goes before the repository that pins it, and that one commits the new pin.
+        var pins = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        var failed = false;
+        foreach (var (wc, pinnedIn) in vcs.CommitOrder(root, co, byWc.Keys.ToList()))
         {
-            var g = new SvnCommitGroup { Wc = group.Key, Paths = group.Select(c => c.Path).ToList() };
+            var changes = byWc.GetValueOrDefault(wc) ?? new List<CheckoutChange>();
+            var g = new SvnCommitGroup { Wc = wc, Paths = changes.Select(c => c.Path).ToList() };
             result.Groups.Add(g);
             var label = g.Wc.Length == 0 ? "root" : g.Wc;
-            log.Info($"committing {g.Paths.Count} change(s) in {label}");
+            // What pins a submodule whose commit failed would pin the old one again: nothing to send.
+            if (failed && changes.Count == 0)
+            {
+                g.State = "skipped";
+                continue;
+            }
+            log.Info(changes.Count == 0 ? $"committing the new pin(s) in {label}" : $"committing {g.Paths.Count} change(s) in {label}");
             try
             {
-                var id = vcs.CommitChanges(root, co, g.Wc, group.ToList(), message);
+                var id = vcs.CommitChanges(root, co, g.Wc, changes, message,
+                    pins.GetValueOrDefault(wc) ?? new Dictionary<string, string>());
                 g.Revision = id.Revision;
                 g.Commit = id.Commit;
                 g.State = "committed";
+                if (pinnedIn != null)
+                {
+                    if (!pins.TryGetValue(pinnedIn, out var into)) pins[pinnedIn] = into = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    into[wc] = id.Commit;
+                }
                 log.Info($"  {label}: {g.Label}");
             }
             catch (SgException ex)
             {
                 g.State = "failed";
                 g.Error = ex.Message;
+                failed = true;
                 log.Warn($"  {label} failed: " + ex.Message);
             }
         }

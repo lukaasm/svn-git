@@ -125,20 +125,25 @@ try {
     $url = ([Uri]($repository + '/')).AbsoluteUri.TrimEnd('/')
     $file = Join-Path $ArtifactDirectory 'base.txt'
     [IO.File]::WriteAllText($file, "Push message regression fixture`n")
-    & svnmucc -m 'Create push fixture' mkdir "$url/trunk" put $file "$url/trunk/base.txt" | Out-File $setupLog
+    & svnmucc -m 'Create push fixture' mkdir "$url/trunk" put $file "$url/trunk/base.txt" mkdir "$url/library" put $file "$url/library/base.txt" propset svn:externals '^/library library' "$url/trunk" | Out-File $setupLog
     if ($LASTEXITCODE -ne 0) { throw 'Could not seed SVN fixture.' }
     $fixture = Join-Path $ArtifactDirectory 'root'
-    & $cli init $fixture --no-fsmonitor | Out-File $setupLog -Append
+    & $cli init $fixture --no-fsmonitor 2>&1 | Out-File $setupLog -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not initialize fixture root.' }
-    & $cli checkout add --url "$url/trunk" --root $fixture --name checkout | Out-File $setupLog -Append
+    & $cli checkout add --url "$url/trunk" --root $fixture --name checkout 2>&1 | Out-File $setupLog -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not register fixture checkout.' }
-    & $cli branch feature --root $fixture --from checkout | Out-File $setupLog -Append
+    & $cli branch feature --root $fixture --from checkout 2>&1 | Out-File $setupLog -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not create fixture branch.' }
     $worktree = Join-Path $fixture 'feature'
     foreach ($i in 1..3) {
         [IO.File]::WriteAllText((Join-Path $worktree "change-$i.txt"), "Change $i`n")
         & git -C $worktree add "change-$i.txt"
         if ($LASTEXITCODE -ne 0) { throw 'Could not stage fixture file.' }
+        if ($i -gt 1) {
+            [IO.File]::WriteAllText((Join-Path $worktree 'library/base.txt'), "Library change $i`n")
+            & git -C $worktree add 'library/base.txt'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage external fixture file.' }
+        }
         & git -C $worktree -c user.name=Fixture -c user.email=fixture@example.invalid commit -m "Change $i" -m "Details for change $i" | Out-File $setupLog -Append
         if ($LASTEXITCODE -ne 0) { throw 'Could not commit fixture file.' }
     }
@@ -154,9 +159,67 @@ try {
     $config.gitExe = Join-Path $env:SG_UI_COMMAND_GATE 'bin/Debug/net10.0/UiCommandGate.exe'
     $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configFile
     $process = Start-Process -FilePath $app -ArgumentList @('push', ('"' + $worktree + '"')) -WindowStyle Hidden -PassThru
-    $window = Wait-For { Get-TestAppWindow $process }
+    $window = Wait-For {
+        $candidate = Get-TestAppWindow $process
+        $pattern = $null
+        if ($candidate -and $candidate.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern, [ref]$pattern)) { $candidate }
+    }
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $null = Wait-For { $h = Find 'Header'; $h -and $h.Current.Name -like '3 commit*' }
+
+    Start-UiScenario 'A shared draft survives returning from Readiness'
+    $draft = "# Drafting note`n`nCustom SVN summary`n`nKeep this explanation."
+    Enter-Value (Open-Message) $draft
+    Close-Message
+    Open-Readiness
+    Return-ToPush
+    $box = Open-Message
+    if ((Read-Value $box).Replace("`r`n", "`n").Replace("`r", "`n") -ne $draft) { throw 'Returning from Readiness discarded the custom shared message.' }
+    Enter-Value $box ''
+    Close-Message
+    Complete-UiScenario
+
+    Start-UiScenario 'Own drafts stay with each working copy across navigation and range changes'
+    $null = Open-Message
+    foreach ($wc in @('root', 'library')) {
+        (Find "Own message for $wc" -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+        Enter-Value (Wait-For { Find "Commit message for $wc" -Name }) "Custom $wc summary`n`nDetails for $wc."
+    }
+    Close-Message
+    Select-Range 1
+    Open-Readiness
+    Return-ToPush
+    $null = Open-Message
+    if ((Read-Value (Find 'Commit message for root' -Name)) -notlike 'Custom root summary*') { throw 'Root own message was not restored.' }
+    if (Find 'Own message for library' -Name) { throw 'An absent working copy remained in the selected range.' }
+    Close-Message
+    Invoke-Control (Find 'AllCommitsButton')
+    $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
+    $null = Open-Message
+    $library = Wait-For { Find 'Commit message for library' -Name }
+    if ((Read-Value $library) -notlike 'Custom library summary*') { throw 'The temporarily absent external lost its own draft.' }
+    Enter-Value $library ''
+    Close-Message
+    Open-Readiness
+    Return-ToPush
+    $null = Open-Message
+    if ((Read-Value (Find 'Commit message for library' -Name)) -ne '') { throw 'Returning silently replaced an empty own draft.' }
+    if ((Find 'PrimaryButton').Current.IsEnabled) { throw 'An empty own draft passed validation.' }
+    Enter-Value (Find 'Commit message for library' -Name) 'Saved external draft'
+    foreach ($wc in @('root', 'library')) {
+        (Find "Own message for $wc" -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    }
+    Close-Message
+    Open-Readiness
+    Return-ToPush
+    $null = Open-Message
+    $toggle = (Find 'Own message for library' -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) { throw 'Returning turned an own-message override on.' }
+    $toggle.Toggle()
+    if ((Read-Value (Find 'Commit message for library' -Name)) -ne 'Saved external draft') { throw 'Turning the override off discarded its draft.' }
+    $toggle.Toggle()
+    Close-Message
+    Complete-UiScenario
 
     Start-UiScenario 'Returning from Readiness restores the selected range and both filters'
     Select-Range 2
@@ -167,7 +230,7 @@ try {
     Return-ToPush
     if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Returning from Readiness lost the selected commit range.' }
     if ((Read-Value (Find 'CommitFilterBox')) -ne 'Change 3' -or (Read-Value (Find 'Filter')) -ne 'change-2') { throw 'Returning from Readiness lost the commit or file filter.' }
-    $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' -and (Find 'FilesHeader').Current.Name -like '*showing 1 of 2*' }
+    $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' -and (Find 'FilesHeader').Current.Name -like '*showing 1 of 3*' }
     Assert-Message (Open-Message) 2
     Close-Message
     Enter-Value (Find 'CommitFilterBox') ''

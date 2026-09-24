@@ -29,7 +29,18 @@ public sealed partial class PushPage : SgPage
     // after the snapshot moves; only Push.Run intentionally keeps a count across its own rebase.
     string? _through;
     bool _rangeMissing;
-    sealed record ViewState(PushScope Scope, string? Through, string CommitQuery, string FileQuery);
+    sealed record RepoDraft(string Wc, bool Custom, string Message);
+    readonly Dictionary<string, RepoDraft> _repoDrafts = new(StringComparer.OrdinalIgnoreCase);
+    // Navigation snapshots share only this small publication receipt, never page controls.
+    sealed class SentDrafts
+    {
+        public int Revision, Shared;
+        public readonly Dictionary<string, int> Repos = new(StringComparer.OrdinalIgnoreCase);
+    }
+    SentDrafts _sent = new();
+    int _draftRevision;
+    sealed record ViewState(PushScope Scope, string? Through, string CommitQuery, string FileQuery,
+        string Message, string LastDefault, RepoDraft[] Repos, SentDrafts Sent, int Revision);
 
     /// <summary>
     /// The message the page last wrote into the box on its own. When the box still holds exactly that,
@@ -87,7 +98,11 @@ public sealed partial class PushPage : SgPage
     }
 
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
-    internal override object? CaptureViewState() => new ViewState(_scope, _through, CommitFilterBox.Text, Filter.Text);
+    internal override object? CaptureViewState()
+    {
+        RememberRepoDrafts();
+        return new ViewState(_scope, _through, CommitFilterBox.Text, Filter.Text, Message.Text, _lastDefault, _repoDrafts.Values.ToArray(), _sent, _draftRevision);
+    }
     internal override void RestoreViewState(object? state)
     {
         if (state is not ViewState view) return;
@@ -95,6 +110,32 @@ public sealed partial class PushPage : SgPage
         _through = view.Through;
         CommitFilterBox.Text = view.CommitQuery;
         Filter.Text = view.FileQuery;
+        _lastDefault = view.LastDefault;
+        Message.Text = view.Message;
+        _repoDrafts.Clear();
+        foreach (var draft in view.Repos) _repoDrafts[draft.Wc] = draft;
+        _sent = view.Sent;
+        _draftRevision = view.Revision;
+        ClearPublishedDrafts();
+    }
+
+    void RememberRepoDrafts()
+    {
+        ClearPublishedDrafts();
+        foreach (var row in _repos) _repoDrafts[row.Wc] = new(row.Wc, row.Custom, row.Message);
+    }
+
+    void ClearPublishedDrafts()
+    {
+        if (_sent.Shared > _draftRevision) { Message.Text = ""; _lastDefault = ""; }
+        foreach (var (wc, revision) in _sent.Repos)
+        {
+            if (revision <= _draftRevision) continue;
+            _repoDrafts.Remove(wc);
+            foreach (var row in _repos.Where(r => r.Wc.Equals(wc, StringComparison.OrdinalIgnoreCase)))
+            { row.Custom = false; row.Message = ""; }
+        }
+        _draftRevision = _sent.Revision;
     }
 
     public override void OnHidden()
@@ -232,20 +273,27 @@ public sealed partial class PushPage : SgPage
             OldPath = e.OldPath,
             Display = $"{(g.Wc.Length == 0 ? "root" : g.Wc)}  {e.Status}  {e.Path}" + (e.OldPath != null ? $"  (was {e.OldPath})" : ""),
         })).ToList(), "Files, one SVN commit per working copy");
+        ClearPublishedDrafts();
         // The message follows the commits being sent, until a hand has been in the box.
         if (Message.Text.Trim().Length == 0 || Message.Text.Trim() == _lastDefault.Trim())
         {
             Message.Text = p.DefaultMessage;
             _lastDefault = p.DefaultMessage;
         }
-        // The working copies the push commits to, in the order it commits them. A row that already
-        // carries its own message keeps it across a refresh.
+        // Drafts belong to working-copy paths, including ones temporarily absent from the range.
+        // Keep values rather than row controls, so navigation can release the old page.
+        RememberRepoDrafts();
         var minimum = root.Config.MinMessageLength;
         _repos = p.Groups.Select((g, i) =>
         {
-            var old = _repos.FirstOrDefault(r => r.Wc.Equals(g.Wc, StringComparison.OrdinalIgnoreCase));
             var row = new PushRepoRow { Wc = g.Wc, Files = g.Entries.Count, RepoColor = i, Minimum = minimum, Shared = () => Message.Text };
-            if (old is { Custom: true }) { row.Message = old.Message; row.Custom = true; }
+            if (_repoDrafts.TryGetValue(g.Wc, out var draft))
+            {
+                // Turning the switch on seeds from the shared text. Restore after it so a deliberately
+                // empty own message stays empty and cannot silently pass validation on return.
+                row.Custom = draft.Custom;
+                row.Message = draft.Message;
+            }
             row.Changed += SyncPushButton;
             return row;
         }).ToList();
@@ -609,7 +657,10 @@ public sealed partial class PushPage : SgPage
             _through = null;
             // What went is offered again from the list of recent messages, and the box starts empty, so
             // LoadAsync can fill it from the commits that are left. Both commit pages already do this.
-            if (r.AllCommitted || onPurpose) { MessageDialog.Remember(msg); Message.Text = ""; }
+            ++_sent.Revision;
+            foreach (var group in r.Groups.Where(g => g.State == "committed")) _sent.Repos[group.Wc] = _sent.Revision;
+            if (r.AllCommitted || onPurpose) { MessageDialog.Remember(msg); _sent.Shared = _sent.Revision; }
+            ClearPublishedDrafts();
             if (!WindowHelper.IsForeground(this))
                 Notifications.Show(r.AllCommitted || onPurpose ? "Push done" : "Push stopped half way", ResultBar.Message,
                     Notifications.Action("log", ("path", _worktree)),

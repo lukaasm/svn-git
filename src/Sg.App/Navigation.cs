@@ -78,7 +78,7 @@ public abstract class SgPage : Page
     /// <summary>Called when the host takes this page off screen. A page that was made for one visit is dropped after this.</summary>
     public virtual void OnHidden() { }
 
-    // Navigation retains small browsing values, never page controls or submitted operation inputs.
+    // Navigation retains small browsing values and unsent drafts, never page controls.
     internal virtual object? CaptureViewState() => null;
     internal virtual void RestoreViewState(object? state) { }
 

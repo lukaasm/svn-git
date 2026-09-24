@@ -183,9 +183,11 @@
                                         <TextBlock Grid.Column="2" Text="{x:Bind CountText, Mode=OneWay}" Foreground="{x:Bind CountBrush, Mode=OneWay}"
                                                    Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" HorizontalAlignment="Right" />
                                         <ToggleSwitch Grid.Column="3" IsOn="{x:Bind Custom, Mode=TwoWay}" OnContent="Own message" OffContent="Own message" MinWidth="0" FontSize="12"
+                                                      AutomationProperties.Name="{x:Bind OwnMessageName}"
                                                       ToolTipService.ToolTip="Commit this working copy under a message of its own instead of the one above. It starts as a copy of it." />
                                     </Grid>
                                     <TextBox Text="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Visibility="{x:Bind CustomVisibility, Mode=OneWay}"
+                                             AutomationProperties.Name="{x:Bind MessageName}"
                                              MinHeight="70" AcceptsReturn="True" TextWrapping="Wrap" FontSize="12" ScrollViewer.VerticalScrollBarVisibility="Auto" />
                                 </StackPanel>
                             </DataTemplate>

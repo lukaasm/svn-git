@@ -878,6 +878,8 @@ public sealed class PushRepoRow : INotifyPropertyChanged
     public event Action? Changed;
 
     public string Repo => Wc.Length == 0 ? "root" : Wc;
+    public string OwnMessageName => "Own message for " + Repo;
+    public string MessageName => "Commit message for " + Repo;
     public string FilesText => Files == 1 ? "1 file" : $"{Files} files";
     public Brush? RepoBrush => Res("RepoBrush" + (RepoColor & 7));
     public Brush? RepoBackground => Res("RepoBackground" + (RepoColor & 7));
@@ -905,6 +907,7 @@ public sealed class PushRepoRow : INotifyPropertyChanged
         get => _message;
         set
         {
+            value = value.ReplaceLineEndings("\n");
             if (_message == value) return;
             _message = value;
             Raise(nameof(Message));

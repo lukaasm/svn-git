@@ -49,7 +49,8 @@ public sealed partial class CodeReviewPage : SgPage
     public CodeReviewPage(string path)
     {
         _path = path; Title = "Code review"; Subtitle = path;
-        _reads = new(active => { _reading = active; if (active) _loading.Show("Loading review…", _file == null); else { _loading.Hide(); ScheduleFeedback(); } });
+        _reads = new(active => { _reading = active; UpdateSourceAction(); if (active) _loading.Show("Loading review…", _file == null); else { _loading.Hide(); ScheduleFeedback(); } });
+        InitializeSourceUpdates();
         _liveTimer.Tick += async (_, _) => { _liveTimer.Stop(); await RefreshFeedback(); };
         var layout = new Grid { RowSpacing = 8, Padding = new Thickness(16) };
         for (var i = 0; i < 3; i++) layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -72,7 +73,8 @@ public sealed partial class CodeReviewPage : SgPage
         AutomationProperties.SetAutomationId(_liveState, "CodeReviewLiveState");
         var header = new StackPanel { Spacing = 8 }; header.Children.Add(toolbar); header.Children.Add(navigation); layout.Children.Add(header);
         Grid.SetRow(_loading, 1); layout.Children.Add(_loading);
-        Grid.SetRow(_notice, 2); layout.Children.Add(_notice);
+        var notices = new StackPanel { Spacing = 4 }; notices.Children.Add(_notice); notices.Children.Add(_sourceNotice);
+        Grid.SetRow(notices, 2); layout.Children.Add(notices);
         _workspace.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _workspace.ColumnDefinitions.Add(new() { Width = new GridLength(380) });
         _workspace.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -184,13 +186,22 @@ public sealed partial class CodeReviewPage : SgPage
         _savedDrafts = result.Drafts;
         if (result.DraftError != null) Error(result.DraftError);
         UpdateFiles(); SetLiveStatus();
-        await LoadFile();
+        await LoadFile(preserve: true);
     }
     sealed record Inventory(IReadOnlyList<string> Files, ReviewSnapshot Snapshot, string Scope, IReadOnlyDictionary<string, ReviewDraft> Drafts, string? DraftError);
     sealed record LoadedFile(ReviewFile File, Dictionary<string, ReviewLocation> Locations);
-    async Task LoadFile()
+    static Dictionary<string, ReviewLocation> LocateThreads(CodeReviewData data, ReviewFile? file) => file == null ? []
+        : data.Threads.Where(t => t.Anchor.File == file.File).ToDictionary(t => t.Id, t =>
+            CodeReview.Locate(t.Anchor, data.Contents[t.Anchor.Content], t.Anchor.Side == "original" ? file.Original : file.Version == "missing" ? null : file.Modified));
+    async Task LoadFile(bool preserve = false)
     {
-        _file = null; _displayedVersion = null; _comment.IsEnabled = false; _locations.Clear();
+        preserve &= _file != null && _file.File == _selectedFile;
+        if (!preserve)
+        {
+            StopSourceUpdates();
+            _file = null; _displayedVersion = null; _locations.Clear();
+        }
+        _comment.IsEnabled = false;
         _comment.Text = _savedDrafts.ContainsKey("comment:" + _selectedFile) ? "Resume draft" : "Comment";
         _backToDiff.Visibility = Visibility.Collapsed;
         if (_selectedFile == null)
@@ -199,28 +210,32 @@ public sealed partial class CodeReviewPage : SgPage
             RenderThreads(); return;
         }
         using var read = _reads.Begin(); var root = Session.Require(); var file = _selectedFile;
-        _diff.BeginLoading(file);
+        if (!preserve) _diff.BeginLoading(file);
         var data = _data;
         var result = await read.Run(_pane, () =>
         {
             var loaded = CodeReview.ReadFile(root, _path, file);
-            var locations = data.Threads.Where(t => t.Anchor.File == file).ToDictionary(t => t.Id, t =>
-                CodeReview.Locate(t.Anchor, data.Contents[t.Anchor.Content], t.Anchor.Side == "original" ? loaded.Original : loaded.Version == "missing" ? null : loaded.Modified));
-            return new LoadedFile(loaded, locations);
-        }, Error);
+            return new LoadedFile(loaded, LocateThreads(data, loaded));
+        }, preserve ? SourceProblem : Error);
         if (!read.Current) return;
+        if (result == null && preserve)
+        {
+            _locations = LocateThreads(_data, _file); RenderThreads(preserve: true);
+            _comment.IsEnabled = true; return;
+        }
         _file = result?.File;
         _displayedVersion = _file?.Version;
         if (result != null)
         {
             _locations = result.Locations;
-            _diff.Show(result.File.Original, result.File.Modified, DiffView.LanguageFor(file), result.File.Modified, file);
+            _diff.Show(result.File.Original, result.File.Modified, DiffView.LanguageFor(file), result.File.Modified, file, preserveView: preserve);
             _diff.SetActions([new("comment", "Comment on selected lines", "\uE90A", "Leave feedback on the selected modified lines")]);
             _comment.IsEnabled = true;
         }
         else _diff.ShowText("This file cannot be loaded. Saved comments remain available on the right.", file);
         _comment.IsEnabled = _file != null || _savedDrafts.ContainsKey("comment:" + file);
-        RenderThreads();
+        RenderThreads(preserve);
+        if (_file != null) await FollowDisplayedSource(_file);
     }
     void RenderThreads(bool preserve = false)
     {
@@ -284,6 +299,7 @@ public sealed partial class CodeReviewPage : SgPage
     }
     void UpdateNavigation()
     {
+        UpdateSourceAction();
         var open = ReviewNavigation.Ordered(_data.Threads.Where(t => t.State == "open"));
         var index = Array.FindIndex(open, t => t.Id == _currentThread);
         _position.Text = open.Length == 0 ? "No open comments in this worktree" : index >= 0 ? $"Open comment {index + 1} of {open.Length}" : $"{open.Length} open comments across {open.Select(t => t.Anchor.File).Distinct().Count()} files";
@@ -314,6 +330,7 @@ public sealed partial class CodeReviewPage : SgPage
     }
     void DisplayContext(ReviewContext context)
     {
+        StopSourceUpdates();
         _locations.Clear(); _backToDiff.Visibility = Visibility.Visible;
         _file = null; _displayedVersion = context.Version; _comment.IsEnabled = false; _diff.SetActions([]);
         var file = context.Thread.Anchor.File;
@@ -322,7 +339,7 @@ public sealed partial class CodeReviewPage : SgPage
     }
     async Task NewComment(bool selected = false, DiffView.LineRange? selection = null, string side = "modified")
     {
-        if (_writing || _selectedFile == null || _draftScope == null) return;
+        if (_writing || _reading || _selectedFile == null || _draftScope == null) return;
         var file = _file; var root = Session.Require();
         _writing = true; UpdateNavigation();
         try

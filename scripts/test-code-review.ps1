@@ -1,7 +1,7 @@
 # Native UI Automation and WebView DOM automation, isolated on a private desktop and disposable worktree.
-param([Parameter(Mandatory)][string]$FixtureRoot, [switch]$Worker, [string]$ArtifactDirectory, [switch]$LiveOnly, [switch]$EditorOnly)
+param([Parameter(Mandatory)][string]$FixtureRoot, [switch]$Worker, [string]$ArtifactDirectory, [switch]$LiveOnly, [switch]$EditorOnly, [switch]$SourceOnly)
 $ErrorActionPreference = 'Stop'
-if ($EditorOnly) { $LiveOnly = $true }
+if ($EditorOnly -or $SourceOnly) { $LiveOnly = $true }
 if (!$Worker) {
     if (!('UiTestDesktop' -as [type])) { Add-Type -Path "$PSScriptRoot/UiTestDesktop.cs" }
     $ArtifactDirectory = (New-Item -ItemType Directory -Path "$PSScriptRoot/../TestResults/UI/code-review-$([Guid]::NewGuid().ToString('N'))").FullName
@@ -9,6 +9,7 @@ if (!$Worker) {
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -FixtureRoot '" + $FixtureRoot.Replace("'", "''") + "' -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     if ($LiveOnly) { $command += ' -LiveOnly' }
     if ($EditorOnly) { $command += ' -EditorOnly' }
+    if ($SourceOnly) { $command += ' -SourceOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-code-review-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(480)
@@ -297,7 +298,7 @@ try {
     Select-ReviewFile 'live.cs'
     $null = Wait-For { Find 'Keep this discussion in view.' -Name }
     $browser = Wait-For { try { Connect-TestWebView $port } catch { $null } }
-    if (!$EditorOnly) {
+    if (!$EditorOnly -and !$SourceOnly) {
     Start-UiScenario 'Agent replies appear live without replacing code, selection, discussion or editor scroll'
     Invoke-Control (Wait-For { Find ('ReviewShow_' + $liveId) })
     $null = Wait-For { Test-VisibleThread }
@@ -368,6 +369,7 @@ try {
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'live-return.png')
     Complete-UiScenario
     }
+    if (!$SourceOnly) {
     Start-UiScenario 'Editor context menu creates feedback on the selected lines and correct diff side'
     $browser.Dispose(); $browser = Wait-For { try { Connect-TestWebView $port } catch { $null } }
     # Monaco's context-view host can use a shadow root; inspect its actual menu, not the native toolbar action.
@@ -414,6 +416,8 @@ try {
     $null = Wait-For { $pickedFiles = (Find 'CodeReviewFiles').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection(); $pickedFiles.Count -eq 1 -and !$pickedFiles[0].Current.IsOffscreen }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'file-tree.png')
     Complete-UiScenario
+    }
+    if (!$EditorOnly) { . "$PSScriptRoot/ui-review-source.ps1" }
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
 } catch {
     if ($browser) {

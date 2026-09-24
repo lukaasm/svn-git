@@ -7,38 +7,15 @@ public sealed record ReviewSnapshot(CodeReviewData Data, string Revision);
 public sealed class ReviewFeed : IDisposable
 {
     readonly string _file;
-    readonly object _gate = new();
-    FileSystemWatcher? _watcher;
-    volatile bool _disposed;
+    readonly FileObservation _observation;
     public string Identity => Path.GetFileNameWithoutExtension(_file);
-    public string? WatchError { get; private set; }
-    public event Action? Changed;
+    public string? WatchError => _observation.Error;
+    public event Action? Changed { add => _observation.Changed += value; remove => _observation.Changed -= value; }
 
-    internal ReviewFeed(string file) { _file = file; Reconnect(); }
+    internal ReviewFeed(string file) { _file = file; _observation = new(file); }
 
     /// <summary>Retry an unavailable watcher on activation or explicit refresh. Reads remain usable without it.</summary>
-    public void Reconnect()
-    {
-        lock (_gate) ReconnectCore();
-    }
-    void ReconnectCore()
-    {
-        if (_disposed || _watcher != null && WatchError == null) return;
-        _watcher?.Dispose(); _watcher = null;
-        try
-        {
-            var watcher = new FileSystemWatcher(Path.GetDirectoryName(_file)!, Path.GetFileName(_file))
-            { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size };
-            _watcher = watcher;
-            watcher.Changed += Notify; watcher.Created += Notify; watcher.Deleted += Notify; watcher.Renamed += Notify;
-            watcher.Error += (_, e) => { if (!_disposed && ReferenceEquals(_watcher, watcher)) { WatchError = e.GetException().Message; Signal(); } };
-            watcher.EnableRaisingEvents = true; WatchError = null;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
-        { _watcher?.Dispose(); _watcher = null; WatchError = e.Message; }
-    }
-    void Notify(object sender, FileSystemEventArgs args) => Signal();
-    void Signal() { if (!_disposed) Changed?.Invoke(); }
+    public void Reconnect() => _observation.Reconnect();
 
     public ReviewSnapshot Read()
     {
@@ -54,8 +31,5 @@ public sealed class ReviewFeed : IDisposable
         // Decode before publication: corrupt or incomplete external writes must not replace the last good UI.
         return new(CodeReview.Decode(text), WorkspaceVersion.Hash(text));
     }
-    public void Dispose()
-    {
-        lock (_gate) { _disposed = true; _watcher?.Dispose(); _watcher = null; Changed = null; }
-    }
+    public void Dispose() => _observation.Dispose();
 }

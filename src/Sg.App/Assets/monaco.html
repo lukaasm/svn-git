@@ -91,6 +91,7 @@ body.sg-flat .monaco-component {
 </head>
 <body><div id="c"></div><div id="t"></div>
 <script src="review-threads.js"></script>
+<script src="diff-reading-state.js"></script>
 <script>
 (function () {
   var post = function (m) { if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(m); };
@@ -105,6 +106,7 @@ body.sg-flat .monaco-component {
     }
   };
   var diffEditor = null, textEditor = null, pending = null, layoutSideBySide = true, collapsed = false, textShowing = false, reviews = null;
+  var capturedReading = null, pendingReading = null;
   /* The modified side is the file on disk, so a window that can write it lets the reader edit it here.
      contentGuard stops the change the app itself makes from reading back as an edit by the reader. */
   var editable = false, contentGuard = false, contentSub = null, registered = [];
@@ -120,6 +122,8 @@ body.sg-flat .monaco-component {
   /* What the unified view last parsed: one fold per file, and the lines F7 walks. */
   var folds = [], navLines = [];
   function showDiff(m) {
+    var reading = m.preserveView ? capturedReading : null;
+    capturedReading = pendingReading = null;
     if (reviews) reviews.clear();
     textShowing = false;
     document.getElementById('t').style.display = 'none';
@@ -134,6 +138,7 @@ body.sg-flat .monaco-component {
     });
     contentGuard = false;
     if (old) { old.original.dispose(); old.modified.dispose(); }
+    if (reading) { reading.model = diffEditor.getModel(); pendingReading = reading; }
     document.body.classList.toggle('sg-flat', !(m.original || '').length || !(m.modified || '').length);
     editable = !!m.editable;
     diffEditor.updateOptions({ readOnly: !editable });
@@ -241,6 +246,7 @@ body.sg-flat .monaco-component {
     return { text: out.join('\n'), language: best || 'plaintext', folds: folds, nav: nav, deco: deco };
   }
   function showText(m) {
+    capturedReading = pendingReading = null;
     if (reviews) reviews.clear();
     textShowing = true;
     editable = false;
@@ -369,7 +375,19 @@ body.sg-flat .monaco-component {
   }
 
   function show(m) {
-    if (m && m.command === 'reviews') { if (reviews) reviews.set(m); return; }
+    if (m && m.command === 'capture-reading') {
+      capturedReading = diffEditor && !textShowing ? { views: window.captureDiffReading(diffEditor), thread: reviews.capture() } : null;
+      return;
+    }
+    if (m && m.command === 'reviews') {
+      if (reviews) {
+        reviews.set(m);
+        if (pendingReading && pendingReading.thread && !pendingReading.threadRestored && m.threads.some(function (t) { return t.id === pendingReading.thread.id; })) {
+          reviews.restore(pendingReading.thread); pendingReading.threadRestored = true;
+        }
+      }
+      return;
+    }
     if (m && m.command === 'review-reveal') { if (reviews) reviews.reveal(m); return; }
     if (m && m.command === 'goto') {
       goTo(!!m.next);
@@ -435,7 +453,20 @@ body.sg-flat .monaco-component {
       });
       reviews = window.createReviewThreads(diffEditor, post);
       diffEditor.getModifiedEditor().onDidChangeCursorSelection(reportSelection);
-      diffEditor.onDidUpdateDiff(function () { reportSelection(); post('shown'); });
+      diffEditor.onDidUpdateDiff(function () {
+        var reading = pendingReading;
+        if (reading) requestAnimationFrame(function () {
+          if (pendingReading !== reading || diffEditor.getModel() !== reading.model) return;
+          pendingReading = null; window.restoreDiffReading(reading.views);
+          reviews.restoreHistory(reading.thread); reportSelection();
+        });
+        reportSelection(); post('shown');
+      });
+      [diffEditor.getOriginalEditor(), diffEditor.getModifiedEditor()].forEach(function (editor) {
+        // A deliberate gesture wins over a delayed diff calculation.
+        editor.onMouseDown(function () { pendingReading = null; });
+        editor.onKeyDown(function () { pendingReading = null; });
+      });
       textEditor = monaco.editor.create(document.getElementById('t'), {
         readOnly: true, automaticLayout: true, theme: theme, minimap: { enabled: false }, wordWrap: 'off',
         lineNumbers: 'on', renderLineHighlight: 'none', scrollBeyondLastLine: false,

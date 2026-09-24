@@ -28,6 +28,7 @@ public sealed partial class CodeReviewPage
     void StopLiveUpdates()
     {
         _hidden = true; _liveTimer.Stop();
+        StopSourceUpdates();
         _feed?.Dispose(); _feed = null; _feedStart = null;
         if (_observedWindow != null) _observedWindow.Activated -= Activated;
         _observedWindow = null;
@@ -36,6 +37,7 @@ public sealed partial class CodeReviewPage
     {
         if (args.WindowActivationState == WindowActivationState.Deactivated) return;
         QueueFeedback(refreshDrafts: true);
+        QueueSource();
     }
     async Task<ReviewFeed?> EnsureFeed()
     {
@@ -122,8 +124,7 @@ public sealed partial class CodeReviewPage
             {
                 feed.Reconnect();
                 var snapshot = feed.Read();
-                var locations = displayed == null ? new Dictionary<string, ReviewLocation>() : snapshot.Data.Threads.Where(t => t.Anchor.File == displayed.File).ToDictionary(t => t.Id,
-                    t => CodeReview.Locate(t.Anchor, snapshot.Data.Contents[t.Anchor.Content], t.Anchor.Side == "original" ? displayed.Original : displayed.Version == "missing" ? null : displayed.Modified));
+                var locations = LocateThreads(snapshot.Data, displayed);
                 return new Feedback(snapshot, locations, drafts ? _drafts.List(feed.Identity) : null);
             });
             if (_hidden || _feed != feed) return;

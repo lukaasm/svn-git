@@ -171,13 +171,14 @@ public sealed partial class DiffView : UserControl
     /// Shows two versions of a file. The unified text is what the fallback shows. editable lets the
     /// reader type in the modified side, which is the file on disk; the window writes it back.
     /// </summary>
-    public void Show(string original, string modified, string language, string unifiedFallback, string? title = null, bool editable = false)
+    public void Show(string original, string modified, string language, string unifiedFallback, string? title = null, bool editable = false, bool preserveView = false)
     {
+        if (preserveView) Post(new { command = "capture-reading" });
         ++_fileRequest;
         TitleText.Text = title ?? "";
         _textView = false;
         _editable = editable;
-        _pendingJson = JsonSerializer.Serialize(new { original, modified, language, editable });
+        _pendingJson = JsonSerializer.Serialize(new { original, modified, language, editable, preserveView });
         _pendingText = unifiedFallback;
         Present();
     }

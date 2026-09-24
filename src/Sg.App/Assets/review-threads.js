@@ -121,6 +121,16 @@ window.createReviewThreads = function (diff, post) {
     }));
   });
   return {
+    capture: function () { return expanded ? { id: expanded.thread, history: expanded.history.scrollTop, focus: null } : null; },
+    restore: function (state) { if (state) reveal(state.id, state); },
+    restoreHistory: function (state) {
+      var panel = expanded;
+      // After a model reload the zone may be outside the viewport until the editor's reading
+      // position is restored. Only then does its history have a measurable scroll range.
+      requestAnimationFrame(function () {
+        if (state && expanded === panel && panel && panel.thread === state.id) panel.history.scrollTop = state.history;
+      });
+    },
     allowComments: function (enabled) { commentKeys.forEach(function (key) { key.set(enabled); }); },
     set: function (message) {
       var sameDocument = documentId === message.document, old = expanded, retained = null;

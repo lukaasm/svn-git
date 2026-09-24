@@ -148,8 +148,9 @@ public static class CodeReview
             throw new SgException("Choose a repository-relative file inside the worktree.");
         return file;
     }
-    static string DiskPath(string worktree, string file)
+    internal static string DiskPath(string worktree, string file)
     {
+        if (PathUtil.IsReparsePoint(worktree)) throw new SgException("Review does not follow shared folders or symbolic links.");
         var result = worktree;
         foreach (var part in ValidatePath(file).Split('/'))
         {
@@ -160,9 +161,24 @@ public static class CodeReview
     }
     static string? CurrentText(string path)
     {
-        if (!File.Exists(path)) return null;
-        if (new FileInfo(path).Length > MaxFileBytes) throw new SgException("This file is too large for inline review (1 MB limit).");
-        var text = File.ReadAllText(path);
+        string text;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length > MaxFileBytes) throw new SgException("This file is too large for inline review (1 MB limit).");
+            using var reader = new StreamReader(stream);
+            // Keep a concurrent writer from growing an otherwise bounded probe without limit.
+            var buffer = new char[4096]; var content = new StringBuilder();
+            int length;
+            while ((length = reader.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (content.Length + length > MaxFileBytes) throw new SgException("This file is too large for inline review (1 MB limit).");
+                content.Append(buffer, 0, length);
+            }
+            text = content.ToString();
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
         if (text.Contains('\0')) throw new SgException("Binary files cannot be reviewed as text.");
         return text;
     }
@@ -187,6 +203,8 @@ public static class CodeReview
         return new(file, original, current ?? "", Version(current), head, baseline);
     }
     static string Version(string? text) => text == null ? "missing" : WorkspaceVersion.Hash(text);
+    internal static string CurrentVersion(string worktree, string file) => Version(CurrentText(DiskPath(worktree, file)));
+    public static ReviewSource FollowSource(SgRoot root, string worktree, string file) => new(Worktree(root, worktree), file);
     public static IReadOnlyList<string> Files(SgRoot root, string worktree)
     {
         var path = Worktree(root, worktree);

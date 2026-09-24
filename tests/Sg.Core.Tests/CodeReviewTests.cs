@@ -19,6 +19,8 @@ public sealed class CodeReviewTests : IDisposable
         using var feed = CodeReview.Follow(f.Root, path);
         Assert.Equal(identity, feed.Identity);
         var source = File.ReadAllText(Path.Combine(path, "CMakeLists.txt"));
+        using var sourceFeed = CodeReview.FollowSource(f.Root, path, "CMakeLists.txt");
+        Assert.Equal(CodeReview.ReadFile(f.Root, path, "CMakeLists.txt").Version, sourceFeed.ReadVersion());
         var thread = Comment(path);
         Assert.Equal(thread.Id, Assert.Single(feed.Read().Data.Threads).Id);
         Assert.Equal(source, File.ReadAllText(Path.Combine(path, "CMakeLists.txt")));

@@ -318,6 +318,7 @@ public sealed partial class PushPage : SgPage
     void SyncPushButton()
     {
         PushButton.IsEnabled = _canPush;
+        ActionHint.SetHelp(PushButton, _canPush ? "Review the messages and push these commits to SVN." : _preview == null ? "Wait for the push preview to load." : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first." : _preview.Problems.Count > 0 ? string.Join("\n", _preview.Problems) : "No eligible changes to push. Review the checks above.");
         // The same checks gate both: what stops a push from writing stops an apply from writing too.
         // Only the item is disabled, never the whole button: the menu still opens on the shelf.
         ApplyItem.IsEnabled = _canPush;

@@ -35,11 +35,7 @@ public sealed partial class CheckoutFields : UserControl
     public CheckoutFields()
     {
         InitializeComponent();
-        // Revalidate reads the disk: two Directory.Exists, a directory listing to see whether a folder is
-        // empty, a config read, and a volume query for each of two paths to answer whether a ReFS clone
-        // could work. Running all of that per letter typed made the form stutter on a network path, so it
-        // runs once the typing pauses instead. It stays on the UI thread on purpose: it reads and writes
-        // the controls, and touching those from a pool thread throws.
+        // Debounce edits; disk and volume reads run on captured values off the UI thread.
         _check.Tick += (_, _) => { _check.Stop(); Revalidate(); };
         FolderBox.TextChanged += (_, _) =>
         {
@@ -49,6 +45,8 @@ public sealed partial class CheckoutFields : UserControl
         UrlBox.TextChanged += (_, _) => { AutoFillFolder(); Later(); };
         NameBox.TextChanged += (_, _) => { AutoFillFolder(); Later(); };
         SharedBox.Changed += () => Changed?.Invoke();
+        Loaded += (_, _) => { if (base.IsEnabled) Revalidate(); };
+        Unloaded += (_, _) => { _check.Stop(); ++_validation; };
     }
 
     readonly Microsoft.UI.Xaml.DispatcherTimer _check = new() { Interval = TimeSpan.FromMilliseconds(200) };
@@ -57,6 +55,9 @@ public sealed partial class CheckoutFields : UserControl
     void Later()
     {
         _check.Stop();
+        ++_validation; Ok = false; _checking = true; Check.IsOpen = false;
+        if (Folder != _offered) { SkipPick.ClearFolders(); JunctionPick.ClearFolders(); OptionalPick.ClearFolders(); _offered = ""; }
+        Changed?.Invoke();
         if (base.IsEnabled) _check.Start();
     }
 
@@ -73,7 +74,7 @@ public sealed partial class CheckoutFields : UserControl
         _folderTyped = true;
         Revalidate();
     }
-    public string Name => NameBox.Text.Trim();
+    public new string Name => NameBox.Text.Trim();
     public List<string> Skip => SkipPick.Paths;
     public List<string> Junctions => JunctionPick.Paths;
     public SharedMode Shared => SharedBox.Mode;
@@ -84,6 +85,7 @@ public sealed partial class CheckoutFields : UserControl
 
     /// <summary>Ok, and the field that names the checkout is filled in. The host's button follows this.</summary>
     public bool Ready => Ok && (FromUrl ? Url.Length > 0 : Folder.Length > 0);
+    public string ReadyReason => _checking ? "Checking the checkout folder…" : Check.IsOpen ? Check.Message : FromUrl ? "Enter the SVN URL to check out." : "Choose an SVN working-copy folder.";
 
     void Source_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -117,7 +119,7 @@ public sealed partial class CheckoutFields : UserControl
         set
         {
             base.IsEnabled = value;
-            if (!value) _check.Stop();
+            if (!value) { _check.Stop(); ++_validation; _checking = false; }
             foreach (var c in new Control[] { Source, UrlBox, FolderBox, BrowseButton, NameBox })
                 c.IsEnabled = value;
             SkipPick.IsEnabled = value;
@@ -127,49 +129,57 @@ public sealed partial class CheckoutFields : UserControl
         }
     }
 
-    public void Revalidate()
+    int _validation;
+    bool _checking;
+    public async void Revalidate()
     {
         _check.Stop();
-        // A folder that is a real checkout can offer its own folders to the three lists below.
-        var folder = FolderBox.Text.Trim();
-        if (!FromUrl && folder != _offered && Directory.Exists(folder))
+        var request = ++_validation;
+        var folder = Folder; var url = Url; var name = Name; var fromUrl = FromUrl;
+        var checkouts = Root?.Config.Checkouts.Select(c => (c.Name, c.Path)).ToArray() ?? [];
+        var worktreeRoot = Root?.Config.WorktreeRoot ?? Root?.RootPath;
+        Ok = false; _checking = true; Check.IsOpen = false; Changed?.Invoke();
+        try
         {
-            _offered = folder;
-            _ = SkipPick.OfferFoldersOf(folder);
-            _ = JunctionPick.OfferFoldersOf(folder);
-            _ = OptionalPick.OfferFoldersOf(folder);
+            var result = await Task.Run(() => (Validation: Problem(fromUrl, url, folder, name, checkouts), Sharing: SharedModeBox.Check(folder, worktreeRoot)));
+            if (request != _validation) return;
+            var (problem, severity) = result.Validation;
+            SharedBox.Apply(result.Sharing);
+            Ok = problem == null; _checking = false;
+            Check.IsOpen = problem != null; Check.Severity = severity; Check.Message = problem ?? "";
+            Changed?.Invoke();
+            if (!fromUrl && Ok && folder.Length > 0 && folder != _offered)
+            {
+                _offered = folder;
+                await PathPicker.OfferFoldersOf(folder, SkipPick, JunctionPick, OptionalPick);
+            }
         }
-        // The volumes answer whether a clone can work here. For a URL the folder is still to be made,
-        // and its nearest existing parent answers for it.
-        SharedBox.Detect(folder, Root?.Config.WorktreeRoot ?? Root?.RootPath);
-
-        var (problem, severity) = Problem();
-        Ok = problem == null;
-        Check.IsOpen = problem != null;
-        Check.Severity = severity;
-        Check.Message = problem ?? "";
-        Changed?.Invoke();
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or SgException)
+        {
+            if (request != _validation) return;
+            Ok = false; _checking = false;
+            Check.IsOpen = true; Check.Severity = InfoBarSeverity.Error; Check.Message = "Could not check this folder: " + e.Message;
+            Changed?.Invoke();
+        }
     }
 
     /// <summary>
     /// Every reason CheckoutAdd would refuse, checked here from the disk and the config alone. The
     /// order matters: say the first thing that is wrong, not all of them.
     /// </summary>
-    (string? Problem, InfoBarSeverity Severity) Problem()
+    static (string? Problem, InfoBarSeverity Severity) Problem(bool fromUrl, string url, string folder, string name, (string Name, string Path)[] checkouts)
     {
-        if (FromUrl) return UrlProblem();
-        var folder = Folder;
+        if (fromUrl) return UrlProblem(url, folder, name, checkouts);
         if (folder.Length == 0) return (null, InfoBarSeverity.Error);
         if (!Directory.Exists(folder)) return ("No such folder.", InfoBarSeverity.Error);
 
         if (!Directory.Exists(Path.Combine(folder, ".svn")))
             return ("This is not an SVN working copy: it has no .svn folder. Pick the folder svn checked out.", InfoBarSeverity.Error);
 
-        var root = Root;
         var trimmed = folder.TrimEnd('\\', '/');
-        var already = root?.Config.Checkouts.FirstOrDefault(c =>
+        var already = checkouts.FirstOrDefault(c =>
             c.Path.TrimEnd('\\', '/').Equals(trimmed, StringComparison.OrdinalIgnoreCase));
-        if (already != null) return ($"Already registered in this root as '{already.Name}'.", InfoBarSeverity.Informational);
+        if (already.Name != null) return ($"Already registered in this root as '{already.Name}'.", InfoBarSeverity.Informational);
 
         var git = Path.Combine(folder, ".git");
         if (File.Exists(git) || Directory.Exists(git))
@@ -181,33 +191,24 @@ public sealed partial class CheckoutFields : UserControl
                 InfoBarSeverity.Error);
         }
 
-        if (root != null)
-        {
-            var name = Name.Length > 0 ? Name : Path.GetFileName(trimmed);
-            if (root.Config.Checkouts.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                return ($"The name '{name}' is taken in this root. Give it another one below.", InfoBarSeverity.Error);
-        }
+        name = name.Length > 0 ? name : Path.GetFileName(trimmed);
+        if (checkouts.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            return ($"The name '{name}' is taken in this root. Give it another one below.", InfoBarSeverity.Error);
         return (null, InfoBarSeverity.Error);
     }
 
     /// <summary>Every reason CheckoutFromUrl would refuse before it talks to the server.</summary>
-    (string? Problem, InfoBarSeverity Severity) UrlProblem()
+    static (string? Problem, InfoBarSeverity Severity) UrlProblem(string url, string folder, string name, (string Name, string Path)[] checkouts)
     {
-        var url = Url;
         if (url.Length == 0) return (null, InfoBarSeverity.Error);
         if (!url.Contains("://")) return ("Give a full URL, like https://svn.example.com/svn/monorepo/branches/main.", InfoBarSeverity.Error);
-        var folder = Folder;
         if (folder.Length == 0) return (null, InfoBarSeverity.Error);
         if (File.Exists(folder)) return ("A file is in the way of that folder.", InfoBarSeverity.Error);
         if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any())
             return ("That folder exists and is not empty. A working copy already on disk is registered with the other choice above.", InfoBarSeverity.Error);
-        var root = Root;
-        if (root != null)
-        {
-            var name = Name.Length > 0 ? Name : url.TrimEnd('/').Split('/').Last();
-            if (root.Config.Checkouts.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                return ($"The name '{name}' is taken in this root. Give it another one below.", InfoBarSeverity.Error);
-        }
+        name = name.Length > 0 ? name : url.TrimEnd('/').Split('/').Last();
+        if (checkouts.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            return ($"The name '{name}' is taken in this root. Give it another one below.", InfoBarSeverity.Error);
         return (null, InfoBarSeverity.Error);
     }
 

@@ -33,20 +33,26 @@
                 </Grid>
                 <!-- Both of these rewrite the branch's own commits, so neither touches a snapshot: those
                      are what SVN said, and the list refuses to pick one for them. -->
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
-                    <Button x:Name="SquashButton" Click="Squash_Click" IsEnabled="False"
+                <local:WrapRow Grid.Row="1" Spacing="6">
+                    <local:TaskGate>
+                    <Button x:Name="SquashButton" AutomationProperties.Name="Squash" Click="Squash_Click" IsEnabled="False"
                             ToolTipService.ToolTip="Join the picked commits into one. Pick two or more that sit next to each other; everything above them is kept and replayed on top.">
-                        <TextBlock x:Name="SquashLabel" Text="Squash" />
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8B1;" FontSize="14" /><TextBlock x:Name="SquashLabel" Text="Squash" /></StackPanel>
                     </Button>
-                    <Button x:Name="RewordButton" Content="Reword" Click="Reword_Click" IsEnabled="False"
+                    </local:TaskGate>
+                    <local:TaskGate>
+                    <local:IconButton x:Name="RewordButton" Text="Reword" Glyph="&#xE70F;" Click="Reword_Click" IsEnabled="False"
                             ToolTipService.ToolTip="Give the picked commit a new message. What it changed stays exactly as it is." />
-                    <Button x:Name="RevertButton" Click="Revert_Click" IsEnabled="False"
+                    </local:TaskGate>
+                    <local:TaskGate>
+                    <Button x:Name="RevertButton" AutomationProperties.Name="Revert" Click="Revert_Click" IsEnabled="False"
                             ToolTipService.ToolTip="Add a commit on top that takes the picked commits back out. Nothing is rewritten, so this is safe even for a commit somebody else already has.">
-                        <TextBlock x:Name="RevertLabel" Text="Revert" />
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE7A7;" FontSize="14" /><TextBlock x:Name="RevertLabel" Text="Revert" /></StackPanel>
                     </Button>
+                    </local:TaskGate>
                     <TextBlock x:Name="PickHint" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                Text="Ctrl or Shift picks more than one." />
-                </StackPanel>
+                </local:WrapRow>
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4" MaxHeight="320">
                     <Grid>
                         <local:RowListView x:Name="Commits" SelectionMode="Extended" SelectionChanged="Commits_SelectionChanged" ItemTemplate="{StaticResource CommitRowTemplate}" />

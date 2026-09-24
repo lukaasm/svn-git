@@ -67,20 +67,41 @@ public sealed class SharedModeBox : UserControl
     /// question cannot be asked yet, and the item stays on. A clone that was chosen and cannot happen
     /// falls back to a junction, which is what the checkout would have got before this choice existed.
     /// </summary>
-    public string? Detect(string? checkoutPath, string? worktreeRoot)
+    internal sealed record Detection(bool Known, string? Problem, string Volume);
+    int _detection;
+    public async Task DetectAsync(string? checkoutPath, string? worktreeRoot)
+    {
+        var request = ++_detection;
+        _clone.IsEnabled = false;
+        _note.Text = "Checking whether these folders support ReFS cloning…";
+        _note.Visibility = Visibility.Visible;
+        try
+        {
+            var result = await Task.Run(() => Check(checkoutPath, worktreeRoot));
+            if (request == _detection) Apply(result);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or SgException)
+        {
+            if (request == _detection) Apply(new(true, "Could not check ReFS support: " + e.Message, ""));
+        }
+    }
+    internal static Detection Check(string? checkoutPath, string? worktreeRoot)
     {
         var known = !string.IsNullOrWhiteSpace(checkoutPath) && !string.IsNullOrWhiteSpace(worktreeRoot);
-        Problem = known ? SharedFolders.CloneProblem(checkoutPath!, worktreeRoot!) : null;
+        return new(known, known ? SharedFolders.CloneProblem(checkoutPath!, worktreeRoot!) : null,
+            known ? SharedFolders.VolumeOf(checkoutPath!) ?? "" : "");
+    }
+    internal void Apply(Detection result)
+    {
+        Problem = result.Problem;
         _clone.IsEnabled = Problem == null;
         _clone.Content = Problem == null ? CloneText : CloneText + ", not available here";
-        if (!known) _note.Visibility = Visibility.Collapsed;
+        if (!result.Known) _note.Visibility = Visibility.Collapsed;
         else
         {
-            var volume = SharedFolders.VolumeOf(checkoutPath!) ?? "";
-            _note.Text = Problem ?? $"{volume} is ReFS: a clone shares disk with the checkout until it is written";
+            _note.Text = Problem ?? $"{result.Volume} is ReFS: a clone shares disk with the checkout until it is written";
             _note.Visibility = Visibility.Visible;
         }
         if (Problem != null && Mode == SharedMode.Clone) Mode = SharedMode.Junction;
-        return Problem;
     }
 }

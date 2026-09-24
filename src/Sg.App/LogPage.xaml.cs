@@ -226,6 +226,10 @@ public sealed partial class LogPage : SgPage
         RewordButton.IsEnabled = own.Count == 1 && !snapshot;
         // A revert adds a commit rather than rewriting one, so the picked commits need not sit together.
         RevertButton.IsEnabled = own.Count >= 1 && !snapshot;
+        var cannotRewrite = snapshot ? "Select local commits only. SVN snapshots cannot be rewritten." : null;
+        TaskGate.SetHelp(SquashButton, cannotRewrite ?? (own.Count < 2 ? "Select two or more consecutive local commits to squash." : !run ? "Select consecutive commits with no gaps in the branch history." : "Combine the selected commits and replay the commits above them."));
+        TaskGate.SetHelp(RewordButton, cannotRewrite ?? (own.Count != 1 ? "Select exactly one local commit to change its message." : "Change the selected commit's message without changing its files."));
+        TaskGate.SetHelp(RevertButton, snapshot ? "Select local commits only. SVN snapshots cannot be reverted here." : own.Count == 0 ? "Select one or more local commits to revert." : "Add a commit that reverses the selected changes.");
         SquashLabel.Text = run ? $"Squash {own.Count}" : "Squash";
         RevertLabel.Text = own.Count > 1 && !snapshot ? $"Revert {own.Count}" : "Revert";
         PickHint.Text = all.Any(r => r.IsGroup) ? "Press that line to open the snapshots, or leave it folded."

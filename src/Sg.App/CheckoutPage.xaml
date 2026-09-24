@@ -28,7 +28,7 @@
              every other thing it can do. Both were a card that scrolled away with the worktrees. -->
         <StackPanel x:Name="CheckoutBar" Grid.Row="0" Visibility="Collapsed">
             <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="10">
-                <FontIcon Glyph="&#xE8B7;" FontSize="16" VerticalAlignment="Center" />
+                <ContentControl x:Name="CheckoutIdentity" IsTabStop="False" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" x:Name="CoName" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="2" x:Name="CoRevision" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -60,6 +60,7 @@
                         <local:IconButton Glyph="&#xE895;" Text="Sync"
                             x:Name="SyncButton" Click="Sync_Click" ToolTipService.ToolTip="svn update the checkout, then take a new snapshot into svn/&lt;name&gt;. Branches are not touched, rebase them when you want the new base." />
                     </local:TaskGate>
+                    <local:TaskGate>
                     <local:AccentSplitButton x:Name="SvnCommitButton" MinWidth="{StaticResource CardActionWidth}" AutomationProperties.Name="Commit"
                                              Click="SvnCommit_Click"
                                              ToolTipService.ToolTip="Pick the changed files, see each diff, write a message, and commit them straight to SVN. One commit per working copy. Asks first.">
@@ -78,6 +79,7 @@
                             </MenuFlyout>
                         </local:AccentSplitButton.Flyout>
                     </local:AccentSplitButton>
+                    </local:TaskGate>
                 </StackPanel>
             </Grid>
 

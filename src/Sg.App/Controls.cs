@@ -69,16 +69,31 @@ public sealed class IconButton : Button
         set => SetValue(TextProperty, value);
     }
 
-    public IconButton() => Build();
-
-    static void Changed(DependencyObject d, DependencyPropertyChangedEventArgs e) => ((IconButton)d).Build();
-
-    void Build()
+    readonly StackPanel _row = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+    readonly FontIcon _icon = new() { FontSize = 14 };
+    readonly TextBlock _label = new();
+    public IconButton()
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        if (Glyph.Length > 0) row.Children.Add(new FontIcon { Glyph = Glyph, FontSize = 14 });
-        if (Text.Length > 0) row.Children.Add(new TextBlock { Text = Text });
-        Content = row;
+        _row.Children.Add(_icon); _row.Children.Add(_label);
+        Content = _row; UpdateIcon(); UpdateText();
+    }
+
+    static void Changed(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var button = (IconButton)d;
+        if (e.Property == GlyphProperty) button.UpdateIcon();
+        else button.UpdateText();
+    }
+
+    void UpdateIcon()
+    {
+        _icon.Glyph = Glyph;
+        _icon.Visibility = Glyph.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+    void UpdateText()
+    {
+        _label.Text = Text;
+        _label.Visibility = Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetName(this, Text);
     }
 }

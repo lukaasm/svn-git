@@ -117,6 +117,30 @@ try {
     $selected = (Find 'ActivityItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected
     if (!$selected) { throw 'Activity selection was lost after background completion.' }
     Complete-UiScenario
+
+    Start-UiScenario 'A new root validates its first checkout and freezes submitted fields'
+    Invoke-Control (Find 'RootMenu')
+    Invoke-Control (Wait-For { Find 'New root' -Name })
+    $newRoot = Join-Path $ArtifactDirectory 'new-root'
+    Enter-Value (Wait-For { Find 'RootBox' }) $newRoot
+    (Find 'FsMonitor').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    Invoke-Control (Find 'CreateRootButton')
+    $null = Wait-For { $field = Find 'FolderBox'; $field -and $field.Current.IsEnabled }
+    $first = Join-Path $ArtifactDirectory 'first-checkout'
+    & svn checkout "$url/trunk" $first | Out-File (Join-Path $ArtifactDirectory 'setup.txt') -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the new root checkout.' }
+    Enter-Value (Find 'FolderBox') $first
+    Enter-Value (Find 'NameBox') 'First'
+    $gate = [IO.File]::Open((Join-Path $newRoot '.sg/sg.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        Add-Checkout
+        $null = Wait-For { $folder = Find 'FolderBox'; $name = Find 'NameBox'; $folder -and $name -and !$folder.Current.IsEnabled -and !$name.Current.IsEnabled }
+    } finally { $gate.Dispose() }
+    $null = Wait-For { (Find 'Add the checkout' -Name).Current.HelpText -eq 'The first checkout has already been added.' }
+    $config = Get-Content -LiteralPath (Join-Path $newRoot '.sg/sg.json') -Raw | ConvertFrom-Json
+    if (@($config.checkouts).Count -ne 1 -or $config.checkouts[0].name -ne 'First') { throw 'New root did not register exactly the submitted checkout.' }
+    if ((Find 'FolderBox').Current.IsEnabled) { throw 'Completed checkout fields became editable again.' }
+    Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
 } catch {
     Fail-UiScenario $_ $window

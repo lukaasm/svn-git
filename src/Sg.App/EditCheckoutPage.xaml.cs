@@ -46,11 +46,9 @@ public sealed partial class EditCheckoutPage : SgPage
         JunctionPick.Paths = co.Junctions;
         OptionalPick.Paths = co.Optional;
         SharedBox.Mode = co.Shared;
-        SharedBox.Detect(co.Path, Session.Root?.Config.WorktreeRoot ?? Session.Root?.RootPath);
+        _ = SharedBox.DetectAsync(co.Path, Session.Root?.Config.WorktreeRoot ?? Session.Root?.RootPath);
         var path = co.Path;
-        _ = SkipPick.OfferFoldersOf(path);
-        _ = JunctionPick.OfferFoldersOf(path);
-        _ = OptionalPick.OfferFoldersOf(path);
+        _ = PathPicker.OfferFoldersOf(path, SkipPick, JunctionPick, OptionalPick);
         _ = LoadExternalsAsync();
     }
 

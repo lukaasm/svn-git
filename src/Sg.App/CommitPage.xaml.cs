@@ -415,8 +415,11 @@ public sealed partial class CommitPage : SgPage
     {
         var picked = Checked();
         var amending = Amend.IsChecked == true;
-        CommitButton.IsEnabled = picked.Count > 0 || amending;
-        Message.Ready = CommitButton.IsEnabled;
+        var ready = picked.Count > 0 || amending;
+        CommitButton.IsEnabled = ready;
+        ActionHint.SetHelp(CommitButton, ready ? "Review the commit message and save the selected changes locally."
+            : _rows.Count == 0 ? "There are no local changes to commit. Enable Amend to edit the last commit." : "Select at least one changed file to commit.");
+        Message.Ready = ready;
         var verb = amending ? "Amend" : "Commit";
         CommitLabel.Text = picked.Count == 0 ? verb : $"{verb} {picked.Count} file" + (picked.Count == 1 ? "" : "s");
 

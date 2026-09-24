@@ -58,7 +58,7 @@ public sealed partial class CodeReviewPage : SgPage
         layout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var toolbar = new WrapRow { Spacing = 8 };
-        toolbar.Children.Add(_filter); toolbar.Children.Add(_comment);
+        toolbar.Children.Add(_filter); toolbar.Children.Add(new ActionHint { Content = _comment });
         _backToDiff = Button("Back to diff", "\uE72B", () => _ = LoadFile(), "CodeReviewBackToDiff");
         _backToDiff.Visibility = Visibility.Collapsed; toolbar.Children.Add(_backToDiff);
         toolbar.Children.Add(Button("Refresh", "\uE72C", () => _ = Reload(), "CodeReviewRefresh"));
@@ -68,7 +68,10 @@ public sealed partial class CodeReviewPage : SgPage
         _previous = Button("Previous open", "\uE70E", () => _ = NavigateOpen(false), "ReviewPreviousOpen");
         _next = Button("Next open", "\uE70D", () => _ = NavigateOpen(true), "ReviewNextOpen");
         _previous.IsEnabled = _next.IsEnabled = false;
-        navigation.Children.Add(_previous); navigation.Children.Add(_next); navigation.Children.Add(_position);
+        navigation.Children.Add(new ActionHint { Content = _previous }); navigation.Children.Add(new ActionHint { Content = _next }); navigation.Children.Add(_position);
+        ActionHint.SetHelp(_comment, "Select a readable text file to leave a comment.");
+        ActionHint.SetHelp(_previous, "There are no open comments to navigate to.");
+        ActionHint.SetHelp(_next, "There are no open comments to navigate to.");
         navigation.Children.Add(_liveState);
         AutomationProperties.SetAutomationId(_position, "ReviewPosition");
         AutomationProperties.SetAutomationId(_liveState, "CodeReviewLiveState");
@@ -312,6 +315,10 @@ public sealed partial class CodeReviewPage : SgPage
         var index = Array.FindIndex(open, t => t.Id == _currentThread);
         _position.Text = open.Length == 0 ? "No open comments in this worktree" : index >= 0 ? $"Open comment {index + 1} of {open.Length}" : $"{open.Length} open comments across {open.Select(t => t.Anchor.File).Distinct().Count()} files";
         _previous.IsEnabled = _next.IsEnabled = open.Length > 0 && !_writing;
+        var reason = _writing ? "Wait for the current comment to be saved." : open.Length == 0 ? "There are no open comments to navigate to." : null;
+        ActionHint.SetHelp(_previous, reason ?? "Open the previous unresolved comment across files (Shift+F8).");
+        ActionHint.SetHelp(_next, reason ?? "Open the next unresolved comment across files (F8).");
+        ActionHint.SetHelp(_comment, _reading ? "Reading the selected file…" : _comment.IsEnabled ? "Comment on this file or resume its saved draft. Select code and use the context menu to comment on specific lines." : "Select a readable text file. Binary or unavailable files cannot receive inline comments.");
     }
     async Task NavigateOpen(bool forward)
     {

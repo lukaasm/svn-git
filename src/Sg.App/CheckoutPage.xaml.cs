@@ -142,6 +142,8 @@ public sealed partial class CheckoutPage : SgPage
     {
         // A report is about the checkout it was made on: another checkout coming on screen does not inherit it.
         if (_current?.Name != row?.Name) OpReport.Hide();
+        if (_current?.Name != row?.Name || CheckoutIdentity.Content == null)
+            CheckoutIdentity.Content = row == null ? null : CheckoutIcons.Create(row.Name);
         _current = row;
         TaskStateChanged();
         PendingTrees.Checkout = row?.Name;

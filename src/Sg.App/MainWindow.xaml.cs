@@ -756,9 +756,12 @@ public sealed partial class MainWindow : Window
             {
                 Content = content,
                 Tag = row,
-                Icon = new FontIcon { Glyph = "" },
+                Icon = CheckoutIcons.Create(c.Name),
                 ContextFlyout = CheckoutMenu(row),
             };
+            AutomationProperties.SetName(item, c.Name);
+            AutomationProperties.SetAutomationId(item, "CheckoutNav_" + c.Name);
+            ToolTipService.SetToolTip(item, c.Name + "\n" + c.Path);
             ApplyRemoteBadge(row, Remote.GetValueOrDefault(c.Name));
             ApplyLocalBadge(row, LocalEdits.TryGetValue(c.Name, out var known) ? known : null);
             Nav.MenuItems.Add(item);
@@ -768,8 +771,9 @@ public sealed partial class MainWindow : Window
         _current = select;
         // Rebuilding the sidebar within the same root must not replace an action page, including
         // when its own task completion triggered this refresh. Changing roots does invalidate pages
-        // about the old root; monitor and settings remain independent.
-        if (!OpenRegisteredCheckout() && (Host.Current is CheckoutPage || rootChanged && Host.Current is not MonitorPage and not SettingsPage)) ShowOverview(select);
+        // about the old root; monitor/settings are independent, and New root owns the root it just made.
+        var creatingRoot = Host.Current is NewRootPage setup && setup.CreatedRootPath == root.RootPath;
+        if (!OpenRegisteredCheckout() && (Host.Current is CheckoutPage || rootChanged && !creatingRoot && Host.Current is not MonitorPage and not SettingsPage)) ShowOverview(select);
 
         _ = CheckRemotesAsync(root, generation);
         if (runStartAction && _startAction != null) await RunStartAction();

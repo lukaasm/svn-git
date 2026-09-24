@@ -31,7 +31,14 @@ public sealed partial class AddCheckoutPage : SgPage
     }
 
     /// <summary>A control that cannot do anything is disabled, never a dialog explaining why.</summary>
-    void Sync() => AddButton.IsEnabled = !_running && !Added && _root != null && Session.Root == _root && Fields.Ready;
+    void Sync()
+    {
+        AddButton.IsEnabled = !_running && !Added && _root != null && Session.Root == _root && Fields.Ready;
+        TaskGate.SetHelp(AddButton, _running ? "Adding this checkout. Follow progress in Tasks."
+            : Added ? "This checkout has already been added."
+            : _root == null || Session.Root != _root ? "Open the target root before adding a checkout."
+            : Fields.Ready ? "Register this checkout and build its first snapshot." : Fields.ReadyReason);
+    }
 
     async void Add_Click(object sender, RoutedEventArgs e)
     {
@@ -49,7 +56,7 @@ public sealed partial class AddCheckoutPage : SgPage
         var optional = Fields.Optional;
 
         _running = true;
-        AddButton.IsEnabled = false;
+        Sync();
         Fields.IsEnabled = false;
         var r = await Busy.During(AddButton, () => Runner.Run(Pane, fromUrl ? "checkout " + url : "checkout add " + folder,
             () => fromUrl

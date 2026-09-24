@@ -33,7 +33,11 @@ function Find([string]$id) {
 }
 function Wait-For([string]$description, [scriptblock]$read, [int]$seconds = 20) {
     $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
-    do { $v = & $read; if ($v) { return $v }; Start-Sleep -Milliseconds 50 } while ([DateTime]::UtcNow -lt $deadline)
+    do {
+        try { $v = & $read; if ($v) { return $v } }
+        catch [System.Windows.Automation.ElementNotAvailableException] { } # Navigation can replace a subtree mid-read.
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $deadline)
     throw "Timed out: $description"
 }
 function Invoke-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }

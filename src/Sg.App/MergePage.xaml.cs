@@ -237,6 +237,10 @@ public sealed partial class MergePage : SgPage
         ClearPickButton.IsEnabled = picked.Count > 0;
         // Taking changes back out needs the revisions named: there is no "undo everything" to offer.
         TakeOutButton.IsEnabled = ready && !_blocked && picked.Count > 0;
+        var reason = _reading ? "Wait for the available revisions to load." : _running ? "A merge operation is in progress." : Target == null || Source == null ? "Choose both the source and target checkout." : null;
+        TaskGate.SetHelp(TestButton, reason ?? "Preview the merge without writing changes.");
+        TaskGate.SetHelp(MergeButton, reason ?? (_blocked ? "Resolve the problems listed above before merging." : "Merge the selected revisions into the target checkout."));
+        TaskGate.SetHelp(TakeOutButton, reason ?? (_blocked ? "Resolve the problems listed above before reversing changes." : picked.Count == 0 ? "Select the revisions to reverse." : "Reverse the selected revisions in the target checkout."));
         MergeLabel.Text = picked.Count == 0 ? "Merge" : picked.Count == 1 ? "Merge r" + picked[0].Revision : $"Merge {picked.Count} revisions";
     }
 

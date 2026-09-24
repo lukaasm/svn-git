@@ -8,6 +8,8 @@ public sealed partial class NewRootPage : SgPage
 {
     SgRoot? _root;
     bool _added;
+    bool _adding;
+    internal string? CreatedRootPath => _root?.RootPath;
 
     public NewRootPage()
     {
@@ -23,10 +25,12 @@ public sealed partial class NewRootPage : SgPage
     /// <summary>A control that cannot do anything is disabled, never a dialog explaining why.</summary>
     void Sync()
     {
-        var step2 = _root != null && !_added;
+        var step2 = _root != null && !_added && !_adding;
         CreateRootButton.IsEnabled = _root == null && RootBox.Text.Trim().Length > 0;
         Fields.IsEnabled = step2;
         AddButton.IsEnabled = step2 && Fields.Ready;
+        TaskGate.SetHelp(CreateRootButton, _root != null ? "The root has already been created." : RootBox.Text.Trim().Length == 0 ? "Choose a folder for the new root." : "Create the shared SG store in this folder.");
+        TaskGate.SetHelp(AddButton, _root == null ? "Create the root first." : _adding ? "The checkout is being added. Follow its progress in Tasks." : _added ? "The first checkout has already been added." : Fields.Ready ? "Register the first checkout and build its snapshot." : Fields.ReadyReason);
         Step2.Opacity = _root == null ? 0.5 : 1.0;
     }
 
@@ -46,10 +50,11 @@ public sealed partial class NewRootPage : SgPage
         var root = await Busy.During(CreateRootButton, () => Runner.Run(Pane, "init " + path, () => Ops.Init(path, Session.Log, fsmonitor)), restoreEnabled: false);
         if (root == null) { Sync(); return; }
 
-        _root = root;
         Session.Open(root.RootPath);
+        // Runner and the operation must share one root instance: its repository lock is reentrant.
+        _root = Session.Require();
         // The fields can only answer "already registered" once there is a root to ask about.
-        Fields.Root = root;
+        Fields.Root = _root;
         Fields.Revalidate();
         Subtitle = root.RootPath;
         RootBox.IsEnabled = false;
@@ -61,7 +66,7 @@ public sealed partial class NewRootPage : SgPage
     async void AddCheckout_Click(object sender, RoutedEventArgs e)
     {
         var root = _root;
-        if (root == null) return;
+        if (root == null || !ReferenceEquals(root, Session.Root) || _adding || _added || !Fields.Ready) return;
         var fromUrl = Fields.FromUrl;
         var url = Fields.Url;
         var folder = Fields.Folder;
@@ -70,12 +75,14 @@ public sealed partial class NewRootPage : SgPage
         var junctions = Fields.Junctions;
         var shared = Fields.Shared;
         var optional = Fields.Optional;
-        AddButton.IsEnabled = false;
+        _adding = true;
+        Sync();
         var r = await Busy.During(AddButton, () => Runner.Run(Pane, fromUrl ? "checkout " + url : "checkout add " + folder,
             () => fromUrl
                 ? Ops.CheckoutFromUrl(root, url, folder.Length > 0 ? folder : null, skip, junctions, optional, name.Length > 0 ? name : null, shared)
                 : Ops.CheckoutAdd(root, folder, skip, junctions, optional, name.Length > 0 ? name : null, shared)), restoreEnabled: false);
-        if (r == null) { Sync(); return; }
+        _adding = false;
+        if (r == null) { Sync(); Fields.Revalidate(); return; }
 
         Pane.Append($"{r.Checkout.Name}: r{r.Snapshot.Revision}, snapshot {r.Snapshot.Sha[..10]}, {r.Snapshot.Externals.Count} external(s)");
         foreach (var w in r.Snapshot.Warnings) Pane.Append("warn: " + w);

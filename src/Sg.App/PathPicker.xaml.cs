@@ -53,10 +53,15 @@ public sealed partial class PathPicker : UserControl
     /// like: libs/prebuilt and engine, never libs/prebuilt/data/gui. Reading it is a directory
     /// listing, so it happens off the UI thread and the box works before it arrives.
     /// </summary>
-    public async Task OfferFoldersOf(string checkoutPath)
+    int _foldersRequest;
+    internal void ClearFolders() { ++_foldersRequest; Candidates.ItemsSource = null; }
+    public Task OfferFoldersOf(string checkoutPath) => OfferFoldersOf(checkoutPath, this);
+    internal static async Task OfferFoldersOf(string checkoutPath, params PathPicker[] pickers)
     {
+        var requests = pickers.Select(p => { p.ClearFolders(); return p._foldersRequest; }).ToArray();
         var found = await Task.Run(() => Folders(checkoutPath));
-        Candidates.ItemsSource = found;
+        for (var i = 0; i < pickers.Length; i++)
+            if (pickers[i]._foldersRequest == requests[i]) pickers[i].Candidates.ItemsSource = found;
     }
 
     static List<string> Folders(string root, int depth = 2)
@@ -66,8 +71,8 @@ public sealed partial class PathPicker : UserControl
 
         void Walk(string dir, string rel, int left)
         {
-            IEnumerable<string> subs;
-            try { subs = Directory.EnumerateDirectories(dir); }
+            string[] subs;
+            try { subs = Directory.GetDirectories(dir); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return; }
             foreach (var sub in subs)
             {

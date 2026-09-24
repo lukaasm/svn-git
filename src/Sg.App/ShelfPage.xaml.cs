@@ -95,6 +95,10 @@ public sealed partial class ShelfPage : SgPage
         RestoreButton.IsEnabled = !_working && shelf != null && !shelf.Gone;
         KeepButton.IsEnabled = !_working && shelf != null && !shelf.Gone;
         DropButton.IsEnabled = !_working && shelf != null;
+        var reason = _working ? "A shelf action is in progress. Follow it in Tasks." : shelf == null ? "Select a shelf first." : shelf.Gone ? "The original checkout or worktree folder is missing. Restore it before putting these changes back." : null;
+        TaskGate.SetHelp(RestoreButton, reason ?? "Restore these changes and remove the shelf after a successful restore.");
+        TaskGate.SetHelp(KeepButton, reason ?? "Restore these changes and keep the shelf for later.");
+        TaskGate.SetHelp(DropButton, _working ? reason! : shelf == null ? "Select a shelf to drop." : "Review the confirmation before deleting this shelf.");
     }
 
     /// <summary>Runs one shelf action with the other two off, and gives them back whatever happens.</summary>

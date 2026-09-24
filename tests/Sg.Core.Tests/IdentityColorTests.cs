@@ -3,6 +3,16 @@ namespace Sg.Core.Tests;
 public sealed class IdentityColorTests
 {
     [Theory]
+    [InlineData("Fort", "FO")]
+    [InlineData("  Dashboard  ", "DA")]
+    [InlineData("Riftbreaker", "RI")]
+    [InlineData("server-tools", "ST")]
+    [InlineData("A", "A")]
+    [InlineData("e\u0301quipe", "E\u0301Q")]
+    [InlineData("東京", "東京")]
+    [InlineData("---", "?")]
+    public void Compact_initials_remain_readable(string name, string expected) => Assert.Equal(expected, IdentityColor.Initials(name));
+    [Theory]
     [InlineData("lukaa", " LUKAA ")]
     [InlineData("Alice", "aLICE")]
     [InlineData("Review agent", " Review Agent ")]

@@ -124,7 +124,7 @@ public static class Dialogs
             shared.Visibility = folders.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             shared.Header = "Shared folders (" + string.Join(", ", folders) + ") come as";
             shared.Mode = co?.Shared ?? SharedMode.Junction;
-            if (co != null) shared.Detect(co.Path, worktreeRoot);
+            if (co != null) _ = shared.DetectAsync(co.Path, worktreeRoot);
         }
         Follow(first);
         if (draft != null) shared.Mode = draft.Shared;

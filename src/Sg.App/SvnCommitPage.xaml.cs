@@ -282,6 +282,7 @@ public sealed partial class SvnCommitPage : SgPage
     {
         var picked = _rows.Count(r => r.Checked);
         CommitButton.IsEnabled = picked > 0;
+        ActionHint.SetHelp(CommitButton, picked > 0 ? "Review the message and commit the selected files to SVN." : "Select at least one changed file to commit to SVN.");
         Message.Ready = picked > 0;
         CommitLabel.Text = picked == 0 ? "Commit to SVN" : $"Commit {picked} to SVN";
     }

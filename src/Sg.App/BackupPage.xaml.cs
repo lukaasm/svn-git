@@ -108,6 +108,7 @@ public sealed partial class BackupPage : SgPage
         using var read = _reads.Begin();
         _previewReads.Cancel();
         _catalog = null; _entries.Clear(); _preview = null; _selectedRow = null;
+        AppearancePreview.Hide();
         PreviewLoading.Hide(); PreviewError.IsOpen = false; PreviewTitle.Visibility = Visibility.Collapsed;
         ReadingBackup.Hide();
         ReadError.IsOpen = false;
@@ -272,6 +273,7 @@ public sealed partial class BackupPage : SgPage
         BasesHeader.Visibility = BasesCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (!has)
         {
+            AppearancePreview.Hide();
             DriftBar.IsOpen = false;
             SyncButton();
             return;
@@ -293,6 +295,7 @@ public sealed partial class BackupPage : SgPage
         var entry = _picked;
         var co = Into;
         if (entry == null) return;
+        AppearancePreview.Show(entry.HasAppearance, _preview?.AppearanceIcon, entry.Checkout, co);
         var drift = co == null ? new List<ExportDrift>() : Export.DriftOf(Session.Require(), MetaOf(entry), co);
         var rows = entry.Bases.Select(b =>
         {
@@ -414,6 +417,7 @@ public sealed partial class BackupPage : SgPage
         ResultBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
         ResultBar.Message = outcome.Detail;
         ResultBar.IsOpen = true;
+        AppearancePreview.ShowResult(res.CheckoutAppearanceRestored, res.CheckoutAppearanceWarning);
         SetResumeAction(res);
 
         var conflicts = res.Conflicted.Concat(res.WipConflicted).ToList();

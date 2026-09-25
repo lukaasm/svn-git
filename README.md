@@ -52,7 +52,7 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-push-message.ps1` creates multiline commits in a local SVN fixture with an external and verifies that the Push to SVN message follows the selected range, Send all restores the full message, and manual edits survive range changes. Shared and per-working-copy drafts survive navigation, including disabled overrides and empty drafts that still fail validation. It checks that returning from Readiness restores both filters and the commit boundary, including when history or the snapshot changed while away. A fixture-only Git proxy delays or fails preview reads to check disabled actions, stable layout, cancellation of obsolete reads and inline retry. It runs through native UI Automation on a private desktop and cancels every dialog without pushing. Build the Debug CLI and app first.
 
-`scripts/test-checkout-icons.ps1` drives the native file picker on a private desktop and checks expanded/collapsed folder identities, cancellation, image resizing and storage, restart persistence, missing-image fallback, resetting one checkout without applying an unsaved rename, restoring its backed-up image, and export imports that apply or preserve appearance with immediate sidebar feedback. Screenshots are saved under `TestResults/UI` for visual inspection.
+`scripts/test-checkout-icons.ps1` drives the native file picker on a private desktop and checks expanded/collapsed folder identities, cancellation, image resizing and storage, restart persistence, missing-image fallback, resetting one checkout without applying an unsaved rename, restoring its backed-up image, and export imports that apply or preserve appearance with immediate sidebar feedback. It also checks current/saved thumbnails, destination changes, and saved initials. Screenshots are saved under `TestResults/UI` for visual inspection.
 
 `scripts/test-ui-polish.ps1 -FixtureRoot <workflow-fixture-root> -SourceRoot <real-root>` copies real checkout names into a new local fixture and checks collapsed identities, disabled-action help, keyboard tooltips, rapid validation, task collisions, and review navigation. It records UI Automation timings; the source repository supplies names only and remains unchanged.
 
@@ -343,8 +343,11 @@ work is not in it either; commit it, or shelve it, first. A branch of a few file
 
 The checkout's chosen icon, including an explicit reset to initials, travels as separate appearance metadata.
 Import previews and confirmations explain whether it will be applied: only checkouts without a local appearance
-choice adopt it. Existing images and explicit initials are kept. Icons stay in `.sg/icons`, outside source history;
-older exports without appearance metadata still import normally. Invalid appearance data is rejected before
+choice adopt it. Existing images and explicit initials are kept. Icons stay in `.sg/icons`, outside source history.
+Import and backup restore share current/saved folder thumbnails and a labeled outcome. Changing the destination
+refreshes the preview, and completion updates it to the appearance actually kept or restored. Preview images are
+loaded in memory without changing checkout settings or writing an icon into the root.
+Older exports without appearance metadata still import normally. Invalid appearance data is rejected before
 creating the branch. If saving the icon fails after the commits arrive, the result reports the imported work
 and an appearance warning so the work remains accessible.
 

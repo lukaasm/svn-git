@@ -19,7 +19,12 @@ public sealed class BackupCatalog
 }
 
 /// <summary>The selected version, including the refs a subsequent restore must still match.</summary>
-public sealed record BackupPreview(BackupEntry Entry, IReadOnlyDictionary<string, string> ExpectedRefs);
+public sealed record BackupPreview(BackupEntry Entry, IReadOnlyDictionary<string, string> ExpectedRefs)
+{
+    /// <summary>Validated image bytes for an in-memory preview; Entry.HasAppearance distinguishes saved initials from no appearance.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public byte[]? AppearanceIcon { get; init; }
+}
 
 public static partial class Backup
 {
@@ -54,7 +59,8 @@ public static partial class Backup
         if (item.Kind == "branch" && catalog.Refs.TryGetValue(RemoteRef(cfg, "review", item.Name), out var reviewSha)) expected[RemoteRef(cfg, "review", item.Name)] = reviewSha;
         if (item.Kind == "branch" && catalog.Refs.TryGetValue(RemoteRef(cfg, "appearance", item.Name), out var appearanceSha)) expected[RemoteRef(cfg, "appearance", item.Name)] = appearanceSha;
         ReadEntry(root, cfg, LocalNames(root), item.HasWip ? new(StringComparer.Ordinal) { item.Name } : new(StringComparer.Ordinal), entry);
-        return new(entry, expected);
+        var appearance = item.HasAppearance ? FetchAppearance(root, cfg, item.Name, catalog.Refs) : null;
+        return new(entry, expected) { AppearanceIcon = appearance?.Icon };
     }
 
     // Callers hold the root lock so validation and the fetched version belong to the same destination.

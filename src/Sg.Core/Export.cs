@@ -45,6 +45,9 @@ public sealed class ExportMeta
     /// <summary>Optional appearance.json accompanies the patches; absent in older exports.</summary>
     public bool HasAppearance { get; set; }
     internal CheckoutAppearanceData? Appearance { get; set; }
+    /// <summary>Validated image bytes for an in-memory preview; null means saved initials or no appearance.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public byte[]? AppearanceIcon => Appearance?.Icon;
 
     /// <summary>The root first, then every external the snapshot names.</summary>
     public List<ExportWc> Bases { get; set; } = new();

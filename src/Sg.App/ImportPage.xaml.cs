@@ -67,6 +67,7 @@ public sealed partial class ImportPage : SgPage
         _targetValidation.Invalidate();
         ExistingDestination.Update(null, null);
         _meta = null;
+        AppearancePreview.Hide();
         ImportButton.IsEnabled = false;
         var root = Session.Require();
         Subtitle = _file;
@@ -122,9 +123,7 @@ public sealed partial class ImportPage : SgPage
         var meta = _meta;
         var co = Into;
         if (meta == null) return;
-        AppearanceRow.Visibility = meta.HasAppearance ? Visibility.Visible : Visibility.Collapsed;
-        AppearanceNote.Text = co == null ? "Includes checkout appearance. Choose a destination to see how it will be used."
-            : CheckoutIcons.RestoreDescription(meta.HasAppearance, co);
+        AppearancePreview.Show(meta.HasAppearance, meta.AppearanceIcon, meta.Checkout, co);
         var drift = co == null ? new List<ExportDrift>() : Export.DriftOf(Session.Require(), meta, co);
         var rows = meta.Bases.Select(b =>
         {
@@ -240,6 +239,7 @@ public sealed partial class ImportPage : SgPage
         ResultBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
         ResultBar.Message = outcome.Detail;
         ResultBar.IsOpen = true;
+        AppearancePreview.ShowResult(res.CheckoutAppearanceRestored, res.CheckoutAppearanceWarning);
 
         ConflictsHeader.Visibility = ConflictsCard.Visibility = res.Conflicted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         Conflicts.ItemsSource = res.Conflicted;

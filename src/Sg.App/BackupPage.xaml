@@ -108,6 +108,8 @@
                     <InfoBar x:Name="DriftBar" Severity="Warning" IsClosable="False" IsOpen="False"
                              Title="This checkout has moved on since the backup" />
 
+                    <local:CheckoutAppearancePreview x:Name="AppearancePreview" />
+
                     <TextBlock x:Name="BasesHeader" Text="The revisions it was cut from" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
                     <Border x:Name="BasesCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
                         <local:RowListView x:Name="Bases" SelectionMode="None">

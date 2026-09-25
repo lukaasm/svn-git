@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Composition;
 using System.Numerics;
+using Windows.Storage.Streams;
 using Sg.Core;
 
 namespace Sg.App;
@@ -22,13 +23,20 @@ internal static class CheckoutIcons
 
     public static FontIcon Create(CheckoutConfig checkout)
     {
-        var name = checkout.Name;
         var path = Session.Root is { } root ? CheckoutAppearance.IconPath(root, checkout) : null;
+        return Create(checkout.Name, IdentityOf(checkout), path, null);
+    }
+
+    internal static FontIcon Preview(string name, byte[]? png) => Create(name, null, null, png);
+
+    static FontIcon Create(string name, object? identity, string? path, byte[]? png)
+    {
         var icon = new FontIcon { Glyph = IdentityColor.Initials(name), FontFamily = new FontFamily("Segoe UI"),
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 11, Width = 24, Height = 24, Tag = IdentityOf(checkout) };
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 11, Width = 24, Height = 24, Tag = identity };
         CompositionColorBrush? stroke = null;
         ContainerVisual? visual = null;
         LoadedImageSurface? surface = null;
+        IRandomAccessStream? stream = null;
         void Paint()
         {
             icon.Foreground = UserColors.Brush(name);
@@ -38,6 +46,7 @@ internal static class CheckoutIcons
         {
             ElementCompositionPreview.SetElementChildVisual(icon, null);
             surface?.Dispose(); surface = null;
+            stream?.Dispose(); stream = null;
             visual?.Dispose(); visual = null;
             stroke?.Dispose(); stroke = null;
         }
@@ -45,6 +54,7 @@ internal static class CheckoutIcons
         {
             Unload();
             icon.Glyph = IdentityColor.Initials(name);
+            AutomationProperties.SetHelpText(icon, "Folder with " + IdentityColor.Initials(name) + " initials");
             var compositor = ElementCompositionPreview.GetElementVisual(icon).Compositor;
             visual = compositor.CreateContainerVisual();
             stroke = compositor.CreateColorBrush();
@@ -65,10 +75,13 @@ internal static class CheckoutIcons
             }
             visual.Children.InsertAtTop(outline);
             ElementCompositionPreview.SetElementChildVisual(icon, visual);
-            if (path == null || !File.Exists(path)) return;
+            if (png == null && (path == null || !File.Exists(path))) return;
             try
             {
-                var loading = LoadedImageSurface.StartLoadFromUri(new Uri(path));
+                // Preview saved images without publishing them into the checkout's icon store.
+                if (png != null) stream = new MemoryStream(png, writable: false).AsRandomAccessStream();
+                var loading = stream != null ? LoadedImageSurface.StartLoadFromStream(stream)
+                    : LoadedImageSurface.StartLoadFromUri(new Uri(path!));
                 surface = loading;
                 loading.LoadCompleted += (_, args) =>
                 {

@@ -30,6 +30,7 @@ public sealed partial class BackupTests
         var selected = Assert.Single(catalog.Items);
         Assert.True(selected.HasAppearance);
         var planned = Backup.Preview(f.Root, catalog, selected);
+        Assert.Equal(IconPng, planned.AppearanceIcon);
         Assert.Equal(remote[reference], planned.ExpectedRefs[reference]);
         var coverage = Backup.Coverage(f.Root, path);
         Assert.Contains(coverage.Coverage, c => c.Kind == "appearance" && c.Files.SequenceEqual([".sg/icons/" + f.Co.Icon]));
@@ -39,6 +40,11 @@ public sealed partial class BackupTests
         Backup.Set(far, _remote, prefix: "desktop");
         // Checkout matching uses repository identity, not the source checkout's display name.
         Ops.UpdateCheckout(far, co, new Ops.CheckoutEdit(Name: "OtherMachine"));
+        var farCatalog = Backup.Browse(far);
+        var farPreview = Backup.Preview(far, farCatalog, Assert.Single(farCatalog.Items));
+        Assert.Equal(IconPng, farPreview.AppearanceIcon);
+        Assert.Null(co.Icon);
+        Assert.False(Directory.Exists(Path.Combine(far.StorePath, "icons")));
         var restored = Backup.Restore(far, "selected", asBranch: "renamed", intoCheckout: co.Name, expectedRefs: planned.ExpectedRefs);
         Assert.True(restored.Ok);
         Assert.True(restored.CheckoutAppearanceRestored);
@@ -121,6 +127,11 @@ public sealed partial class BackupTests
         Assert.Equal(JsonValueKind.Null, JsonDocument.Parse(json).RootElement.GetProperty("Icon").ValueKind);
 
         var (fresh, freshCo) = Far("fresh");
+        var resetCatalog = Backup.Browse(fresh);
+        var resetPreview = Backup.Preview(fresh, resetCatalog, Assert.Single(resetCatalog.Items));
+        Assert.True(resetPreview.Entry.HasAppearance);
+        Assert.Null(resetPreview.AppearanceIcon);
+        Assert.Null(freshCo.Icon);
         var reset = Backup.Restore(fresh, "selected");
         Assert.True(reset.CheckoutAppearanceRestored);
         Assert.Equal("", freshCo.Icon);
@@ -160,6 +171,8 @@ public sealed partial class BackupTests
             var tree = Proc.Run("git", ["-C", _remote, "mktree"], null, f.Log, Encoding.UTF8.GetBytes("100644 blob " + blob + "\tappearance.json\n")).EnsureOk().StdOut.Trim();
             var commit = RemoteGit("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", tree, "-m", "malformed appearance").Trim();
             RemoteGit("update-ref", reference, commit);
+            var invalidCatalog = Backup.Browse(far);
+            Assert.Throws<SgException>(() => Backup.Preview(far, invalidCatalog, Assert.Single(invalidCatalog.Items)));
             Assert.Throws<SgException>(() => Backup.Restore(far, "selected"));
             Assert.Null(far.Git.RefSha("refs/heads/selected"));
             Assert.Null(co.Icon);

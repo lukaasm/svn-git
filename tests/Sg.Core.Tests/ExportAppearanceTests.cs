@@ -15,7 +15,10 @@ public sealed partial class ExportTests
         CheckoutAppearance.SetIcon(f.Root, f.Co.Name, IconPng);
         var file = File_();
         Export.Write(f.Root, wt, file);
-        Assert.True(Export.Read(file).HasAppearance);
+        var meta = Export.Read(file);
+        Assert.True(meta.HasAppearance);
+        Assert.Equal(IconPng, meta.AppearanceIcon);
+        Assert.DoesNotContain("appearanceIcon", System.Text.Json.JsonSerializer.Serialize(meta, SgConfig.JsonOptions));
         using (var zip = ZipFile.OpenRead(file))
         {
             Assert.Single(zip.Entries, e => e.FullName == "appearance.json");
@@ -48,6 +51,7 @@ public sealed partial class ExportTests
         var resetFile = Path.Combine(f.Base, "reset.sgexport");
         Export.Write(f.Root, wt, resetFile);
         Assert.True(Export.Read(resetFile).HasAppearance);
+        Assert.Null(Export.Read(resetFile).AppearanceIcon);
 
         var (far, co) = Far();
         Assert.True(Export.Import(far, resetFile, asBranch: "initials").CheckoutAppearanceRestored);

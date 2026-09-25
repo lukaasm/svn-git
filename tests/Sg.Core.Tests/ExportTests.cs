@@ -79,6 +79,7 @@ public sealed partial class ExportTests : IDisposable
 
         var meta = Export.Read(file);
         Assert.False(meta.HasAppearance);
+        Assert.Null(meta.AppearanceIcon);
         Assert.Equal(ExportMeta.Current, meta.Version);
         Assert.Equal(["[gui] first: edit one, add one", "second: rename one, delete one"], meta.Subjects);
         Assert.Equal(f.MonoUrl + "/trunk", meta.Root!.Url);

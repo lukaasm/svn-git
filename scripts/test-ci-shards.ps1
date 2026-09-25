@@ -18,6 +18,10 @@ $all = @($plan.shards | ForEach-Object { $_.methods })
 Assert ($all.Count -eq 41 -and @($all | Select-Object -Unique).Count -eq 41) 'Methods were duplicated or omitted.'
 Assert (($plan.shards | Measure-Object caseCount -Sum).Sum -eq 42) 'Theory cases were omitted.'
 Assert (@($plan.shards | Where-Object { $_.methods -contains 'Example.Tests.Theories.Value' }).Count -eq 1) 'Theory cases were split between shards.'
+$heavyClass = @(1..8 | ForEach-Object { "    Example.BackupTests.Heavy(value: $_)" }) +
+    @(1..24 | ForEach-Object { '    Example.BackupTests.Test{0:d2}' -f $_ })
+$balanced = Get-CiTestPlan $heavyClass 4
+Assert (@($balanced.shards | Where-Object { $_.caseCount -ne 8 }).Count -eq 0) 'A large theory overloaded one shard of a sequential test class.'
 Assert-Throws { Get-CiTestPlan @('No tests') 4 }
 Assert-Throws { Get-CiTestPlan @('    A custom display name') 1 }
 Assert-Throws { Get-CiTestPlan @('    Example.Tests.OnlyTest') 4 }
@@ -51,4 +55,4 @@ try {
     Remove-Item -LiteralPath $settingsPath, $trxPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $temp
 }
-Write-Host 'PASS: shard coverage, stable assignment, theory grouping, exact filters, and incomplete/failed result rejection.'
+Write-Host 'PASS: shard coverage, stable assignment, class balancing, theory grouping, exact filters, and incomplete/failed result rejection.'

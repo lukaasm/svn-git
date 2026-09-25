@@ -16,14 +16,37 @@ function Get-CiTestPlan {
     if ($cases.Count -lt $ShardCount) { throw "Discovered only $($cases.Count) test methods for $ShardCount shards." }
     [string[]]$methods = @($cases.Keys)
     [Array]::Sort($methods, [StringComparer]::Ordinal)
+    $classes = [Collections.Generic.SortedDictionary[string, Collections.Generic.List[string]]]::new([StringComparer]::Ordinal)
+    foreach ($method in $methods) {
+        $class = $method.Substring(0, $method.LastIndexOf('.'))
+        if (!$classes.ContainsKey($class)) { $classes[$class] = [Collections.Generic.List[string]]::new() }
+        $classes[$class].Add($method)
+    }
     $shards = @(for ($shard = 0; $shard -lt $ShardCount; $shard++) {
-        $selected = @(for ($i = $shard; $i -lt $methods.Count; $i += $ShardCount) { $methods[$i] })
-        [pscustomobject]@{
-            number = $shard + 1
-            methods = $selected
-            caseCount = [int](($selected | ForEach-Object { $cases[$_] } | Measure-Object -Sum).Sum)
-        }
+        [pscustomobject]@{ number = $shard + 1; methods = [Collections.Generic.List[string]]::new(); caseCount = 0 }
     })
+    # xUnit runs methods of one class sequentially. Balance each class separately, assigning its
+    # largest theories first; a theory with many cases must not count as one ordinary test.
+    foreach ($group in $classes.Values) {
+        [string[]]$ordered = $group.ToArray()
+        [Array]::Sort($ordered, [Comparison[string]]{
+            param($left, $right)
+            $weight = $cases[$right].CompareTo($cases[$left])
+            if ($weight -ne 0) { return $weight }
+            return [StringComparer]::Ordinal.Compare($left, $right)
+        })
+        $classLoads = [int[]]::new($ShardCount)
+        foreach ($method in $ordered) {
+            $target = 0
+            for ($i = 1; $i -lt $ShardCount; $i++) {
+                if ($classLoads[$i] -lt $classLoads[$target] -or
+                    ($classLoads[$i] -eq $classLoads[$target] -and $shards[$i].caseCount -lt $shards[$target].caseCount)) { $target = $i }
+            }
+            $shards[$target].methods.Add($method)
+            $shards[$target].caseCount += $cases[$method]
+            $classLoads[$target] += $cases[$method]
+        }
+    }
     [pscustomobject]@{ methodCount = $methods.Count; caseCount = [int](($cases.Values | Measure-Object -Sum).Sum); shards = $shards }
 }
 

@@ -142,7 +142,7 @@ The same build is kept as a workflow artifact, and the workflow deletes the arti
 
 CI runs the complete core suite across four Windows runners while another runner builds the CLI and UI.
 The `build` check and rolling release wait for every test shard and the package to succeed. Each shard
-discovers the current tests, groups theory cases by method, and uses exact method filters; missing,
+discovers the current tests, balances cases within each test class, keeps theories together, and uses exact method filters; missing,
 skipped, or failed results fail the job. NuGet packages are cached, and the portable ZIP is uploaded
 without compressing it a second time. The `sg-win-x64` workflow artifact contains that same ZIP.
 Test artifacts include the full shard plan, TRX results, and per-case timings; the slowest cases also

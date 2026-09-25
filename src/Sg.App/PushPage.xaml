@@ -7,7 +7,6 @@
 
         <!-- Above both states: a push that just went through empties the page, and its result must outlive that. -->
         <StackPanel Grid.Row="0" Spacing="6">
-            <Button x:Name="ReadinessButton" Content="Review readiness for this version" Click="ReviewReadiness_Click" />
             <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
             <InfoBar x:Name="RangeNotice" Severity="Warning" IsClosable="False" IsOpen="False"
                      Message="The previously selected commit is no longer on the branch. Choose a commit or Send all to continue." />
@@ -41,25 +40,33 @@
         <Grid x:Name="Filled" Grid.Row="1" RowDefinitions="Auto,*,Auto">
             <StackPanel Grid.Row="0" Spacing="8">
                 <InfoBar x:Name="WarnBar" Severity="Warning" IsClosable="False" IsOpen="False" />
+                <SelectorBar x:Name="CompactViews" Visibility="Collapsed" AutomationProperties.Name="Review view">
+                    <SelectorBarItem x:Name="ChangesTab" Text="Changes" IsSelected="True">
+                        <SelectorBarItem.Icon><FontIcon Glyph="&#xE8FD;" /></SelectorBarItem.Icon>
+                    </SelectorBarItem>
+                    <SelectorBarItem x:Name="DiffTab" Text="Diff">
+                        <SelectorBarItem.Icon><FontIcon Glyph="&#xE8A5;" /></SelectorBarItem.Icon>
+                    </SelectorBarItem>
+                </SelectorBar>
             </StackPanel>
 
             <Grid x:Name="Body" Grid.Row="1" Padding="0,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="LeftCol" Width="540" MinWidth="320" />
-                    <ColumnDefinition Width="10" />
-                    <ColumnDefinition Width="*" MinWidth="400" />
+                    <ColumnDefinition x:Name="SplitterCol" Width="10" />
+                    <ColumnDefinition x:Name="RightCol" Width="*" MinWidth="400" />
                 </Grid.ColumnDefinitions>
 
                 <!-- The commits take the height they need, up to a cap; the files get the rest. -->
-                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
+                <Grid x:Name="ChangesPane" Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
                     <!-- Pick where the push stops. The list is newest first, so picking a line sends
                          everything from the snapshot up to it and leaves the lines above it behind. -->
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="6">
                         <TextBlock x:Name="CommitsHeader" Text="Commits on the branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"
-                                   TextTrimming="CharacterEllipsis" />
-                        <TextBox x:Name="CommitFilterBox" Grid.Column="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12" MinWidth="200"
+                                   Grid.ColumnSpan="2" TextTrimming="CharacterEllipsis" />
+                        <TextBox x:Name="CommitFilterBox" Grid.Row="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12"
                                  ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. It changes the list, never what gets pushed: the cut stays on the commit it was on." />
-                        <Button x:Name="AllCommitsButton" Grid.Column="2" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
+                        <Button x:Name="AllCommitsButton" Grid.Row="1" Grid.Column="1" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
                                 IsEnabled="False"
                                 ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
                     </Grid>
@@ -72,11 +79,11 @@
                         </Grid>
                     </Border>
                     <InfoBar x:Name="PartialBar" Grid.Row="2" Severity="Informational" IsClosable="False" IsOpen="False" />
-                    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,6,0,0">
-                        <TextBlock x:Name="FilesHeader" Text="Files, one SVN commit per working copy" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                        <TextBox x:Name="Filter" Grid.Column="1" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
+                    <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
+                        <TextBlock x:Name="FilesHeader" Text="Files, one SVN commit per working copy" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                        <TextBox x:Name="Filter" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12"
                                  ToolTipService.ToolTip="Show only the rows whose status or path contains this text. It changes the list, never what gets pushed." />
-                    </Grid>
+                    </StackPanel>
                     <Border Grid.Row="4" Style="{StaticResource Card}" Padding="4">
                         <Grid>
                             <!-- One root per working copy, the same cut the push commits in. -->
@@ -88,7 +95,7 @@
 
                 <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
 
-                <Border Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                <Border x:Name="DiffPane" Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
                     <local:DiffView x:Name="Diff" Margin="1" />
                 </Border>
             </Grid>
@@ -125,41 +132,34 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
                 <!-- The message is asked for on the press, in a dialog, not held open under the checks. -->
-                <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-                    <local:IconButton x:Name="RefreshPreviewButton" Glyph="&#xE72C;" Text="Refresh"
-                        Click="Refresh_Click" ToolTipService.ToolTip="Read the branch again: commits, files, and the message." />
-                    <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is sent." />
-                    <!-- The same split the two commit pages have, and for the same reason: the left half is
-                         what the window is for, and the right half is the other things to do with the very
-                         same changes. Applying without committing is the way round a push when the change
-                         wants reading first, and the shelf is where a change waits instead of going. -->
-                    <local:TaskGate Grid.Column="3">
-                        <local:AccentSplitButton AutomationProperties.Name="Push to SVN" x:Name="PushButton"
+                <local:WrapRow Spacing="8" Margin="0,4,0,0">
+                    <local:TaskGate>
+                        <Button AutomationProperties.Name="Push to SVN" x:Name="PushButton" Style="{StaticResource AccentButtonStyle}"
                                                  Click="Push_Click" IsEnabled="False"
                                                  ToolTipService.ToolTip="Write the message, then sync the checkout, rebase the branch, and make one svn commit per repository. Asks before it commits. Ctrl+Enter opens this too.">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon Glyph="&#xE898;" FontSize="14" />
                                 <TextBlock Text="Push to SVN" />
                             </StackPanel>
-                            <local:AccentSplitButton.Flyout>
-                                <MenuFlyout Placement="TopEdgeAlignedRight">
-                                    <MenuFlyoutItem x:Name="ApplyItem" Text="Apply without committing" Click="Apply_Click"
-                                                    ToolTipService.ToolTip="Write the same changes into the checkout and stop there. Nothing goes to the server and the branch does not move: read them, change them, and commit them yourself from the changes window or from TortoiseSVN.">
-                                        <MenuFlyoutItem.Icon>
-                                            <FontIcon Glyph="&#xE8DE;" />
-                                        </MenuFlyoutItem.Icon>
-                                    </MenuFlyoutItem>
-                                    <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
-                                                    ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back.">
-                                        <MenuFlyoutItem.Icon>
-                                            <FontIcon Glyph="&#xE81C;" />
-                                        </MenuFlyoutItem.Icon>
-                                    </MenuFlyoutItem>
-                                </MenuFlyout>
-                            </local:AccentSplitButton.Flyout>
-                        </local:AccentSplitButton>
+                        </Button>
                     </local:TaskGate>
-                </Grid>
+                    <local:IconButton x:Name="RefreshPreviewButton" Glyph="&#xE72C;" Text="Refresh"
+                        Click="Refresh_Click" ToolTipService.ToolTip="Read the branch again: commits, files, and the message." />
+                    <local:IconButton x:Name="AdvancedButton" Glyph="&#xE712;" Text="Advanced" ToolTipService.ToolTip="Review readiness, apply locally, or open shelved changes.">
+                        <Button.Flyout>
+                            <Flyout x:Name="AdvancedFlyout" Placement="TopEdgeAlignedLeft">
+                                <StackPanel Spacing="8">
+                                    <local:IconButton x:Name="ReadinessButton" Glyph="&#xE73E;" Text="Review readiness" Click="ReviewReadiness_Click" />
+                                    <local:TaskGate>
+                                        <local:IconButton x:Name="ApplyItem" Glyph="&#xE8DE;" Text="Apply without committing" Click="Apply_Click" />
+                                    </local:TaskGate>
+                                    <local:IconButton Glyph="&#xE7B8;" Text="Shelved changes" Click="Shelf_Click" />
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </local:IconButton>
+                    <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is sent." />
+                </local:WrapRow>
             </StackPanel>
         </Grid>
 
@@ -170,7 +170,11 @@
                              Header="Commit message for SVN" CountTip="The server refuses a shorter message. The minimum is in Settings.">
             <local:MessageDialog.Extra>
                 <StackPanel Spacing="6">
-                    <TextBlock Text="One SVN commit in each of these" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
+                    <TextBlock x:Name="RepoSummary" TextWrapping="Wrap" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
+                    <Expander x:Name="RepoMessageOptions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Advanced commit messages">
+                        <Expander.Header>
+                            <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" FontSize="16" /><TextBlock x:Name="RepoOptionsLabel" Text="Advanced: separate messages" /></StackPanel>
+                        </Expander.Header>
                     <ItemsControl x:Name="Repos">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="local:PushRepoRow">
@@ -193,6 +197,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </Expander>
                 </StackPanel>
             </local:MessageDialog.Extra>
         </local:MessageDialog>

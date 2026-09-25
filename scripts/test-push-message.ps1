@@ -1,14 +1,16 @@
 # Native UI Automation on a private desktop. Build Debug successfully before running.
 # Creates a local SVN fixture; no push or server write is performed by the UI.
-param([switch]$Worker, [string]$ArtifactDirectory)
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$CompactOnly, [switch]$PreviewOnly)
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
     if (!('UiTestDesktop' -as [type])) { Add-Type -Path "$PSScriptRoot/UiTestDesktop.cs" }
     $ArtifactDirectory = (New-Item -ItemType Directory -Path "$PSScriptRoot/../TestResults/UI/push-message-$([Guid]::NewGuid().ToString('N'))").FullName
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
+    if ($CompactOnly) { $command += ' -CompactOnly' }
+    if ($PreviewOnly) { $command += ' -PreviewOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-push-message-' + [Guid]::NewGuid().ToString('N')))
     try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(420)
+        $deadline = [DateTime]::UtcNow.AddSeconds(600)
         while (!$desktop.Wait(200)) { if ([DateTime]::UtcNow -ge $deadline) { throw 'Push message UI test timed out.' } }
         if ($desktop.ExitCode -ne 0) { throw "Push message UI failed. See $ArtifactDirectory/probe-error.txt" }
         Write-Output "PASS: Push message UI. Artifacts: $ArtifactDirectory"
@@ -57,7 +59,8 @@ function Select-Range([int]$count) {
     $null = Wait-For { (Find 'Header').Current.Name -like "Sending $count of $script:fixtureCommits commit*" }
 }
 function Open-Readiness {
-    Invoke-Control (Find 'ReadinessButton')
+    Invoke-Control (Find 'AdvancedButton')
+    Invoke-Control (Wait-For { Find 'ReadinessButton' })
     $null = Wait-For { !(Find 'ReadinessButton') }
 }
 function Return-ToPush {
@@ -89,16 +92,18 @@ function Assert-Pending {
         throw 'The loading explanation is not available to keyboard users.'
     }
 }
-function Open-Message {
+function Open-Message([switch]$Basic) {
     $button = Wait-For { $b = Find 'PushButton'; if ($b -and $b.Current.IsEnabled) { $b } }
     Invoke-Control $button
     $header = Wait-For { Find 'Commit message for SVN' -Name }
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
     $panel = $walker.GetParent($walker.GetParent($header))
-    Wait-For {
+    $box = Wait-For {
         $panel.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))
     }
+    if (!$Basic) { (Wait-For { Find 'RepoMessageOptions' }).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() }
+    $box
 }
 function Close-Message {
     Invoke-Control (Find 'CloseButton')
@@ -158,6 +163,59 @@ try {
     $config = Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json
     $config.gitExe = Join-Path $env:SG_UI_COMMAND_GATE 'bin/Debug/net10.0/UiCommandGate.exe'
     $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configFile
+
+    if (!$PreviewOnly) {
+        Start-UiScenario 'Narrow Push keeps common actions and both review panes accessible'
+        $env:SG_UI_TEST_WINDOW_SIZE = '600x900'
+        $process = Start-Process -FilePath $app -ArgumentList @('push', ('"' + $worktree + '"')) -WindowStyle Hidden -PassThru
+        $window = Wait-For { Get-TestAppWindow $process }
+        $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
+        function Assert-Fits([string]$id) {
+            $element = Wait-For { Find $id } "Missing narrow Push control: $id"
+            $r = $element.Current.BoundingRectangle; $bounds = $window.Current.BoundingRectangle
+            if ($element.Current.IsOffscreen -or $r.Width -le 0 -or $r.Left -lt $bounds.Left -or $r.Right -gt $bounds.Right -or $r.Bottom -gt $bounds.Bottom) { throw "Clipped narrow Push control: $id ($r) in $bounds" }
+        }
+        foreach ($id in @('PushButton', 'AdvancedButton', 'CommitFilterBox', 'AllCommitsButton', 'Filter', 'ChangesTab', 'DiffTab')) { Assert-Fits $id }
+        if (Find 'ReadinessButton') { throw 'Advanced review readiness is exposed before opening Advanced.' }
+        Select-Range 2
+        (Find 'DiffTab').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        $null = Wait-For { (Find 'TitleText') -and !(Find 'TitleText').Current.IsOffscreen }
+        Assert-Fits 'TitleText'
+        Save-UiWindow $window (Join-Path $ArtifactDirectory 'push-diff-narrow.png')
+        (Find 'ChangesTab').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        $null = Wait-For { (Find 'Commits') -and !(Find 'Commits').Current.IsOffscreen }
+        if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Changing review panes lost the selected range.' }
+        (Find 'A  change-1.txt' -Name).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        $null = Wait-For { $title = Find 'TitleText'; $title -and !$title.Current.IsOffscreen -and $title.Current.Name -like '*change-1.txt*' }
+        if ((Find 'DiffTab').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected -ne $true) { throw 'Selecting a file did not switch to its diff.' }
+        (Find 'ChangesTab').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        Save-UiWindow $window (Join-Path $ArtifactDirectory 'push-narrow.png')
+        $null = Open-Message -Basic
+        if ((Find 'RepoMessageOptions').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -ne 'Collapsed') { throw 'Per-repository messages should start collapsed.' }
+        foreach ($id in @('RepoSummary', 'RepoMessageOptions', 'PrimaryButton', 'CloseButton')) { Assert-Fits $id }
+        if ((Find 'RepoSummary').Current.Name -notlike '2 SVN commit*root*library*') { throw 'The collapsed message form hides its destinations.' }
+        Save-UiWindow $window (Join-Path $ArtifactDirectory 'push-message-narrow.png')
+        (Find 'RepoMessageOptions').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+        foreach ($wc in @('root', 'library')) {
+            $toggle = Wait-For { Find "Own message for $wc" -Name }
+            $r = $toggle.Current.BoundingRectangle; $bounds = $window.Current.BoundingRectangle
+            if ($toggle.Current.IsOffscreen -or $r.Left -lt $bounds.Left -or $r.Right -gt $bounds.Right) { throw "Clipped narrow repository message switch: $wc" }
+        }
+        Save-UiWindow $window (Join-Path $ArtifactDirectory 'push-message-advanced-narrow.png')
+        Close-Message
+        Open-Readiness
+        Return-ToPush
+        if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Advanced navigation lost the narrow view range.' }
+        Stop-Process -Id $process.Id; $process.WaitForExit()
+        Complete-UiScenario
+
+        if ($CompactOnly) {
+            Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+            return
+        }
+    }
+
+    $env:SG_UI_TEST_WINDOW_SIZE = '1280x900'
     $process = Start-Process -FilePath $app -ArgumentList @('push', ('"' + $worktree + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For {
         $candidate = Get-TestAppWindow $process
@@ -167,77 +225,80 @@ try {
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $null = Wait-For { $h = Find 'Header'; $h -and $h.Current.Name -like '3 commit*' }
 
-    Start-UiScenario 'A shared draft survives returning from Readiness'
-    $draft = "# Drafting note`n`nCustom SVN summary`n`nKeep this explanation."
-    Enter-Value (Open-Message) $draft
-    Close-Message
-    Open-Readiness
-    Return-ToPush
-    $box = Open-Message
-    if ((Read-Value $box).Replace("`r`n", "`n").Replace("`r", "`n") -ne $draft) { throw 'Returning from Readiness discarded the custom shared message.' }
-    Enter-Value $box ''
-    Close-Message
-    Complete-UiScenario
+    if (!$PreviewOnly) {
+        Start-UiScenario 'A shared draft survives returning from Readiness'
+        $draft = "# Drafting note`n`nCustom SVN summary`n`nKeep this explanation."
+        Enter-Value (Open-Message) $draft
+        Close-Message
+        Open-Readiness
+        Return-ToPush
+        $box = Open-Message
+        if ((Read-Value $box).Replace("`r`n", "`n").Replace("`r", "`n") -ne $draft) { throw 'Returning from Readiness discarded the custom shared message.' }
+        Enter-Value $box ''
+        Close-Message
+        Complete-UiScenario
 
-    Start-UiScenario 'Own drafts stay with each working copy across navigation and range changes'
-    $null = Open-Message
-    foreach ($wc in @('root', 'library')) {
-        (Find "Own message for $wc" -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-        Enter-Value (Wait-For { Find "Commit message for $wc" -Name }) "Custom $wc summary`n`nDetails for $wc."
-    }
-    Close-Message
-    Select-Range 1
-    Open-Readiness
-    Return-ToPush
-    $null = Open-Message
-    if ((Read-Value (Find 'Commit message for root' -Name)) -notlike 'Custom root summary*') { throw 'Root own message was not restored.' }
-    if (Find 'Own message for library' -Name) { throw 'An absent working copy remained in the selected range.' }
-    Close-Message
-    Invoke-Control (Find 'AllCommitsButton')
-    $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
-    $null = Open-Message
-    $library = Wait-For { Find 'Commit message for library' -Name }
-    if ((Read-Value $library) -notlike 'Custom library summary*') { throw 'The temporarily absent external lost its own draft.' }
-    Enter-Value $library ''
-    Close-Message
-    Open-Readiness
-    Return-ToPush
-    $null = Open-Message
-    if ((Read-Value (Find 'Commit message for library' -Name)) -ne '') { throw 'Returning silently replaced an empty own draft.' }
-    if ((Find 'PrimaryButton').Current.IsEnabled) { throw 'An empty own draft passed validation.' }
-    Enter-Value (Find 'Commit message for library' -Name) 'Saved external draft'
-    foreach ($wc in @('root', 'library')) {
-        (Find "Own message for $wc" -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-    }
-    Close-Message
-    Open-Readiness
-    Return-ToPush
-    $null = Open-Message
-    $toggle = (Find 'Own message for library' -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
-    if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) { throw 'Returning turned an own-message override on.' }
-    $toggle.Toggle()
-    if ((Read-Value (Find 'Commit message for library' -Name)) -ne 'Saved external draft') { throw 'Turning the override off discarded its draft.' }
-    $toggle.Toggle()
-    Close-Message
-    Complete-UiScenario
+        Start-UiScenario 'Own drafts stay with each working copy across navigation and range changes'
+        $null = Open-Message
+        foreach ($wc in @('root', 'library')) {
+            (Find "Own message for $wc" -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+            Enter-Value (Wait-For { Find "Commit message for $wc" -Name }) "Custom $wc summary`n`nDetails for $wc."
+        }
+        Close-Message
+        Select-Range 1
+        Open-Readiness
+        Return-ToPush
+        $null = Open-Message
+        if ((Read-Value (Find 'Commit message for root' -Name)) -notlike 'Custom root summary*') { throw 'Root own message was not restored.' }
+        if (Find 'Own message for library' -Name) { throw 'An absent working copy remained in the selected range.' }
+        Close-Message
+        Invoke-Control (Find 'AllCommitsButton')
+        $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
+        $null = Open-Message
+        $library = Wait-For { Find 'Commit message for library' -Name }
+        if ((Read-Value $library) -notlike 'Custom library summary*') { throw 'The temporarily absent external lost its own draft.' }
+        Enter-Value $library ''
+        Close-Message
+        Open-Readiness
+        Return-ToPush
+        $null = Open-Message
+        if ((Read-Value (Find 'Commit message for library' -Name)) -ne '') { throw 'Returning silently replaced an empty own draft.' }
+        if ((Find 'PrimaryButton').Current.IsEnabled) { throw 'An empty own draft passed validation.' }
+        Enter-Value (Find 'Commit message for library' -Name) 'Saved external draft'
+        foreach ($wc in @('root', 'library')) {
+            (Find "Own message for $wc" -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+        }
+        Close-Message
+        Open-Readiness
+        Return-ToPush
+        $null = Open-Message
+        $toggle = (Find 'Own message for library' -Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) { throw 'Returning turned an own-message override on.' }
+        $toggle.Toggle()
+        if ((Read-Value (Find 'Commit message for library' -Name)) -ne 'Saved external draft') { throw 'Turning the override off discarded its draft.' }
+        $toggle.Toggle()
+        Close-Message
+        Complete-UiScenario
 
-    Start-UiScenario 'Returning from Readiness restores the selected range and both filters'
-    Select-Range 2
-    Enter-Value (Find 'CommitFilterBox') 'Change 3'
-    Enter-Value (Find 'Filter') 'change-2'
-    $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' }
-    Open-Readiness
-    Return-ToPush
-    if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Returning from Readiness lost the selected commit range.' }
-    if ((Read-Value (Find 'CommitFilterBox')) -ne 'Change 3' -or (Read-Value (Find 'Filter')) -ne 'change-2') { throw 'Returning from Readiness lost the commit or file filter.' }
-    $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' -and (Find 'FilesHeader').Current.Name -like '*showing 1 of 3*' }
-    Assert-Message (Open-Message) 2
-    Close-Message
-    Enter-Value (Find 'CommitFilterBox') ''
-    Enter-Value (Find 'Filter') ''
-    Invoke-Control (Find 'AllCommitsButton')
-    $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
-    Complete-UiScenario
+        Start-UiScenario 'Returning from Readiness restores the selected range and both filters'
+        Select-Range 2
+        Enter-Value (Find 'CommitFilterBox') 'Change 3'
+        Enter-Value (Find 'Filter') 'change-2'
+        $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' }
+        Open-Readiness
+        Return-ToPush
+        if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Returning from Readiness lost the selected commit range.' }
+        if ((Read-Value (Find 'CommitFilterBox')) -ne 'Change 3' -or (Read-Value (Find 'Filter')) -ne 'change-2') { throw 'Returning from Readiness lost the commit or file filter.' }
+        $null = Wait-For { (Find 'CommitsHeader').Current.Name -like '*showing 1 of 3*' -and (Find 'FilesHeader').Current.Name -like '*showing 1 of 3*' }
+        Assert-Message (Open-Message) 2
+        Close-Message
+        Enter-Value (Find 'CommitFilterBox') ''
+        Enter-Value (Find 'Filter') ''
+        Invoke-Control (Find 'AllCommitsButton')
+        $null = Wait-For { (Find 'Header').Current.Name -like '3 commit*' }
+        Complete-UiScenario
+
+    }
 
     Start-UiScenario 'A pending selection blocks Push until its preview is ready'
     $before = (Find 'Commits').Current.BoundingRectangle
@@ -346,9 +407,8 @@ try {
     Choose-Range 2
     Wait-CommandGate $gate
     Remove-Item -LiteralPath (Join-Path $env:SG_UI_COMMAND_GATE 'request.txt')
-    Invoke-Control (Find 'ReadinessButton')
+    Open-Readiness
     Assert-Cancelled $gate
-    $null = Wait-For { !(Find 'ReadinessButton') }
     Return-ToPush
     if ((Find 'Header').Current.Name -notlike 'Sending 2 of 3 commit*') { throw 'Navigation lost a selection whose preview had not finished.' }
     Assert-Message (Open-Message) 2

@@ -22,6 +22,7 @@ public sealed class MessageDialog : ContentDialog
     readonly TextBox _box = new() { MinHeight = 120, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
     readonly Button _recent = new() { Content = "Recent", FontSize = 12, Padding = new Thickness(8, 2, 8, 2), MinHeight = 0, VerticalAlignment = VerticalAlignment.Bottom };
     readonly ContentPresenter _extra = new();
+    readonly StackPanel _panel;
     int _minimum = 1;
     bool _ready;
     bool _asking;
@@ -45,7 +46,7 @@ public sealed class MessageDialog : ContentDialog
         head.Children.Add(_recent);
         _recent.Click += (_, _) => ShowRecent();
         ToolTipService.SetToolTip(_recent, "The messages that went through before. Picking one puts it in the box; nothing is sent by it.");
-        var panel = new StackPanel { Spacing = 6, Width = 620 };
+        var panel = _panel = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Stretch };
         panel.Children.Add(head);
         panel.Children.Add(_box);
         panel.Children.Add(_extra);
@@ -148,8 +149,15 @@ public sealed class MessageDialog : ContentDialog
     {
         if (_asking) return false;
         _asking = true;
+        var root = XamlRoot;
+        // Keep the full editor width on a desktop while reserving room for the dialog's padding
+        // and outer margins in a narrow window. Refit if the user resizes an open dialog.
+        void Fit() => _panel.Width = Math.Clamp(root.Size.Width - 96, 0, 620);
+        void RootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => Fit();
         try
         {
+            Fit();
+            root.Changed += RootChanged;
             _confirmed = false;
             SyncRecent();
             var result = await ShowAsync();
@@ -157,7 +165,7 @@ public sealed class MessageDialog : ContentDialog
             if (Confirm == null) return true;
             return await Dialogs.Confirm(this, Title as string ?? "", Confirm(), PrimaryButtonText);
         }
-        finally { _asking = false; }
+        finally { root.Changed -= RootChanged; _asking = false; }
     }
 
     static T Res<T>(string key) => (T)Application.Current.Resources[key];

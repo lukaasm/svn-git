@@ -1,6 +1,5 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Sg.Core;
 using Windows.System;
 
@@ -9,7 +8,11 @@ namespace Sg.App;
 /// <summary>Review what leaves the machine, then push. One SVN commit per working copy.</summary>
 public sealed partial class PushPage : SgPage
 {
-    void ReviewReadiness_Click(object sender, RoutedEventArgs e) => Go(() => new ReviewPage(_worktree), "review:" + _worktree);
+    void ReviewReadiness_Click(object sender, RoutedEventArgs e)
+    {
+        AdvancedFlyout.Hide();
+        Go(() => new ReviewPage(_worktree), "review:" + _worktree);
+    }
     readonly string _worktree;
     readonly ListFilter _filter;
     readonly PageReads _reads = new();
@@ -72,6 +75,8 @@ public sealed partial class PushPage : SgPage
         Title = "Push to SVN";
         Subtitle = worktree;
         ColumnSplitter.Attach(Splitter);
+        SizeChanged += (_, _) => ArrangeReview();
+        CompactViews.SelectionChanged += ReviewView_SelectionChanged;
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (PushButton.IsEnabled) _ = PushAsync(); });
         FileActions.Attach(Files, n => PathUtil.Join(_worktree, n.FullPath));
@@ -210,7 +215,7 @@ public sealed partial class PushPage : SgPage
         _reading = false;
         PreviewProgress.IsActive = false;
         PreviewProgress.Opacity = 0;
-        ReadinessButton.Content = "Full branch readiness: " + (bundle?.Readiness ?? "unavailable");
+        ReadinessButton.Text = "Full branch readiness: " + (bundle?.Readiness ?? "unavailable");
         CommitsSkeleton.Hide();
         FilesSkeleton.Hide();
         if (read == null)
@@ -385,6 +390,7 @@ public sealed partial class PushPage : SgPage
     async void OnPicked(TreeNode node)
     {
         if (_preview == null) return;
+        if (_compact) ShowDiff(true);
         var git = Session.Require().Git;
         var p = _preview;
         if (node.Row is not FileRow row)
@@ -471,6 +477,9 @@ public sealed partial class PushPage : SgPage
         ApplyItem.IsEnabled = _canPush;
         ActionHint.SetHelp(ApplyItem, _canPush ? "Write the selected changes into the checkout without committing to SVN." : help);
         Message.Ready = _canPush;
+        RepoSummary.Text = $"{_repos.Count} SVN commit(s): " + string.Join(", ", _repos.Select(r => r.Repo));
+        var custom = _repos.Count(r => r.Custom);
+        RepoOptionsLabel.Text = custom == 0 ? "Advanced: separate messages" : $"Advanced: {custom} separate message(s)";
     }
 
     /// <summary>
@@ -480,6 +489,7 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     void Shelf_Click(object sender, RoutedEventArgs e)
     {
+        AdvancedFlyout.Hide();
         var branch = Branch;
         Go(() => new ShelfPage(null, _worktree, branch) { Checkout = Checkout, Branch = branch }, "shelf:" + _worktree);
     }
@@ -491,6 +501,7 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     async void Apply_Click(object sender, RoutedEventArgs e)
     {
+        AdvancedFlyout.Hide();
         var p = _preview;
         if (!_canPush || !PushButton.IsEnabled || p == null) return;
         var gen = _generation;
@@ -612,14 +623,14 @@ public sealed partial class PushPage : SgPage
         await LoadAsync();
     }
 
-    /// <summary>The left half of the split button. Its right half drops the menu and never gets here.</summary>
-    async void Push_Click(SplitButton sender, SplitButtonClickEventArgs e) => await PushAsync();
+    async void Push_Click(object sender, RoutedEventArgs e) => await PushAsync();
 
     async Task PushAsync()
     {
         if (!_canPush || !PushButton.IsEnabled) return;
         var gen = _generation;
         var scope = _scope;
+        RepoMessageOptions.IsExpanded = _repos.Any(r => r.Custom);
         if (!await Message.AskAsync()) return;
         if (!_canPush || !PushButton.IsEnabled || gen != _generation) return;
         var root = Session.Require();

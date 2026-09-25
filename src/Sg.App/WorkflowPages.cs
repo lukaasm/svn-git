@@ -98,7 +98,16 @@ public abstract class WorkflowPage : SgPage
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expander, title);
         Body.Children.Add(expander);
     }
-    protected void CollapseActions(int start, string title)
+    protected void WrapActions(int start)
+    {
+        var row = new WrapRow { Spacing = 8 };
+        while (Body.Children.Count > start)
+        {
+            var child = Body.Children[start]; Body.Children.RemoveAt(start); row.Children.Add(child);
+        }
+        Body.Children.Add(row);
+    }
+    protected Expander CollapseActions(int start, string title, string glyph = "\uE713")
     {
         var content = new StackPanel { Spacing = 12 };
         while (Body.Children.Count > start)
@@ -107,9 +116,11 @@ public abstract class WorkflowPage : SgPage
             Body.Children.RemoveAt(start);
             content.Children.Add(child);
         }
-        var expander = new Expander { Header = Label(title, "\uE713"), Content = content, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var expander = new Expander { Header = Label(title, glyph), Content = content, HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expander, title);
         Body.Children.Add(expander);
+        return expander;
     }
     // Keep the persisted operation kind stable for older installations and recovery records.
     protected static string OperationTitle(OperationRecord record) => record.Kind == "Update from SVN" ? "Pull from SVN" : record.Kind;
@@ -120,6 +131,12 @@ public sealed class UpdateBranchPage : WorkflowPage
     readonly string _path;
     Func<Task>? _submit;
     OperationRecord? _lastResult;
+    sealed record ViewState(bool Revisions, bool Advanced, double Offset);
+    ViewState _view = new(false, false, 0);
+    Expander? _revisions, _advanced;
+    internal override object? CaptureViewState() => new ViewState(_revisions?.IsExpanded ?? _view.Revisions,
+        _advanced?.IsExpanded ?? _view.Advanced, _revisions == null && _advanced == null ? _view.Offset : Scroll.VerticalOffset);
+    internal override void RestoreViewState(object? state) { if (state is ViewState view) _view = view; }
     public UpdateBranchPage(string path) : base("Pull from SVN")
     {
         _path = path; Subtitle = path; Pane.StopAtBoundary(true);
@@ -128,6 +145,8 @@ public sealed class UpdateBranchPage : WorkflowPage
     protected override async Task Reload()
     {
         _submit = null;
+        _view = (ViewState)CaptureViewState()!;
+        _revisions = _advanced = null;
         Body.Children.Clear();
         using var generation = BeginRead(); var root = Session.Require();
         var completed = false;
@@ -163,22 +182,28 @@ public sealed class UpdateBranchPage : WorkflowPage
         {
             Title = OperationTitle(record); Branch = record.Branch; Checkout = record.Checkout;
             Text(record.PhaseLabel, true); Text(record.Detail ?? (record.Terminal ? "The recorded operation is complete. Its checkpoint and recovery shelves remain available." : "The operation can resume from its recorded step."));
-            foreach (var step in record.Steps) Text("✓ " + step);
-            Text("Branch checkpoint: " + record.Before + ". Restoring it does not undo SVN updates or published commits.");
+            var actions = Body.Children.Count;
             if (record.Phase == OperationPhase.Replaying)
-                Action("Review replay", () => Navigate(() => new ConflictPage(_path), "resolve:" + _path));
+                Action("Review replay", () => Navigate(() => new ConflictPage(_path), "resolve:" + _path), glyph: "\uE8A5");
             if (!record.Terminal && record.Phase != OperationPhase.NeedsReview)
             {
                 _submit = () => Execute("Resume pull", () => _lastResult = Operations.Resume(root, record.Id));
-                Action(record.Kind == "Update from SVN" ? "Resume pull" : "Refresh operation state", _submit, true, mutates: true);
+                Action(record.Kind == "Update from SVN" ? "Resume pull" : "Refresh operation state", _submit, true, mutates: true, glyph: "\uE768");
             }
-            Action("Review saved edits", () => Navigate(() => new ShelfPage(root.Checkout(record.Checkout)), "shelves:" + record.Checkout));
+            if (record.Terminal) Action("Back to branch", () => { Close(); return Task.CompletedTask; }, true, glyph: "\uE72B");
+            Action("Review saved edits", () => Navigate(() => new ShelfPage(root.Checkout(record.Checkout)), "shelves:" + record.Checkout), glyph: "\uE7B8");
+            RefreshPlan();
+            WrapActions(actions);
+            var advanced = Body.Children.Count;
+            Details("Steps and checkpoint", record.Steps.Select(step => "✓ " + step).Append("Branch checkpoint: " + record.Before
+                + ". Restoring it does not undo SVN updates or published commits."));
+            Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
             if (!record.Terminal)
             {
                 Text("Close operation keeps current files and every shelf. Any edits not restored yet remain on their shelves.");
-                Action("Keep current files and close operation", () => Execute("Close operation", () => _lastResult = Operations.FinishReview(root, record.Id)), mutates: true);
+                Action("Keep current files and close operation", () => Execute("Close operation", () => _lastResult = Operations.FinishReview(root, record.Id)), mutates: true, glyph: "\uE73E");
             }
-            else Action("Back to branch", () => { Close(); return Task.CompletedTask; }, true);
+            _advanced = CollapseActions(advanced, "Advanced");
         }
         else if (state is BranchUpdatePlan plan)
         {
@@ -186,8 +211,20 @@ public sealed class UpdateBranchPage : WorkflowPage
             Text($"{plan.Branch} · {plan.Commits} local commits", true);
             Body.Children.Add(new StatusChip { Text = plan.Ready ? "Ready to pull" : "Needs attention", Severity = plan.Ready ? ChipSeverity.Success : ChipSeverity.Critical, Glyph = plan.Ready ? "\uE73E" : "\uE7BA" });
             Text("Save edits → sync SVN → replay commits → restore edits");
+            Edits("Branch edits", plan.BranchEdits, _path);
+            Edits("Checkout edits", plan.CheckoutEdits, root.Checkout(plan.Checkout).Path);
+            foreach (var blocker in plan.Blockers) Body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Error, Message = blocker });
+            if (plan.Ready) _submit = () => Execute("Pull from SVN", () => _lastResult = Operations.Run(root, plan));
+            var actions = Body.Children.Count;
+            var updateLabel = plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and pull" : "Pull from SVN";
+            var update = Action(updateLabel, () => Execute("Pull from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true, glyph: "\uE896");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(update, "PullFromSvnButton");
+            TaskGate.SetHelp(update, plan.Ready ? "Save local edits, pull SVN changes, replay this branch, then restore the saved edits."
+                : string.Join("\n", plan.Blockers));
+            RefreshPlan();
             Link("Review local commits", "\uE81C", () => new LogPage(_path), "log:" + _path);
-            Text("SVN revisions", true);
+            WrapActions(actions);
+            var revisions = Body.Children.Count;
             foreach (var revision in plan.Revisions)
             {
                 var changed = revision.From != revision.To;
@@ -202,22 +239,24 @@ public sealed class UpdateBranchPage : WorkflowPage
             }
             Text("Checked now. Sync may fetch newer work.");
             Link("View SVN log", "\uE81C", () => new SvnLogPage(root.Checkout(plan.Checkout)), "svnlog:" + plan.Checkout);
-            Edits("Branch edits", plan.BranchEdits, _path);
-            Edits("Checkout edits", plan.CheckoutEdits, root.Checkout(plan.Checkout).Path);
-            Body.Children.Add(new Expander { Header = "What is preserved?", HorizontalAlignment = HorizontalAlignment.Stretch, Content = new TextBlock { Text = "Ignored files stay in place and are outside shelf coverage. Shared links follow the checkout; private shared-folder copies are not refreshed by this update.", TextWrapping = TextWrapping.Wrap } });
-            foreach (var blocker in plan.Blockers) Body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Error, Message = blocker });
-            if (plan.Ready) _submit = () => Execute("Pull from SVN", () => _lastResult = Operations.Run(root, plan));
-            var updateLabel = plan.BranchEdits.Count + plan.CheckoutEdits.Count > 0 ? "Save edits and pull" : "Pull from SVN";
-            var update = Action(updateLabel, () => Execute("Pull from SVN (stop requests wait for the current step)", () => _lastResult = Operations.Run(root, plan)), true, plan.Ready, mutates: true);
-            update.Content = Label(updateLabel, "\uE8AB");
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(update, updateLabel);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(update, "PullFromSvnButton");
+            var changedCount = plan.Revisions.Count(r => r.From != r.To);
+            _revisions = CollapseActions(revisions, $"SVN revisions · {changedCount} changed · {plan.Revisions.Count - changedCount} matching", "\uE895");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_revisions, "PullRevisions");
+            var advanced = Body.Children.Count;
+            Text("Ignored files stay in place and are outside shelf coverage. Shared links follow the checkout; private shared-folder copies are not refreshed by this pull.");
+            Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
+            _advanced = CollapseActions(advanced, "Advanced");
         }
-        Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
-        var refresh = Action("Refresh pull plan", () => { _lastResult = null; return Reload(); });
-        refresh.Content = Label("Refresh pull plan", "\uE72C");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(refresh, "Refresh pull plan");
+        if (_revisions != null) _revisions.IsExpanded = _view.Revisions;
+        if (_advanced != null)
+        {
+            _advanced.IsExpanded = _view.Advanced;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_advanced, "PullAdvanced");
+        }
+        BrowseScroll.Restore(Scroll, _view.Offset);
     }
+
+    void RefreshPlan() => Action("Refresh pull plan", () => { _lastResult = null; return Reload(); }, glyph: "\uE72C");
 
     void Edits(string title, IReadOnlyCollection<string> files, string path)
     {

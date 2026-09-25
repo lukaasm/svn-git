@@ -1,10 +1,10 @@
 # Reproduces a slow Pull read on a private desktop using only UI Automation.
-param([Parameter(Mandatory)][string]$FixtureRoot, [switch]$Worker, [string]$ArtifactDirectory)
+param([string]$FixtureRoot, [switch]$Worker, [string]$ArtifactDirectory)
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
     if (!('UiTestDesktop' -as [type])) { Add-Type -Path "$PSScriptRoot/UiTestDesktop.cs" }
     $ArtifactDirectory = (New-Item -ItemType Directory -Path "$PSScriptRoot/../TestResults/UI/pull-loading-$([Guid]::NewGuid().ToString('N'))").FullName
-    $FixtureRoot = (Resolve-Path -LiteralPath $FixtureRoot).Path
+    if ($FixtureRoot) { $FixtureRoot = (Resolve-Path -LiteralPath $FixtureRoot).Path }
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -FixtureRoot '" + $FixtureRoot.Replace("'", "''") + "' -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-pull-loading-' + [Guid]::NewGuid().ToString('N')))
     try {
@@ -38,12 +38,34 @@ $process = $null; $heldLock = $null; $window = $null
 $snapshot = $null; $gitStore = $null; $listener = $null; $client = $null; $brokenRecord = $null
 Initialize-UiReport $ArtifactDirectory 'Pull'
 try {
+    if (!$FixtureRoot) {
+        $fixture = (New-Item -ItemType Directory -Path (Join-Path $ArtifactDirectory 'sg-workflow-ui-fixture')).FullName
+        $repository = Join-Path $fixture 'svnrepo'
+        & svnadmin create $repository
+        if ($LASTEXITCODE -ne 0) { throw 'Could not create Pull fixture.' }
+        $url = ([Uri]($repository + '/')).AbsoluteUri.TrimEnd('/')
+        $seed = Join-Path $fixture 'seed.txt'; [IO.File]::WriteAllText($seed, 'Pull fixture')
+        $setup = Join-Path $ArtifactDirectory 'setup.txt'
+        & svnmucc -m 'Create Pull fixture' mkdir "$url/trunk" put $seed "$url/trunk/base.txt" mkdir "$url/library" put $seed "$url/library/base.txt" propset svn:externals '^/library library' "$url/trunk" 2>&1 | Out-File $setup
+        if ($LASTEXITCODE -ne 0) { throw 'Could not seed Pull fixture.' }
+        $FixtureRoot = Join-Path $fixture 'root'
+        $cli = (Resolve-Path "$PSScriptRoot/../src/sg/bin/Debug/net10.0/sg.exe").Path
+        & $cli init $FixtureRoot --no-fsmonitor 2>&1 | Out-File $setup -Append
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialize Pull root.' }
+        & $cli checkout add --url "$url/trunk" --root $FixtureRoot --name checkout 2>&1 | Out-File $setup -Append
+        if ($LASTEXITCODE -ne 0) { throw 'Could not add Pull checkout.' }
+        & $cli branch imported --root $FixtureRoot --from checkout 2>&1 | Out-File $setup -Append
+        if ($LASTEXITCODE -ne 0) { throw 'Could not create Pull worktree.' }
+        & svnmucc -m 'Advance SVN' put $seed "$url/trunk/new.txt" 2>&1 | Out-File $setup -Append
+        if ($LASTEXITCODE -ne 0) { throw 'Could not advance fixture SVN.' }
+    }
     if ($FixtureRoot -notlike '*sg-workflow-ui-*') { throw 'Use a disposable workflow fixture.' }
     $branch = Join-Path $FixtureRoot 'imported'
     if (!(Test-Path -LiteralPath (Join-Path $branch '.git'))) { throw 'Fixture needs its imported worktree.' }
     Start-UiScenario 'Pull immediately shows loading feedback while waiting for repository access'
     $heldLock = [IO.File]::Open((Join-Path $FixtureRoot '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     $app = (Resolve-Path "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe").Path
+    $env:SG_UI_TEST_WINDOW_SIZE = '600x900'
     $process = Start-Process -FilePath $app -ArgumentList @('rebase', ('"' + $branch + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For { Get-TestAppWindow $process }
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -55,6 +77,28 @@ try {
     $null = Wait-For { Find 'PullFromSvnButton' } 45
     $null = Wait-For { $state = Find 'WorkflowLoading'; !$state -or $state.Current.IsOffscreen }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'pull-ready.png')
+
+    Start-UiScenario 'Pull shows common actions before collapsed details at narrow width'
+    $button = Find 'PullFromSvnButton'
+    $bounds = $window.Current.BoundingRectangle; $b = $button.Current.BoundingRectangle
+    if ($button.Current.IsOffscreen -or $b.Right -gt $bounds.Right -or $b.Bottom -gt $bounds.Bottom) { throw 'The primary Pull action is clipped.' }
+    foreach ($id in @('PullRevisions', 'PullAdvanced')) {
+        $control = Find $id
+        if ($control.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -ne 'Collapsed') { throw "$id must start collapsed." }
+        $control.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    }
+    $null = Wait-For { Find 'View SVN log' -Name }
+    $null = Wait-For { Find 'Activity and checkpoints' -Name }
+    (Find 'SettingsItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $null = Wait-For { !(Find 'PullFromSvnButton') }
+    (Find 'NavigationViewBackButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $null = Wait-For { Find 'PullFromSvnButton' } 30
+    foreach ($id in @('PullRevisions', 'PullAdvanced')) {
+        $pattern = (Find $id).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if ($pattern.Current.ExpandCollapseState -ne 'Expanded') { throw "$id expansion was lost across navigation." }
+        $pattern.Collapse()
+    }
+    Complete-UiScenario
 
     Start-UiScenario 'Local details hydrate before a slow SVN server and navigation cancels the read'
     $gitStore = Join-Path $FixtureRoot '.sg'
@@ -90,6 +134,7 @@ try {
     $null = Wait-For { Find 'PullFromSvnButton' } 30
 
     Start-UiScenario 'A failed Pull preview offers an inline retry and recovers'
+    $null = New-Item -ItemType Directory -Path (Join-Path $gitStore 'operations') -Force
     $brokenRecord = Join-Path $gitStore ('operations/' + [Guid]::NewGuid().ToString('N') + '.json')
     '{ invalid fixture record' | Set-Content -LiteralPath $brokenRecord
     (Find 'Refresh pull plan' -Name).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()

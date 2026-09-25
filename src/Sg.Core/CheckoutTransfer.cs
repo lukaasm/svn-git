@@ -61,14 +61,17 @@ public static class CheckoutTransfer
         var changes = Ops.CheckoutChanges(root, co).Where(c => plan.Paths == null || plan.Paths.Any(p => PathUtil.IsUnder(c.Path, p)
             || c.Item == "unversioned" && PathUtil.IsUnder(p, c.Path))).ToList();
         var versioned = changes.Where(c => c.Versioned).Select(c => c.Path).ToArray();
-        var kinds = versioned.Length == 0 ? [] : root.Svn.InfoMany(co.Path, versioned, recursive: false)
-            .ToDictionary(i => i.Path, i => i.Kind, StringComparer.OrdinalIgnoreCase);
+        // git lists files and never a folder, so every versioned change of a git clone is a file.
+        var kinds = versioned.Length == 0 ? []
+            : co.IsGit ? versioned.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(p => p, _ => "file", StringComparer.OrdinalIgnoreCase)
+            : root.Svn.InfoMany(co.Path, versioned, recursive: false).ToDictionary(i => i.Path, i => i.Kind, StringComparer.OrdinalIgnoreCase);
         var files = new List<(string Path, string Item)>();
         foreach (var c in changes)
         {
             var why = Excluded(co, c.Path) ?? UnsafePath(co.Path, c.Path, allowDirectory: true);
             if (why == null && (c.Props is "modified" or "conflicted" || c.Item == "normal")) why = "SVN property changes stay in the checkout, together with this path's contents.";
-            if (why == null && c.Item is not ("modified" or "added" or "deleted" or "missing" or "unversioned")) why = "Resolve this SVN state before transferring: " + c.Item;
+            if (why == null && c.Item is not ("modified" or "added" or "deleted" or "missing" or "unversioned"))
+                why = $"Resolve this {(co.IsGit ? "" : "SVN ")}state before transferring: " + c.Item;
             if (why == null && c.Versioned && kinds.GetValueOrDefault(c.Path) != "file") why = "SVN directory changes stay in the checkout; individual file changes can transfer.";
             if (why != null) { plan.LeftBehind.Add(new(c.Path, why)); continue; }
             if (c.Item == "unversioned" && Directory.Exists(PathUtil.Join(co.Path, c.Path))) Walk(c.Path);
@@ -84,7 +87,7 @@ public static class CheckoutTransfer
             root.Log.Progress("Checking transfer", checkedFiles, files.Count, "files", "Reading file contents");
             var pathsInBatch = batch.Select(f => f.Path).ToArray();
             var sources = HashBatch(root, co.Path, pathsInBatch);
-            var bases = ReadBases(root, co.Path, batch.Where(f => f.Item is not ("added" or "unversioned")).Select(f => f.Path).ToArray());
+            var bases = ReadBases(root, co, plan.SourceHead, batch.Where(f => f.Item is not ("added" or "unversioned")).Select(f => f.Path).ToArray());
             var unsafeTargets = pathsInBatch.Select(p => (Path: p, Reason: UnsafePath(plan.Destination, p)))
                 .Where(p => p.Reason != null).ToDictionary(p => p.Path, p => p.Reason!, StringComparer.Ordinal);
             var targets = newWorktree ? [] : HashBatch(root, plan.Destination, pathsInBatch.Where(p => !unsafeTargets.ContainsKey(p)));
@@ -165,7 +168,7 @@ public static class CheckoutTransfer
             }
             if (plan.Move)
             {
-                // Re-read SVN states and actual bytes before cleanup, after all destination writes succeed.
+                // Re-read the checkout's states and actual bytes before cleanup, after all destination writes succeed.
                 var current = Preview(root, co, branch, false, true, plan.Paths);
                 if (current.SourceHead != plan.SourceHead || !SameSource(plan, current)
                     || plan.Contents.Any(c => UnsafePath(plan.Destination, c.Path) != null || Hash(root, plan.Destination, c.Path) != c.After))
@@ -175,7 +178,8 @@ public static class CheckoutTransfer
                     Cancellation.ThrowIfRequested();
                     if (UnsafePath(co.Path, c.Path) != null || Hash(root, co.Path, c.Path) != c.Source)
                         throw new SgException("Source changed during cleanup: " + c.Path);
-                    if (c.Item != "unversioned") root.Svn.Revert(co.Path, [c.Path]).EnsureOk();
+                    if (c.Item != "unversioned" && root.Vcs(co).Revert(root, co, [c.Path]) is { } said)
+                        throw new SgException("revert failed: " + said);
                     if (c.Item is "added" or "unversioned") File.Delete(PathUtil.Join(co.Path, c.Path));
                 }
                 foreach (var rel in plan.UnversionedDirectories.OrderByDescending(p => p.Length))
@@ -217,19 +221,28 @@ public static class CheckoutTransfer
         return !allowDirectory && Directory.Exists(current) ? "A directory occupies this file path." : null;
     }
 
+    // A git clone's files are hashed through its line-ending rules, so they compare with the snapshot's blobs.
     static string? Hash(SgRoot root, string folder, string path) => File.Exists(PathUtil.Join(folder, path))
-        ? root.Git.HashObjects([PathUtil.Join(folder, path)])[0] : null;
+        ? root.Git.HashObjects([PathUtil.Join(folder, path)], folder)[0] : null;
 
     static Dictionary<string, string> HashBatch(SgRoot root, string folder, IEnumerable<string> paths)
     {
         var present = paths.Where(p => File.Exists(PathUtil.Join(folder, p))).ToArray();
-        var hashes = root.Git.HashObjects(present.Select(p => PathUtil.Join(folder, p)));
+        var hashes = root.Git.HashObjects(present.Select(p => PathUtil.Join(folder, p)), folder);
         return present.Select((p, i) => (Path: p, Sha: hashes[i])).ToDictionary(p => p.Path, p => p.Sha, StringComparer.Ordinal);
     }
 
-    static Dictionary<string, string> ReadBases(SgRoot root, string folder, string[] paths)
+    /// <summary>
+    /// What each file was before the checkout's edit: svn's BASE, or for a git clone the snapshot's blob,
+    /// which is the server's version of it in the clone and in each submodule.
+    /// </summary>
+    static Dictionary<string, string> ReadBases(SgRoot root, CheckoutConfig co, string snapshot, string[] paths)
     {
         if (paths.Length == 0) return [];
+        if (co.IsGit)
+            return root.Git.EntriesAt(snapshot, paths).Where(e => e.Type == "blob")
+                .ToDictionary(e => e.Path, e => e.Sha, StringComparer.Ordinal);
+        var folder = co.Path;
         var temps = paths.Select(_ => root.NewTempFile(".base")).ToArray();
         try
         {

@@ -576,6 +576,37 @@ public sealed class GitCheckoutTests : IDisposable
         Assert.Contains(ours, o => o.Merged && o.Entry.Message == "topic file");
     }
 
+    // ---- moving checkout edits to a worktree ----
+
+    [Fact]
+    public void Clone_edits_move_to_a_worktree_through_the_clone_s_line_endings_and_merge_into_its_own()
+    {
+        f.Setup();
+        var text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
+        f.OtherCommit("docs/long.txt", text, "a longer file to merge in");
+        Ops.Sync(f.Root, f.Co);
+        var wt = Worktree("existing");
+        GitFixture.Put(wt, "docs/long.txt", text.Replace("seven", "destination"));
+        // The clone writes CRLF; what goes across is what its git would commit.
+        GitFixture.Put(f.Checkout, "docs/long.txt", text.Replace("one", "source").Replace("\n", "\r\n"));
+        GitFixture.Put(f.Checkout, "notes/draft.txt", "draft\r\n");
+
+        var plan = CheckoutTransfer.Preview(f.Root, f.Co, "existing", move: true);
+
+        Assert.True(plan.CanApply);
+        Assert.Contains(plan.Files, x => x.Path == "docs/long.txt" && x.Action == "Merge edits");
+        var result = CheckoutTransfer.Apply(f.Root, plan);
+        Assert.True(result.Moved);
+        Assert.Equal(text.Replace("one", "source").Replace("seven", "destination"), File.ReadAllText(Path.Combine(wt, "docs", "long.txt")));
+        Assert.Equal("draft\n", File.ReadAllText(Path.Combine(wt, "notes", "draft.txt")));
+        Assert.Empty(Ops.CheckoutChanges(f.Root, f.Co));
+        Assert.Equal("", f.CloneChanges());
+
+        // The recovery shelf puts the clone's edit back the way the clone wrote it.
+        Shelf.Restore(f.Root, result.SourceShelf, keep: true);
+        Assert.Equal(text.Replace("one", "source").Replace("\n", "\r\n"), File.ReadAllText(Path.Combine(f.Checkout, "docs", "long.txt")));
+    }
+
     [Fact]
     public void A_merge_refuses_a_clone_with_local_changes()
     {

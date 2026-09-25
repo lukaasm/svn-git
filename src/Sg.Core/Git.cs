@@ -669,12 +669,19 @@ public sealed class Git
         Run(worktree, "reset", "-q", "--hard", "HEAD");
     }
 
-    public List<string> HashObjects(IEnumerable<string> files)
+    /// <summary>
+    /// Stores the files as blobs and names them. Inside a git checkout, given as worktree, they go through
+    /// its tunnel and so through the clone's own line-ending rules, the way its git would store them;
+    /// everywhere else the bytes go in as they are.
+    /// </summary>
+    public List<string> HashObjects(IEnumerable<string> files, string? worktree = null)
     {
         var list = files.ToList();
         if (list.Count == 0) return new();
         var stdin = Encoding.UTF8.GetBytes(string.Join("\n", list) + "\n");
-        var r = Run(null, ["hash-object", "-w", "--no-filters", "--stdin-paths"], stdin).EnsureOk();
+        var r = TunnelOf(worktree) != null
+            ? Run(worktree, ["hash-object", "-w", "--stdin-paths"], stdin).EnsureOk()
+            : Run(null, ["hash-object", "-w", "--no-filters", "--stdin-paths"], stdin).EnsureOk();
         return r.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
     }
 

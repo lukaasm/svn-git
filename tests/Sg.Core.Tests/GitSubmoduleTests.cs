@@ -298,6 +298,23 @@ public sealed class GitSubmoduleTests
     }
 
     [Fact]
+    public void A_submodule_edit_moves_to_a_new_worktree_and_leaves_the_submodule_clean()
+    {
+        using var f = new GitFixture(submodule: true);
+        f.Setup();
+        GitFixture.Put(f.Checkout, Sub + "/lib.h", "int lib = 50;\r\n");
+
+        var plan = CheckoutTransfer.Preview(f.Root, f.Co, "moved", newWorktree: true, move: true);
+
+        Assert.True(plan.CanApply);
+        Assert.Equal(new[] { Sub + "/lib.h" }, plan.Files.Select(x => x.Path));
+        var result = CheckoutTransfer.Apply(f.Root, plan);
+        Assert.Equal("int lib = 50;\n", File.ReadAllText(Path.Combine(result.Path, "libs", "core", "lib.h")));
+        Assert.Empty(Ops.CheckoutChanges(f.Root, f.Co));
+        Assert.Equal("", GitFixture.Git(SubDir(f), "status", "--porcelain"));
+    }
+
+    [Fact]
     public void A_shelf_takes_a_submodule_edit_out_of_the_checkout_and_puts_it_back()
     {
         using var f = new GitFixture(submodule: true);

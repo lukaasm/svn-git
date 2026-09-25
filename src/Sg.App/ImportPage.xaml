@@ -21,8 +21,8 @@
         </local:EmptyState>
 
         <local:ReadFeedback x:Name="ImportReading" Grid.Row="1" VerticalAlignment="Top" />
-        <ScrollViewer x:Name="Filled" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="8" MaxWidth="1000" Padding="0,0,0,8">
+        <ScrollViewer x:Name="Filled" Grid.Row="1" MaxWidth="1000" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+            <StackPanel Spacing="8" Padding="0,0,0,8">
 
                 <Border Style="{StaticResource Card}">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
@@ -38,27 +38,7 @@
 
                 <local:CheckoutAppearancePreview x:Name="AppearancePreview" />
 
-                <!-- Only when this checkout is not where the export was cut from. Every patch is merged across
-                     the difference, which is worth knowing before the branch exists rather than after. -->
-                <InfoBar x:Name="DriftBar" Severity="Warning" IsClosable="False" IsOpen="False"
-                         Title="This checkout has moved on since the export" />
-
-                <TextBlock Text="The revisions it was cut from" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                <Border Style="{StaticResource Card}" Padding="4">
-                    <local:RowListView x:Name="Bases" SelectionMode="None">
-                        <local:RowListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:ImportBaseRow">
-                                <Grid ColumnDefinitions="180,90,90,*" ColumnSpacing="{StaticResource RowSpacing}"
-                                      ToolTipService.ToolTip="{x:Bind Url}">
-                                    <TextBlock Text="{x:Bind Where}" Style="{StaticResource RowText}" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Exported}" Style="{StaticResource RowMonoDim}" />
-                                    <TextBlock Grid.Column="2" Text="{x:Bind Local}" Style="{StaticResource RowMono}" Foreground="{x:Bind LocalBrush}" />
-                                    <TextBlock Grid.Column="3" Text="{x:Bind Shown}" Style="{StaticResource RowTextDim}" />
-                                </Grid>
-                            </DataTemplate>
-                        </local:RowListView.ItemTemplate>
-                    </local:RowListView>
-                </Border>
+                <local:RevisionComparison x:Name="RevisionPreview" />
 
                 <TextBlock x:Name="CommitsHeader" Text="Commits" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
                 <Border Style="{StaticResource Card}" Padding="4">
@@ -85,40 +65,45 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- The same form as Backup's restore, under the same 1000 wide column as the list above it. -->
-        <Grid Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,240,Auto,260,*" ColumnSpacing="10" Margin="0,4,0,0">
-            <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-            <ComboBox x:Name="IntoBox" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
-                      ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the export names." />
-            <TextBlock Grid.Column="2" Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
-            <TextBox x:Name="NameBox" Grid.Column="3" VerticalAlignment="Center" TextChanged="Name_TextChanged"
-                     ToolTipService.ToolTip="The name the branch gets here. It starts as the name it had, which is free to be something else." />
-        </Grid>
+        <StackPanel Grid.Row="2" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
+            <local:FormColumns>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <ComboBox x:Name="IntoBox" HorizontalAlignment="Stretch" SelectionChanged="Into_Changed"
+                              AutomationProperties.Name="Into checkout"
+                              ToolTipService.ToolTip="The destination checkout should belong to the same SVN repository as the saved branch." />
+                </StackPanel>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBox x:Name="NameBox" TextChanged="Name_TextChanged" AutomationProperties.Name="As branch"
+                             ToolTipService.ToolTip="The name the branch and worktree get here. You can choose a different name." />
+                </StackPanel>
+            </local:FormColumns>
+        </StackPanel>
 
-        <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-            <local:IconButton x:Name="PickButton" Glyph="&#xED25;" Text="Another file" Click="Pick_Click" ToolTipService.ToolTip="Read a different export file." />
-            <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
-            <!-- Only after an import stopped. It is the way on from there, so it stands next to the
-                 sentence that says it stopped rather than somewhere the reader has to go and find. -->
-            <local:IconButton Grid.Column="2" x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resume import" Visibility="Collapsed"
-                              Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
-                              ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
-            <StackPanel Grid.Column="3" Spacing="4" VerticalAlignment="Center">
-                <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
-                <local:DestinationAction x:Name="ExistingDestination" />
-            </StackPanel>
-            <local:TaskGate Grid.Column="4">
-                <Button x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
-                        AutomationProperties.Name="{Binding Text, ElementName=ImportLabel}"
-                        ToolTipService.ToolTip="Make the branch and its worktree here, then replay every commit onto this checkout's snapshot.">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE896;" FontSize="14" />
-                        <TextBlock x:Name="ImportLabel" Text="Import" />
-                    </StackPanel>
-                </Button>
-            </local:TaskGate>
-        </Grid>
-
+        <StackPanel Grid.Row="3" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
+            <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+            <local:DestinationAction x:Name="ExistingDestination" />
+            <local:WrapRow Spacing="8">
+                <local:IconButton x:Name="PickButton" Glyph="&#xED25;" Text="Another file" Click="Pick_Click" ToolTipService.ToolTip="Read a different export file." />
+                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
+                <!-- Only after an import stopped. It is the way on from there, so it stands next to the
+                     sentence that says it stopped rather than somewhere the reader has to go and find. -->
+                <local:IconButton x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resume import" Visibility="Collapsed"
+                                  Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
+                                  ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
+                <local:TaskGate>
+                    <Button x:Name="ImportButton" Style="{StaticResource AccentButtonStyle}" Click="Import_Click"
+                            AutomationProperties.Name="{Binding Text, ElementName=ImportLabel}"
+                            ToolTipService.ToolTip="Make the branch and its worktree here, then replay every commit onto this checkout's snapshot.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE896;" FontSize="14" />
+                            <TextBlock x:Name="ImportLabel" Text="Import" />
+                        </StackPanel>
+                    </Button>
+                </local:TaskGate>
+            </local:WrapRow>
+        </StackPanel>
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />
     </Grid>
 </local:SgPage>

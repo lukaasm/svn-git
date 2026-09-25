@@ -3,6 +3,19 @@ namespace Sg.App;
 /// <summary>Opt-in isolation for Debug UI Automation runs; release builds ignore the environment.</summary>
 internal static class DebugTestRun
 {
+    /// <summary>Set initial logical size without a desktop-dependent window-state transition.</summary>
+    [System.Diagnostics.Conditional("DEBUG")]
+    public static void WindowSize(ref int width, ref int height)
+    {
+#if DEBUG
+        if (DirectoryPath == null) return;
+        var size = Environment.GetEnvironmentVariable("SG_UI_TEST_WINDOW_SIZE")?.Split('x');
+        if (size is { Length: 2 } && int.TryParse(size[0], out var w) && int.TryParse(size[1], out var h)
+            && w is >= 480 and <= 3840 && h is >= 480 and <= 2160)
+        { width = w; height = h; }
+#endif
+    }
+
     /// <summary>Replay captured activity in an isolated Debug test. No repository operation is executed.</summary>
     [System.Diagnostics.Conditional("DEBUG")]
     public static void ReplayTasks()

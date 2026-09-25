@@ -111,6 +111,7 @@ public static class WindowHelper
         if (log) titleBar.RightHeader = LogButton();
         var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "sg.ico");
         if (File.Exists(icon)) window.AppWindow.SetIcon(icon);
+        DebugTestRun.WindowSize(ref width, ref height);
         Resize(window, width, height);
     }
 

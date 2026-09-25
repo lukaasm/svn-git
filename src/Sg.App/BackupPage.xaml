@@ -105,28 +105,8 @@
                             <local:IconButton Text="Refresh list" Glyph="&#xE895;" AutomationProperties.AutomationId="BackupRefreshList" Click="RetryRead_Click" />
                         </local:WrapRow>
                     </InfoBar>
-                    <InfoBar x:Name="DriftBar" Severity="Warning" IsClosable="False" IsOpen="False"
-                             Title="This checkout has moved on since the backup" />
-
                     <local:CheckoutAppearancePreview x:Name="AppearancePreview" />
-
-                    <TextBlock x:Name="BasesHeader" Text="The revisions it was cut from" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
-                    <Border x:Name="BasesCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
-                        <local:RowListView x:Name="Bases" SelectionMode="None">
-                            <local:RowListView.ItemTemplate>
-                                <DataTemplate x:DataType="local:ImportBaseRow">
-                                    <Grid ColumnDefinitions="180,90,90,*" ColumnSpacing="{StaticResource RowSpacing}"
-                                          ToolTipService.ToolTip="{x:Bind Url}">
-                                        <TextBlock Text="{x:Bind Where}" Style="{StaticResource RowText}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind Exported}" Style="{StaticResource RowMonoDim}" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind Local}" Style="{StaticResource RowMono}" Foreground="{x:Bind LocalBrush}" />
-                                        <TextBlock Grid.Column="3" Text="{x:Bind Shown}" Style="{StaticResource RowTextDim}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </local:RowListView.ItemTemplate>
-                        </local:RowListView>
-                    </Border>
-
+                    <local:RevisionComparison x:Name="RevisionPreview" />
                     <TextBlock x:Name="CommitsHeader" Text="Commits" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" Visibility="Collapsed" />
                     <Border x:Name="CommitsCard" Style="{StaticResource Card}" Padding="4" Visibility="Collapsed">
                         <local:RowListView x:Name="Subjects" MaxHeight="240" SelectionMode="None">
@@ -164,65 +144,67 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- The restore form, under the same 1000 wide column as the list it acts on: the name and the checkout on
-             one line, what comes with the branch on the line under. The name box had a star column with a cap and
-             left alignment, so it shrank to its text and grew as tall as the two check boxes beside it. -->
-        <Grid x:Name="RestoreRow" Grid.Row="2" MaxWidth="1000" ColumnDefinitions="Auto,240,Auto,260,*" RowDefinitions="Auto,Auto"
-              ColumnSpacing="10" RowSpacing="6" Margin="0,4,0,0">
-            <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-            <ComboBox x:Name="IntoBox" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="Into_Changed"
-                      ToolTipService.ToolTip="The checkout the branch is built on. It should be one of the same SVN repository the backup names." />
-            <TextBlock Grid.Column="2" Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,0,0" />
-            <TextBox x:Name="NameBox" Grid.Column="3" VerticalAlignment="Center" TextChanged="Name_TextChanged"
-                     ToolTipService.ToolTip="The name the branch gets here. It starts as the name it has in the backup, which is free to be something else." />
-            <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="24">
+        <StackPanel x:Name="RestoreRow" Grid.Row="2" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
+            <local:FormColumns>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <ComboBox x:Name="IntoBox" HorizontalAlignment="Stretch" SelectionChanged="Into_Changed"
+                              AutomationProperties.Name="Into checkout"
+                              ToolTipService.ToolTip="The destination checkout should belong to the same SVN repository as the saved branch." />
+                </StackPanel>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="As branch" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBox x:Name="NameBox" TextChanged="Name_TextChanged" AutomationProperties.Name="As branch"
+                             ToolTipService.ToolTip="The name the branch and worktree get here. You can choose a different name." />
+                </StackPanel>
+            </local:FormColumns>
+            <local:WrapRow Spacing="24" LineSpacing="4">
                 <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
-                          ToolTipService.ToolTip="The changes that were not committed when the backup was made come back too, through the shelf: written into the worktree when they merge, left on the shelf when one does not." />
+                          ToolTipService.ToolTip="Restore saved uncommitted changes through a shelf. Changes that do not merge remain on the shelf." />
                 <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
-                          ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name. Off, restore refuses a name that is taken." />
-            </StackPanel>
-        </Grid>
+                          ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name." />
+            </local:WrapRow>
+        </StackPanel>
 
-        <Grid Grid.Row="3" MaxWidth="1000" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-            <local:TaskGate>
-                <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
-                                  ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
-            </local:TaskGate>
-            <local:TaskGate Grid.Column="1">
-                <local:IconButton Glyph="&#xE74D;" Text="Prune worktree" Click="Prune_Click" x:Name="PruneButton"
-                                  ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting." />
-            </local:TaskGate>
-            <local:TaskGate Grid.Column="1">
-                <local:IconButton x:Name="AllWorktreesButton" Text="All worktrees…" Glyph="&#xE712;" AutomationProperties.Name="All worktrees actions">
-                    <Button.Flyout>
-                        <MenuFlyout>
-                            <MenuFlyoutItem Text="Back up all worktrees" AutomationProperties.AutomationId="BackupAll" Click="BackupAll_Click">
-                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Prune all stale backups" AutomationProperties.AutomationId="PruneAll" Click="PruneAll_Click">
-                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </Button.Flyout>
-                </local:IconButton>
-            </local:TaskGate>
-            <Button Grid.Column="2" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
-            <StackPanel Grid.Column="3" Spacing="4" VerticalAlignment="Center" Margin="8,0">
-                <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
-                <local:DestinationAction x:Name="ExistingDestination" />
-            </StackPanel>
-            <local:TaskGate Grid.Column="4">
-                <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
-                        AutomationProperties.Name="{Binding Text, ElementName=RestoreLabel}"
-                        ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE896;" FontSize="14" />
-                        <TextBlock x:Name="RestoreLabel" Text="Restore" />
-                    </StackPanel>
-                </Button>
-            </local:TaskGate>
-        </Grid>
-
+        <StackPanel Grid.Row="3" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
+            <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+            <local:DestinationAction x:Name="ExistingDestination" />
+            <local:WrapRow Spacing="8">
+                <local:TaskGate>
+                    <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
+                                      ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
+                </local:TaskGate>
+                <local:TaskGate>
+                    <local:IconButton Glyph="&#xE74D;" Text="Prune worktree" Click="Prune_Click" x:Name="PruneButton"
+                                      ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting." />
+                </local:TaskGate>
+                <local:TaskGate>
+                    <local:IconButton x:Name="AllWorktreesButton" Text="All worktrees…" Glyph="&#xE712;" AutomationProperties.Name="All worktrees actions">
+                        <Button.Flyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Text="Back up all worktrees" AutomationProperties.AutomationId="BackupAll" Click="BackupAll_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Prune all stale backups" AutomationProperties.AutomationId="PruneAll" Click="PruneAll_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </local:IconButton>
+                </local:TaskGate>
+                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
+                <local:TaskGate>
+                    <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
+                            AutomationProperties.Name="{Binding Text, ElementName=RestoreLabel}"
+                            ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE896;" FontSize="14" />
+                            <TextBlock x:Name="RestoreLabel" Text="Restore" />
+                        </StackPanel>
+                    </Button>
+                </local:TaskGate>
+            </local:WrapRow>
+        </StackPanel>
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />
     </Grid>
 </local:SgPage>

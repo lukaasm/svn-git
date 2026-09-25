@@ -77,6 +77,7 @@ public sealed partial class BackupPage : SgPage
         InitializeComponent();
         _searchRefresh = new(DispatcherQueue, () => { if (IsLoaded) FilterEntries(); }, TimeSpan.FromMilliseconds(150));
         _form = new(NameBox, IntoBox, ForceBox, WipBox);
+        RevisionPreview.Changed += SyncButton;
         Unloaded += (_, _) => OnHidden();
         Title = "Backup";
         Branch = Worktree;
@@ -109,6 +110,7 @@ public sealed partial class BackupPage : SgPage
         _previewReads.Cancel();
         _catalog = null; _entries.Clear(); _preview = null; _selectedRow = null;
         AppearancePreview.Hide();
+        RevisionPreview.Clear();
         PreviewLoading.Hide(); PreviewError.IsOpen = false; PreviewTitle.Visibility = Visibility.Collapsed;
         ReadingBackup.Hide();
         ReadError.IsOpen = false;
@@ -186,7 +188,7 @@ public sealed partial class BackupPage : SgPage
         if (_returning is { } view) { BrowseScroll.Restore(ContentScroll, view.Offset); _returning = null; }
     }
 
-    public override void OnHidden() { _hidden = true; _reads.Cancel(); _previewReads.Cancel(); _targetValidation.Invalidate(); }
+    public override void OnHidden() { _hidden = true; _reads.Cancel(); _previewReads.Cancel(); RevisionPreview.Clear(); _targetValidation.Invalidate(); }
     async void RetryRead_Click(object sender, RoutedEventArgs e) => await LoadAsync();
     void ReadLog_Click(object sender, RoutedEventArgs e) => OutputWindow.Show();
 
@@ -270,11 +272,10 @@ public sealed partial class BackupPage : SgPage
         RestoreButton.Visibility = RestoreRow.Visibility;
         SelectionHint.Visibility = entry == null ? Visibility.Visible : Visibility.Collapsed;
         CommitsHeader.Visibility = CommitsCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
-        BasesHeader.Visibility = BasesCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (!has)
         {
             AppearancePreview.Hide();
-            DriftBar.IsOpen = false;
+            RevisionPreview.Clear();
             SyncButton();
             return;
         }
@@ -296,27 +297,7 @@ public sealed partial class BackupPage : SgPage
         var co = Into;
         if (entry == null) return;
         AppearancePreview.Show(entry.HasAppearance, _preview?.AppearanceIcon, entry.Checkout, co);
-        var drift = co == null ? new List<ExportDrift>() : Export.DriftOf(Session.Require(), MetaOf(entry), co);
-        var rows = entry.Bases.Select(b =>
-        {
-            var d = drift.FirstOrDefault(x => x.Where == b.Where);
-            return new ImportBaseRow
-            {
-                Where = b.Where,
-                Url = b.Url,
-                Exported = "r" + b.Revision,
-                Local = d == null ? "r" + b.Revision : d.Elsewhere ? "another branch" : d.Missing ? "not here" : "r" + d.Local,
-                Differs = d != null,
-                Note = d?.Elsewhere == true ? d.LocalUrl : null,
-            };
-        }).ToList();
-        Bases.ItemsSource = rows;
-        var moved = rows.Where(r => r.Differs).ToList();
-        DriftBar.IsOpen = moved.Count > 0;
-        DriftBar.Message = moved.Count == 0 ? ""
-            : "Every commit is merged across the difference, the way a rebase does, so read the diff before you push. "
-              + string.Join(", ", moved.Take(6).Select(r => $"{r.Where} {r.Exported} → {r.Local}"))
-              + (moved.Count > 6 ? $", and {moved.Count - 6} more" : "");
+        RevisionPreview.Show(Session.Require(), MetaOf(entry), co, Pane);
     }
 
     /// <summary>The entry as the export reader sees an export, so the drift is read by the same code.</summary>
@@ -324,7 +305,7 @@ public sealed partial class BackupPage : SgPage
 
     async void SyncButton()
     {
-        if (_form == null || _form.Running) return;
+        if (_form == null || _form.Running || _hidden) return;
         var entry = _picked?.Kind == "branch" ? _picked : null;
         var name = NameBox.Text.Trim();
         var root = Session.Root;
@@ -337,7 +318,7 @@ public sealed partial class BackupPage : SgPage
         ExistingDestination.Update(root, check.Existing);
         var taken = check.Taken;
         var force = ForceBox.IsChecked == true;
-        RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null;
+        RestoreButton.IsEnabled = entry != null && entry.Unreadable == null && name.Length > 0 && Into != null && (!taken || force) && check.Error == null && RevisionPreview.Ready;
         var retry = entry != null && Into is { } checkout && _form.IsRetry(
             new RestoreRequest(entry.Name, name, checkout.Name, WipBox.IsChecked == true && entry.HasWip, force, _preview?.ExpectedRefs));
         RestoreLabel.Text = entry == null ? "Restore"
@@ -349,6 +330,7 @@ public sealed partial class BackupPage : SgPage
             : Into == null ? "Pick the checkout to build it on."
             : name.Length == 0 ? "Give the branch a name."
             : check.Error != null ? check.Error
+            : !RevisionPreview.Ready ? RevisionPreview.Reason
             : taken && !force ? $"{name} is already a branch here. Choose another name, or select 'Replace if it exists here' to overwrite it."
             : taken ? $"{name} here is written over with the backup version. The original branch and worktree, including uncommitted changes, are preserved under a recovery name first."
             : $"{name} will be made on {Into.Name}, and its worktree with it.");
@@ -380,7 +362,7 @@ public sealed partial class BackupPage : SgPage
 
     async void Restore_Click(object sender, RoutedEventArgs e)
     {
-        if (_form.Running) return;
+        if (_form.Running || !RevisionPreview.Ready) return;
         var entry = _picked;
         var co = Into;
         if (entry?.Kind != "branch" || entry.Unreadable != null || co == null || _preview == null) return;

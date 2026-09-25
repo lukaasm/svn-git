@@ -12,7 +12,9 @@ internal static class UiCommandGate
         var directory = Environment.GetEnvironmentVariable("SG_UI_COMMAND_GATE")
             ?? throw new InvalidOperationException("The command gate needs its isolated fixture directory.");
         var executable = File.ReadAllText(Path.Combine(directory, "executable.txt")).Trim();
-        if (args.Contains("--show-toplevel"))
+        var matchFile = Path.Combine(directory, "match.txt");
+        var match = File.Exists(matchFile) ? File.ReadAllText(matchFile).Trim() : "--show-toplevel";
+        if (args.Contains(match))
         {
             string? request = null;
             try { request = File.ReadAllText(Path.Combine(directory, "request.txt")); }

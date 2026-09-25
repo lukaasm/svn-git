@@ -387,9 +387,7 @@ public sealed partial class BackupPage : SgPage
         var force = ForceBox.IsChecked == true;
         var request = new RestoreRequest(entry.Name, name, co.Name, wip, force, _preview?.ExpectedRefs);
         var overwrite = force && root.Git.RefSha("refs/heads/" + name) != null;
-        var appearance = entry.HasAppearance ? co.Icon == null
-            ? " The saved checkout appearance will be restored."
-            : " Your existing checkout appearance will be kept." : "";
+        var appearance = entry.HasAppearance ? " " + CheckoutIcons.RestoreDescription(true, co) : "";
 
         var confirmed = overwrite
             ? await Dialogs.Confirm(this, "Overwrite " + name,

@@ -6,7 +6,7 @@ namespace Sg.Core.Tests;
 /// sha, so nothing here may lean on a sha from the near side: the base is named by revision, the
 /// commits travel as patches, and the versions they start from travel with them.
 /// </summary>
-public sealed class ExportTests : IDisposable
+public sealed partial class ExportTests : IDisposable
 {
     readonly Fixture f = new();
 
@@ -60,11 +60,25 @@ public sealed class ExportTests : IDisposable
         Assert.True(written.Bytes > 0);
         Assert.Equal(0, written.Uncommitted);
 
+        // Pre-appearance exports have neither the manifest flag nor an appearance entry.
+        using (var zip = System.IO.Compression.ZipFile.Open(file, System.IO.Compression.ZipArchiveMode.Update))
+        {
+            Assert.Null(zip.GetEntry("appearance.json"));
+            var entry = zip.GetEntry("export.json")!;
+            System.Text.Json.Nodes.JsonObject json;
+            using (var reader = new StreamReader(entry.Open())) json = System.Text.Json.Nodes.JsonNode.Parse(reader.ReadToEnd())!.AsObject();
+            json.Remove("hasAppearance");
+            entry.Delete();
+            using var writer = new StreamWriter(zip.CreateEntry("export.json").Open());
+            writer.Write(json.ToJsonString());
+        }
+
         var far = Far();
         // The two snapshots agree on every byte and on nothing else: same tree, different commit.
         Assert.NotEqual(f.Root.Git.RefSha(f.Root.SnapshotRef(f.Co)), far.Root.Git.RefSha(far.Root.SnapshotRef(far.Co)));
 
         var meta = Export.Read(file);
+        Assert.False(meta.HasAppearance);
         Assert.Equal(ExportMeta.Current, meta.Version);
         Assert.Equal(["[gui] first: edit one, add one", "second: rename one, delete one"], meta.Subjects);
         Assert.Equal(f.MonoUrl + "/trunk", meta.Root!.Url);
@@ -74,6 +88,8 @@ public sealed class ExportTests : IDisposable
         Assert.Equal(2, r.Applied);
         Assert.Empty(r.Drift);
         Assert.Equal("feature-x", r.Branch);
+        Assert.False(r.CheckoutAppearanceRestored);
+        Assert.Null(far.Co.Icon);
 
         // Every change is there, including the rename and the delete.
         Assert.Equal("int engine = 2;\n", Read(r.Path, "schmetterling/engine.cpp"));
@@ -203,5 +219,8 @@ public sealed class ExportTests : IDisposable
         var notAnExport = Path.Combine(f.Base, "notes.txt");
         File.WriteAllText(notAnExport, "just some text");
         Assert.Throws<SgException>(() => Export.Read(notAnExport));
+        var missing = Path.Combine(f.Base, "missing.sgexport");
+        Assert.Throws<SgException>(() => Export.Read(missing));
+        Assert.Throws<SgException>(() => Export.Import(f.Root, missing));
     }
 }

@@ -122,6 +122,9 @@ public sealed partial class ImportPage : SgPage
         var meta = _meta;
         var co = Into;
         if (meta == null) return;
+        AppearanceRow.Visibility = meta.HasAppearance ? Visibility.Visible : Visibility.Collapsed;
+        AppearanceNote.Text = co == null ? "Includes checkout appearance. Choose a destination to see how it will be used."
+            : CheckoutIcons.RestoreDescription(meta.HasAppearance, co);
         var drift = co == null ? new List<ExportDrift>() : Export.DriftOf(Session.Require(), meta, co);
         var rows = meta.Bases.Select(b =>
         {
@@ -219,7 +222,8 @@ public sealed partial class ImportPage : SgPage
         // The worktree is the long part: it is a checkout of the whole tree, the same as sg branch.
         if (!await Dialogs.Confirm(this, "Import " + name,
                 $"Make the branch {name} on {co.Name}, and a worktree folder for it at {root.WorktreePathFor(name)}?\n\n"
-                + $"{meta.Commits} commit(s) are replayed onto the snapshot this checkout has now. Nothing goes to SVN.",
+                + $"{meta.Commits} commit(s) are replayed onto the snapshot this checkout has now. Nothing goes to SVN."
+                + (meta.HasAppearance ? "\n\n" + CheckoutIcons.RestoreDescription(true, co) : ""),
                 "Import"))
             return;
 

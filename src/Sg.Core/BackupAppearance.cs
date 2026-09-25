@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 
 namespace Sg.Core;
 
@@ -7,10 +6,7 @@ public static partial class Backup
 {
     // A small independent commit per worktree, like code review metadata. It follows the
     // worktree into its matching checkout, without adding files to any source-code tree.
-    sealed record SavedAppearance(int Format, byte[]? Icon);
-    const int MaxAppearanceBytes = CheckoutAppearance.MaxBytes * 4 / 3 + 1024;
-
-    static SavedAppearance? FetchAppearance(SgRoot root, BackupConfig cfg, string name, IReadOnlyDictionary<string, string> remote)
+    static CheckoutAppearanceData? FetchAppearance(SgRoot root, BackupConfig cfg, string name, IReadOnlyDictionary<string, string> remote)
     {
         var reference = RemoteRef(cfg, "appearance", name);
         if (!remote.TryGetValue(reference, out var sha)) return null;
@@ -18,18 +14,9 @@ public static partial class Backup
         if (root.Git.RefSha(fetched) != sha) root.Git.FetchRefs(cfg.Url, ["+" + reference + ":" + fetched]);
         if (root.Git.RefSha(fetched) != sha) throw new SgException("Checkout appearance backup changed during fetch. Refresh and try again.");
         var blob = root.Git.Out(null, "rev-parse", sha + ":appearance.json");
-        if (long.Parse(root.Git.Out(null, "cat-file", "-s", blob)) > MaxAppearanceBytes)
+        if (long.Parse(root.Git.Out(null, "cat-file", "-s", blob)) > CheckoutAppearance.MaxEncodedBytes)
             throw new SgException("Saved checkout appearance exceeds the supported size.");
-        SavedAppearance appearance;
-        try
-        {
-            appearance = JsonSerializer.Deserialize<SavedAppearance>(root.Git.Out(null, "cat-file", "blob", blob))
-                ?? throw new SgException("Invalid checkout appearance backup.");
-        }
-        catch (JsonException) { throw new SgException("Invalid checkout appearance backup."); }
-        if (appearance.Format != 1) throw new SgException("Unsupported checkout appearance backup format.");
-        if (appearance.Icon != null) CheckoutAppearance.Validate(appearance.Icon);
-        return appearance;
+        return CheckoutAppearance.Decode(Encoding.UTF8.GetBytes(root.Git.Out(null, "cat-file", "blob", blob)));
     }
 
     static void BackUpAppearance(SgRoot root, BackupResult result, bool check)
@@ -55,12 +42,11 @@ public static partial class Backup
                 {
                     item.Thin = remote[item.RemoteRef]; item.State = "up to date"; continue;
                 }
-                var local = new SavedAppearance(1, checkout.Icon == "" ? null : CheckoutAppearance.ReadIcon(root, checkout));
-                var payload = JsonSerializer.SerializeToUtf8Bytes(local);
+                var payload = CheckoutAppearance.Encode(CheckoutAppearance.Capture(root, checkout)!);
                 if (cfg.MaxFileBytes > 0 && payload.Length > cfg.MaxFileBytes || cfg.MaxPushBytes > 0 && payload.Length > cfg.MaxPushBytes)
                     throw new SgException("Checkout appearance exceeds the configured backup size limit.");
                 var have = remote.GetValueOrDefault(item.RemoteRef);
-                if (saved != null && payload.AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(saved)))
+                if (saved != null && payload.AsSpan().SequenceEqual(CheckoutAppearance.Encode(saved)))
                 {
                     item.Thin = have!; item.State = "up to date"; continue;
                 }
@@ -81,20 +67,10 @@ public static partial class Backup
         }
     }
 
-    static void RestoreAppearance(SgRoot root, CheckoutConfig checkout, SavedAppearance? appearance, RestoreResult result)
+    static void RestoreAppearance(SgRoot root, CheckoutConfig checkout, CheckoutAppearanceData? appearance, RestoreResult result)
     {
-        // Both a custom image and an explicit choice of initials belong to this machine.
-        if (appearance == null || checkout.Icon != null) return;
-        try
-        {
-            CheckoutAppearance.SetIcon(root, checkout.Name, appearance.Icon);
-            result.CheckoutAppearanceRestored = true;
-        }
-        catch (Exception e) when (e is SgException or IOException or UnauthorizedAccessException)
-        {
-            // Work has already been recovered. A cosmetic write failure must not hide that result.
-            result.CheckoutAppearanceWarning = "Work recovered, but the checkout appearance could not be saved: " + e.Message;
-            root.Log.Warn(result.CheckoutAppearanceWarning);
-        }
+        var restored = CheckoutAppearance.RestoreIfUnset(root, checkout, appearance);
+        result.CheckoutAppearanceRestored = restored.Restored;
+        result.CheckoutAppearanceWarning = restored.Warning;
     }
 }

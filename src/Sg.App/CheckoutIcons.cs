@@ -16,6 +16,10 @@ internal static class CheckoutIcons
     static Identity IdentityOf(CheckoutConfig checkout) => new(Session.Root?.StorePath, checkout.Name, checkout.Icon);
     internal static bool Matches(IconElement? icon, CheckoutConfig checkout) => Equals(icon?.Tag, IdentityOf(checkout));
 
+    internal static string RestoreDescription(bool included, CheckoutConfig checkout) => !included ? ""
+        : checkout.Icon == null ? "The saved checkout appearance will be restored."
+        : "Your existing checkout appearance will be kept.";
+
     public static FontIcon Create(CheckoutConfig checkout)
     {
         var name = checkout.Name;

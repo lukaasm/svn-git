@@ -75,8 +75,8 @@ function Edit-Checkout {
     Invoke-Control (Wait-For { Find 'Edit checkout' -Name })
     $null = Wait-For { Find 'ChooseIconButton' }
 }
-function Pick-Image([string]$path, [switch]$Cancel) {
-    Invoke-Control (Find 'ChooseIconButton')
+function Pick-File([string]$path, [switch]$Cancel, $Button = (Find 'ChooseIconButton')) {
+    Invoke-Control $Button
     $dialog = Wait-For {
         [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.AndCondition]::new(
@@ -117,7 +117,7 @@ try {
     $root = Join-Path $ArtifactDirectory 'root'
     & $cli init $root --no-fsmonitor 2>&1 | Out-File $setup -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not initialize fixture.' }
-    foreach ($name in @('Fort', 'Dashboard')) {
+    foreach ($name in @('Fort', 'Dashboard', 'Tools')) {
         & $cli checkout add --url "$url/trunk" --root $root --name $name 2>&1 | Out-File $setup -Append
         if ($LASTEXITCODE -ne 0) { throw 'Could not register checkout.' }
     }
@@ -149,12 +149,12 @@ try {
 
     Start-UiScenario 'Picker cancellation leaves initials unchanged'
     Edit-Checkout
-    Pick-Image '' -Cancel
+    Pick-File '' -Cancel
     if ((Read-Config).checkouts[0].icon) { throw 'Cancel changed the checkout icon.' }
     Complete-UiScenario
 
     Start-UiScenario 'Picking an image stores a small copy and updates navigation immediately'
-    Pick-Image $source
+    Pick-File $source
     $saved = Wait-For { $c = Read-Config; if ($c.checkouts[0].icon) { $c.checkouts[0].icon } }
     $asset = Join-Path $root ('.sg/icons/' + $saved)
     if (!(Test-Path -LiteralPath $source) -or !(Test-Path -LiteralPath $asset)) { throw 'The source or the stored image is missing.' }
@@ -177,6 +177,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not create backup fixture.' }
     & $cli branch icons --from Fort --root $root 2>&1 | Out-File $setup -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not create worktree for backup.' }
+    $worktree = Join-Path $root 'icons'
+    Set-Content -LiteralPath (Join-Path $worktree 'exported.txt') -Value 'A commit carried with the checkout icon.'
+    & git -C $worktree add exported.txt 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stage export fixture.' }
+    & git -C $worktree -c user.name=UiTest -c user.email=ui@example.com commit -m 'Export an icon' 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not commit export fixture.' }
+    $export = Join-Path $ArtifactDirectory 'icons.sgexport'
+    & $cli export $worktree --out $export --root $root 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not export checkout appearance.' }
     & $cli backup set $backup --root $root 2>&1 | Out-File $setup -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not configure backup fixture.' }
     & $cli backup --worktree icons --root $root 2>&1 | Out-File $setup -Append
@@ -231,6 +240,44 @@ try {
     if ((Read-Config).checkouts[0].icon -ne '') { throw 'Restoring changed the source checkout initials choice.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'restored-appearance.png')
     Complete-UiScenario
+
+    foreach ($target in @('Tools', 'Fort')) {
+        $apply = $target -eq 'Tools'
+        $expected = if ($apply) { 'The saved checkout appearance will be restored.' } else { 'Your existing checkout appearance will be kept.' }
+        Start-UiScenario ("Export import previews and " + $(if ($apply) { 'restores an icon immediately' } else { 'preserves local initials' }))
+        Select-Checkout $target
+        $importButton = Find 'Import' -Name
+        if (!$importButton -or $importButton.Current.IsOffscreen) { Invoke-Control (Find 'MoreButton' -within (Find 'Actions')) }
+        Pick-File $export -Button (Wait-For { Find 'Import' -Name })
+        $null = Wait-For { Find 'IntoBox' }
+        (Find 'IntoBox').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+        $destination = Wait-For { Find $target -Name -within (Find 'IntoBox') }
+        $destination.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        $branch = 'imported-' + $target.ToLowerInvariant()
+        Enter-Value (Wait-For { Find 'NameBox' }) $branch
+        $null = Wait-For { (Find 'AppearanceNote').Current.Name -eq $expected }
+        $null = Wait-For { (Find 'ImportButton').Current.IsEnabled }
+        Save-UiWindow $window (Join-Path $ArtifactDirectory ("import-preview-$target.png"))
+        Invoke-Control (Find 'ImportButton')
+        $null = Wait-For {
+            @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)) |
+                Where-Object { $_.Current.Name.Contains($expected) }).Count -gt 0
+        }
+        Invoke-Control (Wait-For { Find 'PrimaryButton' })
+        $null = Wait-For { (Find 'Summary').Current.Name -like 'Done.*' }
+        if (!(Test-Path -LiteralPath (Join-Path $root "$branch/exported.txt"))) { throw 'Import did not replay its commit.' }
+        $choice = ((Read-Config).checkouts | Where-Object name -eq $target).icon
+        if ($apply) {
+            if ($choice -ne $saved) { throw 'Import did not restore the saved image.' }
+            $null = Wait-For { (Find ('CheckoutIcon_' + $target)).Current.HelpText -eq 'Folder with a custom checkout image' }
+        } else {
+            if ($choice -ne '') { throw 'Import replaced the local initials choice.' }
+            $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with FO initials' }
+        }
+        Save-UiWindow $window (Join-Path $ArtifactDirectory ("import-result-$target.png"))
+        Complete-UiScenario
+    }
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
 } catch {
     Fail-UiScenario $_ $window

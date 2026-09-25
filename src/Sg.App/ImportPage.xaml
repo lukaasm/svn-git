@@ -32,6 +32,10 @@
                             <TextBlock x:Name="Headline" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
                             <TextBlock x:Name="Provenance" Style="{StaticResource Secondary}" />
                             <TextBlock x:Name="FilePath" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                            <Grid x:Name="AppearanceRow" Visibility="Collapsed" ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,6,0,0">
+                                <FontIcon Glyph="&#xEB9F;" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <TextBlock x:Name="AppearanceNote" Grid.Column="1" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                            </Grid>
                         </StackPanel>
                     </Grid>
                 </Border>

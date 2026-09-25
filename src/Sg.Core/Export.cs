@@ -42,6 +42,10 @@ public sealed class ExportMeta
     /// <summary>What the checkout was called where this was made. A hint for a reader; the URL is the key.</summary>
     public string Checkout { get; set; } = "";
 
+    /// <summary>Optional appearance.json accompanies the patches; absent in older exports.</summary>
+    public bool HasAppearance { get; set; }
+    internal CheckoutAppearanceData? Appearance { get; set; }
+
     /// <summary>The root first, then every external the snapshot names.</summary>
     public List<ExportWc> Bases { get; set; } = new();
 
@@ -103,6 +107,9 @@ public sealed class ImportResult
     /// </summary>
     public bool Waiting;
 
+    public bool CheckoutAppearanceRestored;
+    public string? CheckoutAppearanceWarning;
+
     public bool Ok => Stopped == null;
 }
 
@@ -117,6 +124,7 @@ public static class Export
     const string MetaEntry = "export.json";
     const string PatchPrefix = "commits/";
     const string PackEntry = "base.pack";
+    const string AppearanceEntry = "appearance.json";
 
     /// <summary>The name to offer for a branch's file. A branch name may hold slashes; a file name may not.</summary>
     public static string SuggestName(string branch) =>
@@ -130,6 +138,7 @@ public static class Export
     /// </summary>
     public static ExportResult Write(SgRoot root, string worktree, string file)
     {
+        using var operation = root.Lock();
         var git = root.Git;
         var branch = git.CurrentBranch(worktree);
         var co = Ops.BaseCheckout(root, branch);
@@ -142,11 +151,14 @@ public static class Export
         if (commits.Count == 0)
             throw new SgException($"{branch} equals its snapshot: there are no commits of its own to export.");
 
+        // Read the managed asset before replacing a previous export or generating any patches.
+        var appearance = CheckoutAppearance.Capture(root, co);
         var snap = SnapshotMeta.Parse(git.Body(snapSha));
         var meta = new ExportMeta
         {
             Branch = branch,
             Checkout = co.Name,
+            HasAppearance = appearance != null,
             Bases = Bases(root, snap, co),
             // git log is newest first; a patch series is replayed oldest first, and the list is read as one.
             Subjects = commits.Select(c => c.Subject).Reverse().ToList(),
@@ -171,6 +183,7 @@ public static class Export
             using (var zip = ZipFile.Open(file, ZipArchiveMode.Create))
             {
                 Add(zip, MetaEntry, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(meta, SgConfig.JsonOptions)));
+                if (appearance != null) Add(zip, AppearanceEntry, CheckoutAppearance.Encode(appearance));
                 foreach (var p in patches) AddFile(zip, PatchPrefix + Path.GetFileName(p), p);
                 if (pack != null) AddFile(zip, PackEntry, pack);
             }
@@ -281,8 +294,12 @@ public static class Export
     /// <summary>What the file says about itself, without unpacking a single patch.</summary>
     public static ExportMeta Read(string file)
     {
-        if (!File.Exists(file)) throw new SgException("no such file: " + file);
         using var zip = OpenZip(file);
+        return Read(zip, file);
+    }
+
+    static ExportMeta Read(ZipArchive zip, string file)
+    {
         var entry = zip.GetEntry(MetaEntry)
                     ?? throw new SgException($"{Path.GetFileName(file)} is not an sg export: it has no {MetaEntry}.");
         using var s = entry.Open();
@@ -291,11 +308,26 @@ public static class Export
                    ?? throw new SgException("the export names nothing: " + file);
         if (meta.Version > ExportMeta.Current)
             throw new SgException($"this export is version {meta.Version} and this sg reads {ExportMeta.Current}. Update sg, then import it again.");
+        var appearance = zip.Entries.Where(e => e.FullName == AppearanceEntry).ToArray();
+        if (appearance.Length != (meta.HasAppearance ? 1 : 0))
+            throw new SgException("The export's checkout appearance is missing or duplicated. Export the branch again.");
+        if (meta.HasAppearance)
+        {
+            var saved = appearance[0];
+            if (saved.Length > CheckoutAppearance.MaxEncodedBytes)
+                throw new SgException("Saved checkout appearance exceeds the supported size.");
+            using var content = saved.Open();
+            var bytes = new byte[checked((int)saved.Length)];
+            content.ReadExactly(bytes);
+            if (content.ReadByte() != -1) throw new SgException("Invalid checkout appearance entry length.");
+            meta.Appearance = CheckoutAppearance.Decode(bytes);
+        }
         return meta;
     }
 
     static ZipArchive OpenZip(string file)
     {
+        if (!File.Exists(file)) throw new SgException("no such file: " + file);
         try { return ZipFile.OpenRead(file); }
         catch (InvalidDataException) { throw new SgException($"{Path.GetFileName(file)} is not an sg export: it is not even a zip."); }
     }
@@ -472,7 +504,10 @@ public static class Export
     /// </summary>
     public static ImportResult Import(SgRoot root, string file, string? asBranch = null, string? intoCheckout = null)
     {
-        var meta = Read(file);
+        // Keep one archive open from validation through extraction, so its appearance and patches
+        // come from the same file even when somebody replaces the path during an import.
+        using var zip = OpenZip(file);
+        var meta = Read(zip, file);
         var git = root.Git;
 
         var co = intoCheckout != null
@@ -499,15 +534,13 @@ public static class Export
         {
             var patches = new List<string>();
             string? pack = null;
-            using (var zip = OpenZip(file))
+            // Appearance was validated above and is never extracted into the source worktree.
+            foreach (var e in zip.Entries.OrderBy(e => e.FullName, StringComparer.Ordinal))
             {
-                foreach (var e in zip.Entries.OrderBy(e => e.FullName, StringComparer.Ordinal))
-                {
-                    if (e.FullName.StartsWith(PatchPrefix, StringComparison.Ordinal) && e.FullName.EndsWith(".patch", StringComparison.OrdinalIgnoreCase))
-                        patches.Add(Extract(e, Path.Combine(temp, "commits", Path.GetFileName(e.FullName))));
-                    else if (e.FullName == PackEntry)
-                        pack = Extract(e, Path.Combine(temp, "base.pack"));
-                }
+                if (e.FullName.StartsWith(PatchPrefix, StringComparison.Ordinal) && e.FullName.EndsWith(".patch", StringComparison.OrdinalIgnoreCase))
+                    patches.Add(Extract(e, Path.Combine(temp, "commits", Path.GetFileName(e.FullName))));
+                else if (e.FullName == PackEntry)
+                    pack = Extract(e, Path.Combine(temp, "base.pack"));
             }
             if (patches.Count == 0) throw new SgException("the export holds no patches: " + Path.GetFileName(file));
 
@@ -532,10 +565,15 @@ public static class Export
                     : "the last patch";
                 res.Conflicted = git.ConflictedFiles(made.Path);
                 res.Why = (r.StdErr.Trim() + "\n" + r.StdOut.Trim()).Trim();
-                return res;
             }
-            r.EnsureOk();
-            Operations.AfterReplay(root, made.Path);
+            else
+            {
+                r.EnsureOk();
+                Operations.AfterReplay(root, made.Path);
+            }
+            var appearance = CheckoutAppearance.RestoreIfUnset(root, co, meta.Appearance);
+            res.CheckoutAppearanceRestored = appearance.Restored;
+            res.CheckoutAppearanceWarning = appearance.Warning;
             return res;
         }
         finally { Sweep(temp); }

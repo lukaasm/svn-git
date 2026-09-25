@@ -45,6 +45,7 @@ public sealed class ResolveTests : IDisposable
         git.Ok(wt, "commit", "-q", "-m", "second: a file nobody else has");
 
         var file = Path.Combine(f.Base, "carried" + Export.Extension);
+        CheckoutAppearance.SetIcon(f.Root, f.Co.Name, null);
         Export.Write(f.Root, wt, file);
 
         // Somebody else changes the same line on the server, and only the far side has synced it.
@@ -54,7 +55,10 @@ public sealed class ResolveTests : IDisposable
 
         var far = Far();
         Ops.Sync(far.Root, far.Co);
-        return (Export.Import(far.Root, file), far.Root);
+        var imported = Export.Import(far.Root, file);
+        Assert.True(imported.CheckoutAppearanceRestored);
+        Assert.Equal("", far.Co.Icon);
+        return (imported, far.Root);
     }
 
     /// <summary>

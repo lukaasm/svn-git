@@ -62,7 +62,9 @@ public static class TaskResults
         var lines = new List<string> { $"{r.Branch}: {r.Applied}/{r.Commits} commits imported. {r.Path}" };
         lines.AddRange(ReplayGuidance(r.Waiting, r.Stopped, r.Why));
         if (r.Drift.Count > 0) lines.Add($"Commits were merged across {r.Drift.Count} changed revision(s).");
-        return (r.Ok && !r.Waiting ? TaskState.Succeeded : TaskState.NeedsAttention, string.Join("\n", lines));
+        if (r.CheckoutAppearanceRestored) lines.Add("Checkout appearance restored.");
+        if (r.CheckoutAppearanceWarning != null) lines.Add(r.CheckoutAppearanceWarning);
+        return (r.Ok && !r.Waiting && r.CheckoutAppearanceWarning == null ? TaskState.Succeeded : TaskState.NeedsAttention, string.Join("\n", lines));
     }
 
     static IEnumerable<string> ReplayGuidance(bool waiting, string? stopped, string? why)

@@ -1,13 +1,72 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace Sg.Core;
+
+/// <summary>Portable metadata shared by remote backups and export archives. Null Icon explicitly selects initials.</summary>
+internal sealed record CheckoutAppearanceData(int Format, byte[]? Icon);
+internal sealed record CheckoutAppearanceRestore(bool Restored = false, string? Warning = null);
 
 /// <summary>Small, root-owned checkout images. Config stores only a content-addressed filename.</summary>
 public static class CheckoutAppearance
 {
     public const int MaxBytes = 512 * 1024;
     public const int MaxDimension = 128;
+    internal const int MaxEncodedBytes = MaxBytes * 4 / 3 + 1024;
+
+    internal static CheckoutAppearanceData? Capture(SgRoot root, CheckoutConfig checkout)
+    {
+        try
+        {
+            return checkout.Icon switch
+            {
+                null => null,
+                "" => new(1, null),
+                _ => new(1, ReadIcon(root, checkout)),
+            };
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+        {
+            throw new SgException("The checkout icon is missing. Choose an image again or use initials before backing up or exporting.");
+        }
+    }
+
+    internal static byte[] Encode(CheckoutAppearanceData data) => JsonSerializer.SerializeToUtf8Bytes(data);
+
+    internal static CheckoutAppearanceData Decode(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length > MaxEncodedBytes) throw new SgException("Saved checkout appearance exceeds the supported size.");
+        CheckoutAppearanceData data;
+        try
+        {
+            data = JsonSerializer.Deserialize<CheckoutAppearanceData>(bytes)
+                ?? throw new SgException("Invalid saved checkout appearance.");
+        }
+        catch (JsonException) { throw new SgException("Invalid saved checkout appearance."); }
+        if (data.Format != 1) throw new SgException("Unsupported checkout appearance format.");
+        if (data.Icon != null) Validate(data.Icon);
+        return data;
+    }
+
+    internal static CheckoutAppearanceRestore RestoreIfUnset(SgRoot root, CheckoutConfig checkout, CheckoutAppearanceData? data)
+    {
+        using var lease = root.Lock();
+        // Both a custom image and an explicit choice of initials belong to this machine.
+        if (data == null || checkout.Icon != null) return new();
+        try
+        {
+            SetIcon(root, checkout.Name, data.Icon);
+            return new(Restored: true);
+        }
+        catch (Exception e) when (e is SgException or IOException or UnauthorizedAccessException)
+        {
+            // Work has already been recovered. A cosmetic write failure must not hide that result.
+            var warning = "Work recovered, but the checkout appearance could not be saved: " + e.Message;
+            root.Log.Warn(warning);
+            return new(Warning: warning);
+        }
+    }
 
     public static string? IconPath(SgRoot root, CheckoutConfig checkout)
     {
@@ -63,14 +122,14 @@ public static class CheckoutAppearance
     internal static byte[] ReadIcon(SgRoot root, CheckoutConfig checkout)
     {
         var path = IconPath(root, checkout)
-            ?? throw new SgException("The checkout icon is not a managed image. Choose it again before backing up.");
+            ?? throw new SgException("The checkout icon is not a managed image. Choose it again before backing up or exporting.");
         using var file = File.OpenRead(path);
         if (file.Length > MaxBytes) throw new SgException("The checkout icon exceeds the supported size.");
         var png = new byte[checked((int)file.Length)];
         file.ReadExactly(png);
         Validate(png);
         if (Convert.ToHexStringLower(SHA256.HashData(png)) + ".png" != checkout.Icon)
-            throw new SgException("The checkout icon changed on disk. Choose it again before backing up.");
+            throw new SgException("The checkout icon changed on disk. Choose it again before backing up or exporting.");
         return png;
     }
 

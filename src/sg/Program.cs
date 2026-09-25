@@ -725,6 +725,7 @@ static class Cli
             var m = Export.Read(file);
             if (a.Has("--json")) { Json(m); return 0; }
             Console.WriteLine($"{m.Branch} from {m.Checkout}, {m.Commits} commit(s), made {m.Created:yyyy-MM-dd HH:mm} on {m.From}");
+            if (m.HasAppearance) Console.WriteLine("  Includes checkout appearance; an existing local choice will be kept.");
             foreach (var b in m.Bases) Console.WriteLine($"  {b.Where,-26} r{b.Revision,-10} {b.Url}");
             foreach (var s in m.Subjects) Console.WriteLine("  . " + s);
             return 0;
@@ -733,6 +734,8 @@ static class Cli
         var res = Export.Import(root, file, a.Get("--name"), a.Get("--into"));
         if (a.Has("--json")) { Json(res); return 0; }
         Console.WriteLine($"{res.Branch} on {res.Checkout}: {res.Applied} of {res.Commits} commit(s) in {res.Path}");
+        if (res.CheckoutAppearanceRestored) Console.WriteLine("  Checkout appearance restored.");
+        if (res.CheckoutAppearanceWarning != null) Console.Error.WriteLine(res.CheckoutAppearanceWarning);
         foreach (var d in res.Drift) Console.WriteLine("  moved on since the export: " + d);
         if (res.Ok)
         {

@@ -22,8 +22,11 @@ internal sealed class PageReads(Action<bool>? reading = null)
     internal sealed class Request(PageReads owner) : IDisposable
     {
         readonly CancellationTokenSource _cancel = new();
+        Task? _cancellation;
         public bool Current => ReferenceEquals(owner._current, this) && !_cancel.IsCancellationRequested;
-        internal void Cancel() => _cancel.Cancel();
+        // Child-process termination can take seconds. Invalidate synchronously, but never execute
+        // cancellation callbacks on the UI thread when the user edits or leaves a page.
+        internal void Cancel() => _cancellation ??= _cancel.CancelAsync();
         public async Task<T?> Run<T>(StatusStrip pane, Func<T> work, Action<string>? failed = null) where T : class
         {
             using var feedback = pane.Reading();
@@ -56,7 +59,13 @@ internal sealed class PageReads(Action<bool>? reading = null)
                 owner._current = null;
                 owner.EndRead();
             }
-            _cancel.Dispose();
+            _ = ReleaseCancellation();
+        }
+        async Task ReleaseCancellation()
+        {
+            try { if (_cancellation != null) await _cancellation.ConfigureAwait(false); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Read cancellation cleanup failed: " + ex); }
+            finally { _cancel.Dispose(); }
         }
     }
     void EndRead() => reading?.Invoke(false);

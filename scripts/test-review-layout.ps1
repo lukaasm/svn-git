@@ -1,5 +1,5 @@
 # Native UI Automation on a private desktop, with disposable Git and SVN repositories.
-param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$BrowsingOnly, [switch]$TransferOnly,
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$BrowsingOnly, [switch]$TransferOnly, [switch]$TransferPerformanceOnly,
     [ValidateSet('All', 'Commit', 'Merge')][string]$NavigationScope = 'All')
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -10,6 +10,7 @@ if (!$Worker) {
     if ($ReadingOnly) { $command += ' -ReadingOnly' }
     if ($BrowsingOnly) { $command += ' -BrowsingOnly' }
     if ($TransferOnly) { $command += ' -TransferOnly' }
+    if ($TransferPerformanceOnly) { $command += ' -TransferPerformanceOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-review-layout-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(240)
@@ -138,6 +139,12 @@ try {
     [IO.File]::WriteAllText((Join-Path $worktree 'untracked.txt'), "Untracked content`n")
     $checkout = (Get-Content -LiteralPath (Join-Path $fixture '.sg/sg.json') -Raw | ConvertFrom-Json).checkouts[0].path
     $checkoutBefore = (& svn status $checkout) -join "`n"
+
+    if ($TransferPerformanceOnly) {
+        . "$PSScriptRoot/transfer-performance-cases.ps1"
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
 
     if ($TransferOnly) {
         . "$PSScriptRoot/checkout-transfer-cases.ps1"

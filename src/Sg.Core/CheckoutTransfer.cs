@@ -27,7 +27,7 @@ public sealed record CheckoutTransferResult(string Path, int Files, bool Moved, 
 public static class CheckoutTransfer
 {
     public static CheckoutTransferPlan Preview(SgRoot root, CheckoutConfig checkout, string target,
-        bool newWorktree = false, bool move = false, IEnumerable<string>? paths = null)
+        bool newWorktree = false, bool move = false, IEnumerable<string>? paths = null, Action<int, int>? progress = null)
     {
         using var gate = root.Lock();
         var co = root.Checkout(checkout.Name);
@@ -74,43 +74,50 @@ public static class CheckoutTransfer
             if (c.Item == "unversioned" && Directory.Exists(PathUtil.Join(co.Path, c.Path))) Walk(c.Path);
             else files.Add((c.Path, c.Item));
         }
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (path, item) in files)
+        files = files.Where(f => plan.Paths == null || plan.Paths.Any(p => PathUtil.IsUnder(f.Path, p)))
+            .DistinctBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
+        var checkedFiles = 0;
+        progress?.Invoke(0, files.Count);
+        foreach (var batch in files.Chunk(64))
         {
             Cancellation.ThrowIfRequested();
-            if (plan.Paths != null && !plan.Paths.Any(p => PathUtil.IsUnder(path, p))) continue;
-            if (!seen.Add(path)) continue;
-            root.Log.Progress("Checking transfer", seen.Count, files.Count, "files", path);
-            var source = Hash(root, co.Path, path);
-            string? basis = null;
-            if (item is not ("added" or "unversioned"))
+            root.Log.Progress("Checking transfer", checkedFiles, files.Count, "files", "Reading file contents");
+            var pathsInBatch = batch.Select(f => f.Path).ToArray();
+            var sources = HashBatch(root, co.Path, pathsInBatch);
+            var bases = ReadBases(root, co.Path, batch.Where(f => f.Item is not ("added" or "unversioned")).Select(f => f.Path).ToArray());
+            var unsafeTargets = pathsInBatch.Select(p => (Path: p, Reason: UnsafePath(plan.Destination, p)))
+                .Where(p => p.Reason != null).ToDictionary(p => p.Path, p => p.Reason!, StringComparer.Ordinal);
+            var targets = newWorktree ? [] : HashBatch(root, plan.Destination, pathsInBatch.Where(p => !unsafeTargets.ContainsKey(p)));
+            var entries = newWorktree ? git.EntriesAt(plan.TargetHead, pathsInBatch).ToDictionary(e => e.Path, StringComparer.Ordinal) : [];
+            foreach (var (path, item) in batch)
             {
-                var temp = root.NewTempFile(".base");
-                try { root.Svn.CatToFile(co.Path, path, "BASE", temp).EnsureOk(); basis = git.HashObjects([temp])[0]; }
-                finally { File.Delete(temp); }
+                Cancellation.ThrowIfRequested();
+                root.Log.Progress("Checking transfer", ++checkedFiles, files.Count, "files", path);
+                var source = sources.GetValueOrDefault(path);
+                var basis = bases.GetValueOrDefault(path);
+                if (unsafeTargets.TryGetValue(path, out var unsafeTarget)) { plan.Conflicts.Add(new(path, unsafeTarget)); continue; }
+                string? before;
+                if (newWorktree)
+                {
+                    var entry = entries.GetValueOrDefault(path);
+                    if (entry != null && entry.Mode != "100644" && entry.Mode != "100755")
+                    { plan.Conflicts.Add(new(path, "The destination is not a regular file.")); continue; }
+                    before = entry?.Sha;
+                }
+                else before = targets.GetValueOrDefault(path);
+                var after = source;
+                var action = source == null ? "Delete" : before == null ? "Add" : "Copy";
+                if (source == before) action = "Already present";
+                else if (before != basis)
+                {
+                    if (before == null || basis == null || source == null || !Merge(root, path, basis, before, source, out after))
+                    { plan.Conflicts.Add(new(path, "The changes overlap with the destination. Resolve them or choose another worktree.")); continue; }
+                    action = "Merge edits";
+                }
+                plan.Contents.Add(new(path, item, basis, source, before, after));
+                plan.Files.Add(new(path, item, action));
             }
-            var unsafeTarget = UnsafePath(plan.Destination, path);
-            if (unsafeTarget != null) { plan.Conflicts.Add(new(path, unsafeTarget)); continue; }
-            string? before;
-            if (newWorktree)
-            {
-                var entry = git.LsTree(plan.TargetHead, [path], recursive: false).FirstOrDefault(e => e.Path == path);
-                if (entry != null && entry.Mode != "100644" && entry.Mode != "100755")
-                { plan.Conflicts.Add(new(path, "The destination is not a regular file.")); continue; }
-                before = entry?.Sha;
-            }
-            else before = Hash(root, plan.Destination, path);
-            var after = source;
-            var action = source == null ? "Delete" : before == null ? "Add" : "Copy";
-            if (source == before) action = "Already present";
-            else if (before != basis)
-            {
-                if (before == null || basis == null || source == null || !Merge(root, path, basis, before, source, out after))
-                { plan.Conflicts.Add(new(path, "The changes overlap with the destination. Resolve them or choose another worktree.")); continue; }
-                action = "Merge edits";
-            }
-            plan.Contents.Add(new(path, item, basis, source, before, after));
-            plan.Files.Add(new(path, item, action));
+            progress?.Invoke(checkedFiles, files.Count);
         }
         root.Log.ProgressEnd("Checking transfer", null);
         plan.Token = WorkspaceVersion.Hash(JsonSerializer.Serialize(new { plan.Checkout, plan.Target, plan.NewWorktree, plan.Move,
@@ -119,9 +126,11 @@ public static class CheckoutTransfer
 
         void Walk(string rel)
         {
+            Cancellation.ThrowIfRequested();
             plan.UnversionedDirectories.Add(rel);
             foreach (var full in Directory.EnumerateFileSystemEntries(PathUtil.Join(co.Path, rel)).Order(StringComparer.Ordinal))
             {
+                Cancellation.ThrowIfRequested();
                 var p = PathUtil.RelativeTo(co.Path, full);
                 var why = Excluded(co, p) ?? UnsafePath(co.Path, p, allowDirectory: true);
                 if (why != null) { plan.LeftBehind.Add(new(p, why)); continue; }
@@ -210,6 +219,30 @@ public static class CheckoutTransfer
 
     static string? Hash(SgRoot root, string folder, string path) => File.Exists(PathUtil.Join(folder, path))
         ? root.Git.HashObjects([PathUtil.Join(folder, path)])[0] : null;
+
+    static Dictionary<string, string> HashBatch(SgRoot root, string folder, IEnumerable<string> paths)
+    {
+        var present = paths.Where(p => File.Exists(PathUtil.Join(folder, p))).ToArray();
+        var hashes = root.Git.HashObjects(present.Select(p => PathUtil.Join(folder, p)));
+        return present.Select((p, i) => (Path: p, Sha: hashes[i])).ToDictionary(p => p.Path, p => p.Sha, StringComparer.Ordinal);
+    }
+
+    static Dictionary<string, string> ReadBases(SgRoot root, string folder, string[] paths)
+    {
+        if (paths.Length == 0) return [];
+        var temps = paths.Select(_ => root.NewTempFile(".base")).ToArray();
+        try
+        {
+            Fan.Map(Enumerable.Range(0, paths.Length).ToArray(), i =>
+            {
+                Cancellation.ThrowIfRequested();
+                return root.Svn.CatToFile(folder, paths[i], "BASE", temps[i]).EnsureOk();
+            });
+            var hashes = root.Git.HashObjects(temps);
+            return paths.Select((p, i) => (Path: p, Sha: hashes[i])).ToDictionary(p => p.Path, p => p.Sha, StringComparer.Ordinal);
+        }
+        finally { foreach (var temp in temps) File.Delete(temp); }
+    }
 
     static bool Merge(SgRoot root, string path, string basis, string before, string source, out string? after)
     {

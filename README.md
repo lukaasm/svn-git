@@ -69,6 +69,7 @@ Add `-ReadingOnly` to check diff scroll and directional selections when switchin
 Add `-BrowsingOnly` to check independent scroll positions and folder expansion in Code Review, History, and Backup Compare, including filtered lists, new commits, and selections removed while away. History remembers a separate file-tree view for each recently opened commit.
 
 Add `-TransferOnly` to exercise checkout-to-worktree copy/move previews, conflicts, move confirmation, worktree/branch renaming, stable empty-checkout refreshes, and recoverable/permanent discard confirmations on disposable repositories.
+Add `-TransferPerformanceOnly` for a 1,024-file preview: destination inputs stay interactive, edits cancel obsolete reads, Cancel preview stops explicitly, and the completed file tree remains filterable. Core tests bound Git process counts and verify cancellation leaves files, branches, and shelves untouched.
 
 Add `-NavigationOnly` to check returning with a Commit draft, file filter, explicit checked/unchecked choices, and open diff; amend recovery when HEAD changes; clearing sent messages; and Merge source/revision recovery when server history or branches disappear. `-NavigationScope Commit` or `-NavigationScope Merge` limits those checks to one page.
 

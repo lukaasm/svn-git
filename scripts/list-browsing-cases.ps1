@@ -79,7 +79,9 @@ Invoke-Control (Find 'CodeReviewReadiness')
 Invoke-Control (Wait-For { Find 'PART_BackButton' })
 $null = Wait-For { (Find 'TitleText').Current.Name -eq $fileTitle }
 Assert-Anchor 'CodeReviewFiles' $reviewAnchor
-if (!(Row 'CodeReviewFiles' $pickedName).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected) { throw 'Review file selection was lost.' }
+# The selected row may be virtualized outside the restored viewport; query the selection provider.
+$selected = (Find 'CodeReviewFiles').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+if ($selected.Count -ne 1 -or $selected[0].Current.Name -ne $pickedName) { throw 'Review file selection was lost.' }
 if (Row 'CodeReviewFiles' '*file-000.txt*') { throw 'Review folder reopened.' }
 Save-UiWindow $window (Join-Path $ArtifactDirectory 'review-reading.png')
 Complete-UiScenario
@@ -149,7 +151,7 @@ Select-Control (Find 'SettingsItem')
 [IO.File]::WriteAllText((Join-Path $worktree 'base.txt'), "New commit while away`n")
 & git -C $worktree -c user.name=Fixture -c user.email=fixture@example.invalid commit -qam 'New history while away'
 Check-Exit 'history addition'
-Invoke-Control (Find 'NavigationViewBackButton')
+Invoke-Control (Wait-For { Find 'NavigationViewBackButton' })
 $null = Wait-For { (Find 'TitleText').Current.Name -eq $historyTitle }
 Assert-Anchor 'Commits' $commitsAnchor; Assert-Anchor 'Files' $filesAnchor
 Complete-UiScenario
@@ -159,7 +161,7 @@ Select-Control (Find 'SettingsItem')
 # Move only this disposable fixture's branch below the selected commit; leave all files on disk.
 & git -C $worktree reset --soft 'HEAD~37' | Out-File $setupLog -Append
 Check-Exit 'fixture history replacement'
-Invoke-Control (Find 'NavigationViewBackButton')
+Invoke-Control (Wait-For { Find 'NavigationViewBackButton' })
 $null = Wait-For { (Find 'TitleText').Current.Name -eq 'pick a commit to see what it changed' }
 if ((Find 'RewordButton').Current.IsEnabled -or (Find 'RevertButton').Current.IsEnabled -or (List-Rows 'Files').Count) { throw 'Missing commits left stale files or rewrite actions.' }
 Complete-UiScenario

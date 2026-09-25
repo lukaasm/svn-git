@@ -15,7 +15,7 @@ public abstract class WorkflowPage : SgPage
     bool _busy;
     readonly PageReads _reads;
     protected readonly ReadFeedback Reading = new() { Margin = new Thickness(16), MaxWidth = 1000, HorizontalAlignment = HorizontalAlignment.Stretch };
-    protected WorkflowPage(string title)
+    protected WorkflowPage(string title, bool keepContentInteractive = false)
     {
         Title = title;
         Reading.StateId = "WorkflowLoading";
@@ -23,7 +23,7 @@ public abstract class WorkflowPage : SgPage
         {
             if (active) Reading.Show("Loading " + Title.ToLowerInvariant() + "…", Body.Children.Count == 0);
             else Reading.Hide();
-            _scroll.IsEnabled = !active;
+            _scroll.IsEnabled = keepContentInteractive || !active;
         });
         var grid = new Grid();
         grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -41,6 +41,7 @@ public abstract class WorkflowPage : SgPage
     public override void OnHidden() => _reads.Cancel();
     protected abstract Task Reload();
     private protected PageReads.Request BeginRead() => _reads.Begin();
+    protected void CancelRead() => _reads.Cancel();
     private protected static bool Current(PageReads.Request read) => read.Current;
     protected void Text(string text, bool heading = false) => Body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = heading ? 20 : 14 });
     protected Button Action(string label, Func<Task> action, bool primary = false, bool enabled = true, bool mutates = false, string glyph = "")

@@ -711,7 +711,7 @@ public sealed class Git
         var a = new List<string> { "ls-tree", "-z" };
         if (recursive) a.Add("-r");
         a.Add(treeish);
-        if (paths != null) a.AddRange(paths);
+        if (paths != null) { a.Add("--"); a.AddRange(paths); }
         var r = Ok(null, a.ToArray());
         var res = new List<TreeEntry>();
         foreach (var line in r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
@@ -725,6 +725,28 @@ public sealed class Git
 
     public List<TreeEntry> LsTreeChildren(string treeish, string dirRel) =>
         dirRel.Length == 0 ? LsTree(treeish) : LsTree(treeish, [dirRel + "/"]);
+
+    /// <summary>Exact tree entries in bounded argument batches, without scanning unrelated subtrees.</summary>
+    public List<TreeEntry> EntriesAt(string treeish, IEnumerable<string> paths)
+    {
+        var result = new List<TreeEntry>();
+        var batch = new List<string>(); var length = 0;
+        foreach (var path in paths.Distinct(StringComparer.Ordinal))
+        {
+            if (batch.Count > 0 && length + path.Length + 3 > 8000) Flush();
+            batch.Add(path); length += path.Length + 3;
+        }
+        Flush();
+        return result;
+
+        void Flush()
+        {
+            if (batch.Count == 0) return;
+            var wanted = batch.ToHashSet(StringComparer.Ordinal);
+            result.AddRange(LsTree(treeish, batch).Where(e => wanted.Contains(e.Path)));
+            batch.Clear(); length = 0;
+        }
+    }
 
     // ---- worktree state ----
 

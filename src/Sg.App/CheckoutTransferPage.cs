@@ -16,10 +16,11 @@ public sealed class CheckoutTransferPage : WorkflowPage
     readonly CheckBox _move = new() { Content = "Move changes out of the checkout" };
     readonly TextBlock _explain = new() { TextWrapping = TextWrapping.Wrap };
     readonly StackPanel _preview = new() { Spacing = 10 };
-    readonly IconButton _check, _apply;
+    readonly IconButton _check, _apply, _cancel;
     readonly ReportCard _report = new();
     CheckoutTransferPlan? _plan;
     bool _running;
+    bool _previewing;
     int _generation;
     string? _wanted;
     sealed record ViewState(int Kind, string Name, string? Existing, bool Move);
@@ -29,7 +30,7 @@ public sealed class CheckoutTransferPage : WorkflowPage
         if (state is not ViewState view) return;
         _kind.SelectedIndex = view.Kind; _name.Text = view.Name; _wanted = view.Existing; _move.IsChecked = view.Move;
     }
-    public CheckoutTransferPage(CheckoutConfig co, string[]? paths = null) : base("Transfer checkout changes")
+    public CheckoutTransferPage(CheckoutConfig co, string[]? paths = null) : base("Transfer checkout changes", keepContentInteractive: true)
     {
         _co = co; _paths = paths; Checkout = co.Name; Subtitle = co.Path;
         Text("Copy checkout edits into a worktree, or move them there to continue on a branch.");
@@ -38,7 +39,9 @@ public sealed class CheckoutTransferPage : WorkflowPage
         Body.Children.Add(_move); Body.Children.Add(_explain);
         _check = (IconButton)Action("Preview transfer", Preview, glyph: "\uE8A5");
         _apply = (IconButton)Action("Copy changes", Apply, primary: true, enabled: false, mutates: true, glyph: "\uE8C8");
-        WrapActions(Body.Children.Count - 2);
+        _cancel = (IconButton)Action("Cancel preview", () => { Invalidate(); return Task.CompletedTask; }, glyph: "\uE711");
+        _cancel.Visibility = Visibility.Collapsed;
+        WrapActions(Body.Children.Count - 3);
         Body.Children.Add(_preview); Body.Children.Add(_report);
         AutomationProperties.SetAutomationId(_kind, "TransferDestinationKind");
         AutomationProperties.SetAutomationId(_name, "TransferBranchName");
@@ -46,6 +49,7 @@ public sealed class CheckoutTransferPage : WorkflowPage
         AutomationProperties.SetAutomationId(_move, "TransferMove");
         AutomationProperties.SetAutomationId(_check, "TransferPreview");
         AutomationProperties.SetAutomationId(_apply, "TransferApply");
+        AutomationProperties.SetAutomationId(_cancel, "TransferCancelPreview");
         _kind.SelectionChanged += (_, _) => Invalidate(); _existing.SelectionChanged += (_, _) => Invalidate();
         _name.TextChanged += (_, _) => Invalidate(); _move.Checked += (_, _) => Invalidate(); _move.Unchecked += (_, _) => Invalidate();
         Invalidate();
@@ -53,6 +57,8 @@ public sealed class CheckoutTransferPage : WorkflowPage
     void Invalidate()
     {
         ++_generation;
+        if (_previewing) { _previewing = false; CancelRead(); }
+        _cancel.Visibility = Visibility.Collapsed;
         _plan = null; _apply.IsEnabled = false; _preview.Children.Clear(); _report.Hide();
         _name.Visibility = _kind.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         _existing.Visibility = _kind.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
@@ -67,6 +73,8 @@ public sealed class CheckoutTransferPage : WorkflowPage
     }
     protected override async Task Reload()
     {
+        if (_running) return;
+        Invalidate();
         using var read = BeginRead(); var root = Session.Require();
         var names = await read.Run(Pane, () =>
         {
@@ -86,7 +94,17 @@ public sealed class CheckoutTransferPage : WorkflowPage
         var target = _kind.SelectedIndex == 0 ? _name.Text.Trim() : _existing.SelectedItem as string;
         if (string.IsNullOrEmpty(target)) return;
         var create = _kind.SelectedIndex == 0; var move = _move.IsChecked == true;
-        var plan = await read.Run(Pane, () => CheckoutTransfer.Preview(root, _co, target, create, move, _paths));
+        _previewing = true; _cancel.Visibility = Visibility.Visible; _check.IsEnabled = false;
+        Reading.Show("Checking checkout changes…", placeholders: false);
+        var plan = await read.Run(Pane, () => CheckoutTransfer.Preview(root, _co, target, create, move, _paths,
+            progress: (done, total) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (Current(read) && generation == _generation) Reading.Show($"Checking transfer · {done} of {total} files", placeholders: false);
+            })));
+        if (generation == _generation)
+        {
+            _previewing = false; _cancel.Visibility = Visibility.Collapsed; _check.IsEnabled = true;
+        }
         if (!Current(read) || generation != _generation || plan == null) return;
         _plan = plan;
         _preview.Children.Add(new StatusChip { Text = $"{plan.Files.Count} files · {plan.Conflicts.Count} conflicts · {plan.LeftBehind.Count} left behind",
@@ -94,6 +112,7 @@ public sealed class CheckoutTransferPage : WorkflowPage
         if (plan.Files.Count > 0)
         {
             var header = new TextBlock(); var filter = new TextBox { PlaceholderText = "Filter files" };
+            AutomationProperties.SetAutomationId(filter, "TransferFileFilter");
             var tree = new RowTreeView { Height = 280, ItemTemplate = (DataTemplate)Application.Current.Resources["FileTreeTemplate"] };
             AutomationProperties.SetAutomationId(tree, "TransferFiles");
             var list = new ListFilter(filter, tree, header, row => ((FileRow)row).Display);

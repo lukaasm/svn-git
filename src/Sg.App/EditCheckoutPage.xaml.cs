@@ -36,6 +36,9 @@ public sealed partial class EditCheckoutPage : SgPage
     public EditCheckoutPage(CheckoutConfig co)
     {
         InitializeComponent();
+        IconCard.Resources["SettingsCardHeaderIconMaxSize"] = CheckoutIcons.Size;
+        // Keep the header aligned with adjacent cards while giving its preview more space.
+        IconCard.Resources["SettingsCardHeaderIconMargin"] = new Thickness(2, 0, 8, 0);
         _name = co.Name;
         Session.Log.Sink = Pane;
         Title = "Edit checkout";

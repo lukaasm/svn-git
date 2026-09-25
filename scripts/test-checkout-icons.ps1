@@ -1,10 +1,11 @@
 # Checkout identity and the real file picker, exercised with UI Automation on a private desktop.
-param([switch]$Worker, [string]$ArtifactDirectory)
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$LayoutOnly)
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
     if (!('UiTestDesktop' -as [type])) { Add-Type -Path "$PSScriptRoot/UiTestDesktop.cs" }
     $ArtifactDirectory = (New-Item -ItemType Directory -Path "$PSScriptRoot/../TestResults/UI/checkout-icons-$([Guid]::NewGuid().ToString('N'))").FullName
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
+    if ($LayoutOnly) { $command += ' -LayoutOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-icons-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(300)
@@ -28,6 +29,7 @@ using System;
 using System.Runtime.InteropServices;
 using Accessibility;
 public static class DialogAccessibility {
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
     public static void Invoke(IntPtr window) {
         var iid = typeof(IAccessible).GUID;
         IAccessible accessible;
@@ -59,6 +61,20 @@ function Wait-For([scriptblock]$read) {
 function Invoke-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Enter-Value($control, [string]$value) { $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Read-Config { Get-Content -LiteralPath (Join-Path $root '.sg/sg.json') -Raw | ConvertFrom-Json }
+function Assert-CheckoutIcon([string]$name, $within = $null) {
+    $item = if ($within) { $within } else { Find ('CheckoutNav_' + $name) }
+    $icon = Find ('CheckoutIcon_' + $name) -within $item
+    $dpi = [DialogAccessibility]::GetDpiForWindow($process.MainWindowHandle)
+    if ($dpi -eq 0) { throw 'Could not read the test window display scale.' }
+    $minimum = 32 * $dpi / 96 - 1
+    $bounds = $icon.Current.BoundingRectangle; $row = $item.Current.BoundingRectangle
+    if ($icon.Current.IsOffscreen -or $bounds.Width -lt $minimum -or $bounds.Height -lt $minimum) {
+        throw "Checkout identity was scaled down: $name ($bounds); expected at least $minimum px."
+    }
+    if ($bounds.Left -lt $row.Left -or $bounds.Right -gt $row.Right -or $bounds.Top -lt $row.Top -or $bounds.Bottom -gt $row.Bottom) {
+        throw "Checkout identity is clipped by its row: $name ($bounds) in $row."
+    }
+}
 function Select-Destination([string]$name) {
     (Find 'IntoBox').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     $item = Wait-For { Find $name -Name -within (Find 'IntoBox') }
@@ -186,12 +202,10 @@ try {
     Select-Checkout 'Fort'
     $icon = Wait-For { Find 'CheckoutIcon_Fort' }
     if ($icon.Current.HelpText -ne 'Folder with FO initials') { throw 'Initials no longer accompany the folder.' }
+    foreach ($name in @('Fort', 'Dashboard')) { Assert-CheckoutIcon $name }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'initials-expanded.png')
     Invoke-Control (Find 'TogglePaneButton')
-    foreach ($name in @('Fort', 'Dashboard')) {
-        $icon = Find ('CheckoutIcon_' + $name)
-        if ($icon.Current.IsOffscreen -or $icon.Current.BoundingRectangle.Width -lt 24) { throw 'Collapsed icon is clipped.' }
-    }
+    foreach ($name in @('Fort', 'Dashboard')) { Assert-CheckoutIcon $name }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'initials-collapsed.png')
     Invoke-Control (Find 'TogglePaneButton')
     Complete-UiScenario
@@ -211,12 +225,20 @@ try {
     try { if ($stored.Width -ne 128 -or $stored.Height -ne 64) { throw 'The normalized image lost its aspect ratio.' } } finally { $stored.Dispose() }
     $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
     if ((Read-Config).checkouts[1].icon) { throw 'The image changed another checkout.' }
+    Assert-CheckoutIcon 'Fort' -within (Find 'IconCard')
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'custom-settings.png')
     Select-Checkout 'Fort'
+    Assert-CheckoutIcon 'Fort'
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'custom-expanded.png')
     Invoke-Control (Find 'TogglePaneButton')
+    Assert-CheckoutIcon 'Fort'
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'custom-collapsed.png')
     Complete-UiScenario
+
+    if ($LayoutOnly) {
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
 
     Start-UiScenario 'Legacy ICO images decode through the native picker'
     Select-Checkout 'Fort'

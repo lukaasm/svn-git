@@ -762,6 +762,10 @@ public sealed partial class MainWindow : Window
                 Icon = CheckoutIcons.Create(row.Config),
                 ContextFlyout = CheckoutMenu(row),
             };
+            // NavigationView otherwise scales every icon into a 16 px box, making an overlay
+            // illegible. Give checkout identities their full size in both open and compact panes.
+            item.Resources["NavigationViewItemOnLeftIconBoxHeight"] = CheckoutIcons.Size;
+            item.Resources["NavigationViewItemOnLeftMinHeight"] = 44.0;
             AutomationProperties.SetName(item, c.Name);
             AutomationProperties.SetAutomationId(item, "CheckoutNav_" + c.Name);
             ToolTipService.SetToolTip(item, c.Name + "\n" + c.Path);

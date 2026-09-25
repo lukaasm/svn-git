@@ -140,6 +140,22 @@ GitHub Actions builds every push to `main` and publishes one rolling prerelease,
 It holds `sg-win-x64.zip`: `sg.exe`, `ui\sg-ui.exe`, the `sg-ui.cmd` shim, and `build.json` with the run id and the commit.
 The same build is kept as a workflow artifact, and the workflow deletes the artifacts of every older run.
 
+CI runs the complete core suite across four Windows runners while another runner builds the CLI and UI.
+The `build` check and rolling release wait for every test shard and the package to succeed. Each shard
+discovers the current tests, groups theory cases by method, and uses exact method filters; missing,
+skipped, or failed results fail the job. NuGet packages are cached, and the portable ZIP is uploaded
+without compressing it a second time. The `sg-win-x64` workflow artifact contains that same ZIP.
+Test artifacts include the full shard plan, TRX results, and per-case timings; the slowest cases also
+appear in the run summary. These reports are kept with the latest successful run's package.
+
+Reproduce a CI shard locally (Git, SVN, and the .NET 10 SDK must be on PATH):
+
+```powershell
+./scripts/run-test-shard.ps1 -Shard 1 -ShardCount 4
+./scripts/run-test-shard.ps1 -Shard 2 -ShardCount 4 -NoBuild # reuse the same Release build
+./scripts/test-ci-shards.ps1 # fast checks for distribution and result validation
+```
+
 ```powershell
 sg update --check   # what is installed, what is on GitHub. Exit code 10 means a newer build exists
 sg update           # download it and write it over %LOCALAPPDATA%\sg

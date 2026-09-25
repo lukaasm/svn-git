@@ -15,10 +15,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  test:
+    name: test (${{ matrix.shard }}/4)
     runs-on: windows-latest
-    permissions:
-      contents: write     # the rolling 'latest-build' release
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +30,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-tests-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-tests-${{ runner.os }}-
 
       # The runner image ships git but no Subversion. The bridge tests build real repositories with svnadmin.
       - name: Install Subversion
@@ -60,8 +70,36 @@ jobs:
             Write-Host "defender exclusions set"
           } catch { Write-Host "defender exclusions not set: $($_.Exception.Message)" }
 
-      - name: Test
-        run: dotnet test tests/Sg.Core.Tests -c Release --nologo
+      - name: Check test distribution
+        shell: pwsh
+        run: ./scripts/test-ci-shards.ps1
+
+      - name: Test shard
+        shell: pwsh
+        run: ./scripts/run-test-shard.ps1 -Shard ${{ matrix.shard }} -ShardCount 4 -ResultsDirectory TestResults/CI
+
+      - name: Upload test results and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.shard }}
+          path: TestResults/CI
+          if-no-files-found: warn
+          retention-days: 7
+
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-package-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-package-${{ runner.os }}-
 
       - name: Publish sg
         run: >
@@ -98,19 +136,42 @@ jobs:
           } | ConvertTo-Json | Set-Content -Path out/sg/build.json -Encoding utf8
           Get-Content out/sg/build.json
 
-      - name: Upload the artifact
-        if: github.event_name != 'pull_request'
+      - name: Zip the build
+        shell: pwsh
+        run: Compress-Archive -Path out/sg/* -DestinationPath sg-win-x64.zip -CompressionLevel Optimal
+
+      - name: Upload the package
         uses: actions/upload-artifact@v4
         with:
           name: sg-win-x64
-          path: out/sg
+          path: sg-win-x64.zip
           if-no-files-found: error
-          compression-level: 9
+          compression-level: 0 # The portable package is already compressed.
+          retention-days: 7
 
-      - name: Zip the build
+  # Keep the existing required check name. Failed dependencies must fail this gate, not skip it.
+  build:
+    needs: [test, package]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require every test shard and the package
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+        run: test "$TEST_RESULT" = success && test "$PACKAGE_RESULT" = success
+
+      - name: Download the package
         if: github.event_name != 'pull_request'
-        shell: pwsh
-        run: Compress-Archive -Path out/sg/* -DestinationPath sg-win-x64.zip -CompressionLevel Optimal
+        uses: actions/download-artifact@v4
+        with:
+          name: sg-win-x64
+
+      - name: Read the release metadata
+        if: github.event_name != 'pull_request'
+        run: unzip -p sg-win-x64.zip build.json > build.json
 
       # One rolling prerelease, replaced every build. sg update downloads this, no token needed.
       - name: Publish the latest-build release
@@ -118,16 +179,17 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh release delete latest-build --yes --cleanup-tag || true
           gh release create latest-build sg-win-x64.zip \
             --title "build ${{ github.run_number }}" \
-            --notes-file out/sg/build.json \
+            --notes-file build.json \
             --target "${{ github.sha }}" \
             --prerelease
 
-  # Leaves exactly one artifact in the repository: the one this run just uploaded.
+  # Keep this run's package and test reports; remove artifacts belonging to older runs.
   keep-latest-only:
     needs: build
     if: github.event_name != 'pull_request'

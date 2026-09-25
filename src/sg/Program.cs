@@ -916,6 +916,8 @@ static class Cli
                 var r = Backup.Restore(root, name, a.Get("--name"), a.Get("--into"), a.Has("--wip"), a.Has("--force"));
                 if (json) { Json(r); return r.Ok ? 0 : 1; }
                 if (r.Replaced) Console.WriteLine($"original work preserved as {r.RecoveryBranch}" + (r.RecoveryPath == null ? "" : " in " + r.RecoveryPath));
+                if (r.CheckoutAppearanceRestored) Console.WriteLine("checkout appearance restored");
+                if (r.CheckoutAppearanceWarning != null) Console.Error.WriteLine(r.CheckoutAppearanceWarning);
                 if (r.Branch.Length == 0)
                 {
                     Console.WriteLine($"the local edits of {r.Checkout} came back" + (r.WipWritten ? " into " + r.Path : " as shelf " + r.WipShelf));
@@ -953,6 +955,8 @@ static class Cli
                 var name = a.Arg(1, "the branch or checkout to pull");
                 var r = Backup.Pull(root, name);
                 if (json) { Json(r); return r.Ok ? 0 : 1; }
+                if (r.CheckoutAppearanceRestored) Console.WriteLine("checkout appearance restored");
+                if (r.CheckoutAppearanceWarning != null) Console.Error.WriteLine(r.CheckoutAppearanceWarning);
                 if (r.Branch.Length > 0)
                     Console.WriteLine(r.Commits == 0 ? $"{r.Branch}: no commits to pull" : $"{r.Branch}: {r.Applied} of {r.Commits} commit(s) pulled into {r.Path}");
                 if (r.WipAlreadyHere) Console.WriteLine("  the uncommitted changes in the backup are already here");

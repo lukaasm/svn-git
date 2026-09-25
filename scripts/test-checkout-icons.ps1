@@ -50,7 +50,10 @@ function Find([string]$id, [switch]$Name, $within = $window) {
 }
 function Wait-For([scriptblock]$read) {
     $deadline = [DateTime]::UtcNow.AddSeconds(25)
-    do { $value = & $read; if ($value) { return $value }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline)
+    do {
+        if ($process) { $process.Refresh(); if ($process.HasExited) { throw "Test app exited: $($process.ExitCode)" } }
+        $value = & $read; if ($value) { return $value }; Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Checkout icon assertion timed out.'
 }
 function Invoke-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
@@ -96,6 +99,8 @@ function Pick-Image([string]$path, [switch]$Cancel) {
     Enter-Value $filename $path
     $openButton = Wait-For { Dialog-Control '1' ([System.Windows.Automation.ControlType]::Button) }
     [DialogAccessibility]::Invoke([IntPtr]$openButton.Current.NativeWindowHandle)
+    # Closing the native modal can replace the XAML accessibility provider. Do not retain its old root.
+    $script:window = Wait-For { Get-TestAppWindow $process }
 }
 $process = $null; $window = $null
 $cli = (Resolve-Path "$PSScriptRoot/../src/sg/bin/Debug/net10.0/sg.exe").Path
@@ -166,6 +171,16 @@ try {
 
     Start-UiScenario 'Custom images survive restarting the app and deleting the source'
     Stop-Process -Id $process.Id; $process.WaitForExit()
+    # Prepare a real remote backup from the icon chosen through the native picker.
+    $backup = Join-Path $ArtifactDirectory 'backup.git'
+    & git init --bare --quiet $backup 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create backup fixture.' }
+    & $cli branch icons --from Fort --root $root 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create worktree for backup.' }
+    & $cli backup set $backup --root $root 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not configure backup fixture.' }
+    & $cli backup --worktree icons --root $root 2>&1 | Out-File $setup -Append
+    if ($LASTEXITCODE -ne 0) { throw 'Could not back up checkout appearance.' }
     Remove-Item -LiteralPath $source
     $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $root + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For { Get-TestAppWindow $process }
@@ -192,6 +207,29 @@ try {
     $null = Wait-For { !(Find 'ResetIconButton').Current.IsEnabled }
     if ((Find 'ResetIconButton').Current.HelpText -notlike '*already uses initials*') { throw 'Disabled reset is unexplained.' }
     if (!(Find 'DisabledHint_ResetIconButton').Current.IsKeyboardFocusable) { throw 'The disabled reason is not keyboard accessible.' }
+    Complete-UiScenario
+
+    Start-UiScenario 'Restoring a backup explains and hydrates checkout appearance without restarting'
+    Select-Checkout 'Dashboard'
+    Invoke-Control (Wait-For { Find 'BackupButton' })
+    Invoke-Control (Wait-For { Find 'BackupWorktreeOpen_icons' })
+    $null = Wait-For { Find 'IntoBox' }
+    (Find 'IntoBox').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    $destination = Wait-For { Find 'Dashboard' -Name -within (Find 'IntoBox') }
+    $destination.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Enter-Value (Wait-For { Find 'NameBox' }) 'restored-icons'
+    $null = Wait-For { (Find 'RestoreButton').Current.IsEnabled }
+    Invoke-Control (Find 'RestoreButton')
+    $null = Wait-For {
+        @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)) |
+            Where-Object { $_.Current.Name -like '*The saved checkout appearance will be restored.*' }).Count -gt 0
+    }
+    Invoke-Control (Wait-For { Find 'PrimaryButton' })
+    $null = Wait-For { (Read-Config).checkouts[1].icon -eq $saved }
+    $null = Wait-For { (Find 'CheckoutIcon_Dashboard').Current.HelpText -eq 'Folder with a custom checkout image' }
+    if ((Read-Config).checkouts[0].icon -ne '') { throw 'Restoring changed the source checkout initials choice.' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'restored-appearance.png')
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
 } catch {

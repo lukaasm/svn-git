@@ -20,6 +20,7 @@ public sealed class HandoffReceipt
     public string Snapshot { get; set; } = "";
     public string Version { get; set; } = "";
     public string CommentsVersion { get; set; } = "";
+    public string? AppearanceVersion { get; set; }
     public string Configuration { get; set; } = "";
     public string RemoteIdentity { get; set; } = "";
     public DateTimeOffset Checked { get; set; } = DateTimeOffset.UtcNow;
@@ -44,17 +45,17 @@ public static partial class Backup
         var report = Run(root, check: true);
         var remote = root.Git.LsRemote(cfg.Url);
         var receipt = new HandoffReceipt { Branch = branch, Checkout = co.Name, Snapshot = root.Git.RefSha(root.SnapshotRef(co))!,
-            Version = WorkspaceVersion.Of(root, path), CommentsVersion = CodeReview.Revision(root, path), Configuration = WorkspaceVersion.Hash(JsonSerializer.Serialize(cfg, SgConfig.JsonOptions)), RemoteIdentity = RemoteIdentity(cfg),
+            Version = WorkspaceVersion.Of(root, path), CommentsVersion = CodeReview.Revision(root, path), AppearanceVersion = co.Icon, Configuration = WorkspaceVersion.Hash(JsonSerializer.Serialize(cfg, SgConfig.JsonOptions)), RemoteIdentity = RemoteIdentity(cfg),
             Note = "Ignored and shared content is outside backup coverage. Remote equality is a point-in-time check." };
         var shelfInfos = Shelf.List(root).Where(x => x.Branch == branch).ToList();
         var shelves = shelfInfos.Select(x => x.Id).ToHashSet();
         var uploaded = Last(root);
-        foreach (var item in report.Items.Where(x => (x.Kind is "branch" or "wip" or "review" && x.Name == branch) || (x.Kind == "shelf" && shelves.Contains(x.Name))))
+        foreach (var item in report.Items.Where(x => (x.Kind is "branch" or "wip" or "review" or "appearance" && x.Name == branch) || (x.Kind == "shelf" && shelves.Contains(x.Name))))
         {
             remote.TryGetValue(item.RemoteRef, out var sha);
             receipt.Coverage.Add(new() { Kind = item.Kind, Name = item.Name, Commits = item.Commits,
                 Uploaded = uploaded?.Items.Any(x => x.RemoteRef == item.RemoteRef && x.Thin == item.Thin && x.State == "pushed") == true ? uploaded.When : null,
-                Files = item.Kind == "review" ? CodeReview.Read(root, path).Threads.Select(t => t.Anchor.File).Distinct().ToList() : item.Kind == "shelf" ? shelfInfos.First(x => x.Id == item.Name).Files.Select(x => x.Path).ToList() : item.Kind == "wip" ? root.Git.StatusEntries(path, true).Select(x => x.Path).ToList() : root.Git.Out(path, "diff", "--name-only", root.Git.MergeBase(receipt.Snapshot, "refs/heads/" + branch)!, "HEAD").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                Files = item.Kind == "appearance" ? string.IsNullOrEmpty(co.Icon) ? [] : [".sg/icons/" + co.Icon] : item.Kind == "review" ? CodeReview.Read(root, path).Threads.Select(t => t.Anchor.File).Distinct().ToList() : item.Kind == "shelf" ? shelfInfos.First(x => x.Id == item.Name).Files.Select(x => x.Path).ToList() : item.Kind == "wip" ? root.Git.StatusEntries(path, true).Select(x => x.Path).ToList() : root.Git.Out(path, "diff", "--name-only", root.Git.MergeBase(receipt.Snapshot, "refs/heads/" + branch)!, "HEAD").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList(),
                 State = sha != null && sha == item.Thin ? "Remote refs checked" : item.State,
                 Excluded = item.LeftOut.Concat(item.Why == null ? Array.Empty<string>() : new[] { item.Why }).ToList() });
             if (sha != null) receipt.Refs[item.RemoteRef] = sha;
@@ -84,6 +85,8 @@ public static partial class Backup
         if (remote.ContainsKey(wipRef) != receipt.Refs.ContainsKey(wipRef)) issues.Add("Uncommitted backup coverage changed.");
         var reviewRef = RemoteRef(cfg, "review", receipt.Branch);
         if (remote.ContainsKey(reviewRef) != receipt.Refs.ContainsKey(reviewRef)) issues.Add("Code review backup coverage changed.");
+        var appearanceRef = RemoteRef(cfg, "appearance", receipt.Branch);
+        if (remote.ContainsKey(appearanceRef) != receipt.Refs.ContainsKey(appearanceRef)) issues.Add("Checkout appearance backup coverage changed.");
         if (issues.Count > 0) receipt.RestoreTested = null;
         return issues;
     }
@@ -91,7 +94,7 @@ public static partial class Backup
     {
         if (root.Git.CurrentBranch(path) != receipt.Branch) return "Receipt describes a different branch. Preview its destination before restoring.";
         var cfg = Require(root);
-        if (WorkspaceVersion.Of(root, path) != receipt.Version || CodeReview.Revision(root, path) != receipt.CommentsVersion || root.Git.RefSha(root.SnapshotRef(Ops.BaseCheckout(root, receipt.Branch))) != receipt.Snapshot
+        if (WorkspaceVersion.Of(root, path) != receipt.Version || CodeReview.Revision(root, path) != receipt.CommentsVersion || Ops.BaseCheckout(root, receipt.Branch).Icon != receipt.AppearanceVersion || root.Git.RefSha(root.SnapshotRef(Ops.BaseCheckout(root, receipt.Branch))) != receipt.Snapshot
             || WorkspaceVersion.Hash(JsonSerializer.Serialize(cfg, SgConfig.JsonOptions)) != receipt.Configuration)
             return "Changed since receipt: current work or backup configuration differs. Recorded coverage is historical.";
         return "Receipt matches this local branch version. Remote refs require a fresh check.";

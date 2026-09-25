@@ -6,7 +6,7 @@ namespace Sg.Core.Tests;
 /// empty tree, each commit with only the files the branch wrote, and the version a file started from
 /// under its first edit. Nothing the branch never touched leaves the machine.
 /// </summary>
-public sealed class BackupTests : IDisposable
+public sealed partial class BackupTests : IDisposable
 {
     readonly Fixture f = new();
 

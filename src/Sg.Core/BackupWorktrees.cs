@@ -57,7 +57,7 @@ public static partial class Backup
 
     static bool IsPresent(Local here, string kind, string name) => kind switch
     {
-        "branch" or "wip" or "review" => here.Branches.Contains(name),
+        "branch" or "wip" or "review" or "appearance" => here.Branches.Contains(name),
         "edits" => here.Checkouts.Contains(name),
         _ => here.Shelves.Contains(name),
     };
@@ -85,7 +85,7 @@ public static partial class Backup
                     var shelf = Shelf.Parse(item.Name, sha, root.Git.Out(null, "show", "-s", "--format=%B", sha));
                     if (shelf.IsCheckout || shelf.Branch != worktree) continue;
                 }
-                else if (item.Kind is not ("branch" or "wip" or "review") || item.Name != worktree) continue;
+                else if (item.Kind is not ("branch" or "wip" or "review" or "appearance") || item.Name != worktree) continue;
             }
             refs.Add(remoteRef, sha);
         }

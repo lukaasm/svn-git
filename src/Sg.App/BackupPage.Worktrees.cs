@@ -59,7 +59,9 @@ public sealed partial class BackupPage
                 card.Items.Add(new SettingsCard
                 {
                     Header = "Remote backup", Description = worktree.Remote == null ? "No remote copy yet"
-                        : (worktree.Remote.HasWip ? "Contains commits and saved edits." : "Contains commits.") + (worktree.Remote.HasReview ? " Code review comments and context are included." : "") + " Open to review their version.",
+                        : (worktree.Remote.HasWip ? "Contains commits and saved edits." : "Contains commits.")
+                            + (worktree.Remote.HasReview ? " Code review comments and context are included." : "")
+                            + (worktree.Remote.HasAppearance ? " Checkout appearance is included." : "") + " Open to review their version.",
                     HeaderIcon = new FontIcon { Glyph = "\uE753" }, Content = restore,
                 });
                 var catalog = _catalog;
@@ -75,7 +77,7 @@ public sealed partial class BackupPage
                     () => PruneAsync(worktree.Name), help: "Preview stale refs belonging only to " + worktree.Name);
                 card.Items.Add(new SettingsCard
                 {
-                    Header = "Prune this worktree's backup", Description = "Review stale branch, saved-edits, and shelf refs before deleting them from the remote.",
+                    Header = "Prune this worktree's backup", Description = "Review stale commits, saved edits, shelves, and metadata before deleting them from the remote.",
                     HeaderIcon = new FontIcon { Glyph = "\uE74D" }, Content = new TaskGate { Content = prune },
                 });
             }

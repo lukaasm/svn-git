@@ -31,7 +31,8 @@ public static class CheckoutAppearance
         var co = root.Checkout(checkout);
         var old = co.Icon;
         var oldPath = IconPath(root, co);
-        string? name = null;
+        // Empty is an explicit choice of initials; null means no local choice yet.
+        string name = "";
         if (png != null)
         {
             Validate(png);
@@ -59,7 +60,21 @@ public static class CheckoutAppearance
         }
     }
 
-    static void Validate(byte[] png)
+    internal static byte[] ReadIcon(SgRoot root, CheckoutConfig checkout)
+    {
+        var path = IconPath(root, checkout)
+            ?? throw new SgException("The checkout icon is not a managed image. Choose it again before backing up.");
+        using var file = File.OpenRead(path);
+        if (file.Length > MaxBytes) throw new SgException("The checkout icon exceeds the supported size.");
+        var png = new byte[checked((int)file.Length)];
+        file.ReadExactly(png);
+        Validate(png);
+        if (Convert.ToHexStringLower(SHA256.HashData(png)) + ".png" != checkout.Icon)
+            throw new SgException("The checkout icon changed on disk. Choose it again before backing up.");
+        return png;
+    }
+
+    internal static void Validate(byte[] png)
     {
         if (png.Length is < 33 or > MaxBytes || !png.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })
             || !png.AsSpan(12, 4).SequenceEqual("IHDR"u8)

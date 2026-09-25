@@ -75,10 +75,12 @@ public static class TaskResults
     static (TaskState State, string Detail) Restore(RestoreResult r)
     {
         var savedEdits = r.WipShelf != null && !r.WipWritten;
-        var complete = r.Ok && !r.Waiting && r.WipWhy == null && r.WipConflicted.Count == 0 && !savedEdits;
+        var complete = r.Ok && !r.Waiting && r.WipWhy == null && r.WipConflicted.Count == 0 && !savedEdits && r.CheckoutAppearanceWarning == null;
         var lines = new List<string> { $"{r.Branch}: {r.Applied}/{r.Commits} commits recovered. {r.Path}" };
         lines.AddRange(ReplayGuidance(r.Waiting, r.Stopped, r.Why));
         if (r.Relinked) lines.Add("The store still had the commits, so nothing was replayed.");
+        if (r.CheckoutAppearanceRestored) lines.Add("Checkout appearance restored.");
+        if (r.CheckoutAppearanceWarning != null) lines.Add(r.CheckoutAppearanceWarning);
         if (r.Drift.Count > 0) lines.Add($"Commits were merged across {r.Drift.Count} changed revision(s).");
         if (r.Replaced) lines.Add("Original work is preserved as " + r.RecoveryBranch
             + (r.RecoveryPath == null ? "." : " in " + r.RecoveryPath + "."));

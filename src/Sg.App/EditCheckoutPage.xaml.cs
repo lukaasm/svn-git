@@ -56,8 +56,8 @@ public sealed partial class EditCheckoutPage : SgPage
     void ShowIcon(CheckoutConfig co)
     {
         IconCard.HeaderIcon = CheckoutIcons.Create(co);
-        ResetIconButton.IsEnabled = co.Icon != null;
-        TaskGate.SetHelp(ResetIconButton, co.Icon == null ? "This checkout already uses initials." : "Restore the checkout initials.");
+        ResetIconButton.IsEnabled = !string.IsNullOrEmpty(co.Icon);
+        TaskGate.SetHelp(ResetIconButton, string.IsNullOrEmpty(co.Icon) ? "This checkout already uses initials." : "Restore the checkout initials.");
     }
 
     async void ChooseIcon_Click(object sender, RoutedEventArgs e)

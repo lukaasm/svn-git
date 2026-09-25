@@ -713,6 +713,7 @@ public sealed partial class MainWindow : Window
                 row!.Config = root.Checkout(c.Name);
                 row.Detail = $"{c.Url}\n{c.Path}";
             }
+            RefreshCheckoutIcons(onlyChanged: true);
             var keep = shownRows.FirstOrDefault(p => p.Row!.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase)).Item
                        ?? shownRows[0].Item;
             _current = keep.Tag as CheckoutRow;
@@ -779,10 +780,11 @@ public sealed partial class MainWindow : Window
         if (runStartAction && _startAction != null) await RunStartAction();
     }
 
-    internal void RefreshCheckoutIcons()
+    internal void RefreshCheckoutIcons(bool onlyChanged = false)
     {
         foreach (var item in Nav.MenuItems.OfType<NavigationViewItem>())
-            if (item.Tag is CheckoutRow row) item.Icon = CheckoutIcons.Create(row.Config);
+            if (item.Tag is CheckoutRow row && (!onlyChanged || !CheckoutIcons.Matches(item.Icon, row.Config)))
+                item.Icon = CheckoutIcons.Create(row.Config);
     }
 
     /// <summary>

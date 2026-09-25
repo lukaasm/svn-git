@@ -12,12 +12,16 @@ namespace Sg.App;
 /// <summary>Checkout identity uses the same theme palette as usernames, in both sidebar sizes and headers.</summary>
 internal static class CheckoutIcons
 {
+    sealed record Identity(string? Store, string Name, string? Image);
+    static Identity IdentityOf(CheckoutConfig checkout) => new(Session.Root?.StorePath, checkout.Name, checkout.Icon);
+    internal static bool Matches(IconElement? icon, CheckoutConfig checkout) => Equals(icon?.Tag, IdentityOf(checkout));
+
     public static FontIcon Create(CheckoutConfig checkout)
     {
         var name = checkout.Name;
         var path = Session.Root is { } root ? CheckoutAppearance.IconPath(root, checkout) : null;
         var icon = new FontIcon { Glyph = IdentityColor.Initials(name), FontFamily = new FontFamily("Segoe UI"),
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 11, Width = 24, Height = 24 };
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 11, Width = 24, Height = 24, Tag = IdentityOf(checkout) };
         CompositionColorBrush? stroke = null;
         ContainerVisual? visual = null;
         LoadedImageSurface? surface = null;

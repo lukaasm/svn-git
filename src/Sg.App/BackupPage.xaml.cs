@@ -387,17 +387,20 @@ public sealed partial class BackupPage : SgPage
         var force = ForceBox.IsChecked == true;
         var request = new RestoreRequest(entry.Name, name, co.Name, wip, force, _preview?.ExpectedRefs);
         var overwrite = force && root.Git.RefSha("refs/heads/" + name) != null;
+        var appearance = entry.HasAppearance ? co.Icon == null
+            ? " The saved checkout appearance will be restored."
+            : " Your existing checkout appearance will be kept." : "";
 
         var confirmed = overwrite
             ? await Dialogs.Confirm(this, "Overwrite " + name,
                 $"A branch {name} is already here. Write over it with the backup version?\n\n"
                 + $"The existing branch and its entire worktree are kept under a recovery name before the backup is restored. "
                 + $"{entry.Commits} commit(s) are merged onto the snapshot this checkout has now" + (wip ? ", and the uncommitted changes come back after them" : "")
-                + ". Nothing goes to SVN.", "Overwrite")
+                + "." + appearance + " Nothing goes to SVN.", "Overwrite")
             : await Dialogs.Confirm(this, "Restore " + name,
                 $"Make the branch {name} on {co.Name}, and a worktree folder for it at {root.WorktreePathFor(name)}?\n\n"
                 + $"{entry.Commits} commit(s) are merged onto the snapshot this checkout has now"
-                + (wip ? ", and the uncommitted changes come back after them" : "") + ". Nothing goes to SVN.", "Restore");
+                + (wip ? ", and the uncommitted changes come back after them" : "") + "." + appearance + " Nothing goes to SVN.", "Restore");
         if (!confirmed) return;
 
         _targetValidation.Invalidate();
@@ -542,7 +545,7 @@ public sealed partial class BackupPage : SgPage
 
     static ReportRow RowOf(BackupItem i)
     {
-        var kind = i.Kind switch { "branch" => "branch", "wip" => "uncommitted changes", "edits" => "local edits", _ => "shelf" };
+        var kind = i.Kind switch { "branch" => "branch", "wip" => "uncommitted changes", "edits" => "local edits", "review" => "code review", "appearance" => "checkout appearance", _ => "shelf" };
         var (severity, glyph, state) = i.State switch
         {
             "failed" => (ChipSeverity.Critical, "", "failed"),

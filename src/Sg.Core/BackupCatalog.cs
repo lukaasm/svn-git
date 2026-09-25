@@ -4,6 +4,7 @@ namespace Sg.Core;
 public sealed record BackupReference(string Kind, string Name, string Sha, bool HasWip, bool ExistsHere, bool Excluded)
 {
     public bool HasReview { get; init; }
+    public bool HasAppearance { get; init; }
 }
 
 public sealed class BackupCatalog
@@ -27,13 +28,15 @@ public static partial class Backup
         var cfg = Require(root);
         var remote = root.Git.LsRemote(cfg.Url);
         var here = LocalNames(root);
-        var items = remote.Where(kv => Owned(cfg, kv.Key) is { Kind: not "review" }).Select(kv =>
+        var items = remote.Where(kv => Owned(cfg, kv.Key) is { Kind: not ("review" or "appearance") }).Select(kv =>
         {
             var (kind, name) = Owned(cfg, kv.Key)!.Value;
             return new BackupReference(kind, name, kv.Value,
                 kind == "branch" && remote.ContainsKey(RemoteRef(cfg, "wip", name)),
                 kind is "branch" or "wip" ? here.Branches.Contains(name) : kind == "edits" ? here.Checkouts.Contains(name) : here.Shelves.Contains(name),
-                kind is "branch" or "wip" && IsExcluded(cfg, name)) { HasReview = kind == "branch" && remote.ContainsKey(RemoteRef(cfg, "review", name)) };
+                kind is "branch" or "wip" && IsExcluded(cfg, name)) {
+                    HasReview = kind == "branch" && remote.ContainsKey(RemoteRef(cfg, "review", name)),
+                    HasAppearance = kind == "branch" && remote.ContainsKey(RemoteRef(cfg, "appearance", name)) };
         }).OrderBy(e => e.Kind switch { "branch" => 0, "wip" => 1, "edits" => 2, _ => 3 })
             .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         return new(root.RootPath, cfg.Url, cfg.Prefix, remote, items);
@@ -44,11 +47,12 @@ public static partial class Backup
         using var operation = root.Lock();
         var cfg = FetchSelection(root, catalog, item);
         var remoteRef = RemoteRef(cfg, item.Kind, item.Name);
-        var entry = new BackupEntry { Kind = item.Kind, Name = item.Name, Sha = item.Sha, HasReview = item.HasReview };
+        var entry = new BackupEntry { Kind = item.Kind, Name = item.Name, Sha = item.Sha, HasReview = item.HasReview, HasAppearance = item.HasAppearance };
         var expected = new Dictionary<string, string>(StringComparer.Ordinal) { [remoteRef] = item.Sha };
         var wipRef = RemoteRef(cfg, "wip", item.Name);
         if (item.Kind == "branch" && catalog.Refs.TryGetValue(wipRef, out var wipSha)) expected[wipRef] = wipSha;
         if (item.Kind == "branch" && catalog.Refs.TryGetValue(RemoteRef(cfg, "review", item.Name), out var reviewSha)) expected[RemoteRef(cfg, "review", item.Name)] = reviewSha;
+        if (item.Kind == "branch" && catalog.Refs.TryGetValue(RemoteRef(cfg, "appearance", item.Name), out var appearanceSha)) expected[RemoteRef(cfg, "appearance", item.Name)] = appearanceSha;
         ReadEntry(root, cfg, LocalNames(root), item.HasWip ? new(StringComparer.Ordinal) { item.Name } : new(StringComparer.Ordinal), entry);
         return new(entry, expected);
     }

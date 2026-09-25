@@ -266,6 +266,7 @@ public static partial class Backup
             res.Path = worktree;
             res.Checkout = co.Name;
             var reviews = FetchReview(root, cfg, name, remote);
+            var appearance = FetchAppearance(root, cfg, name, remote);
 
             var specs = new List<string>();
             if (remote.ContainsKey(branchRef)) specs.Add("+" + branchRef + ":" + FetchedRef("branch", name));
@@ -326,6 +327,7 @@ public static partial class Backup
                 Operations.Receipt(root, "Get changes from backup", worktree, ["Incoming branch: " + name, "Applied commits: " + res.Applied, res.WipWhy ?? "Review local edits and saved shelves."]);
             }
             if (reviews != null) res.ReviewThreads = CodeReview.Import(root, worktree, reviews).Threads.Count;
+            RestoreAppearance(root, co, appearance, res);
             return res;
         }
 

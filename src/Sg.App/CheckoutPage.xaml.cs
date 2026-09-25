@@ -128,7 +128,7 @@ public sealed partial class CheckoutPage : SgPage
         BackupBar.Title = last.Error != null ? "The backup could not run" + ago
             : $"The backup{ago} did not send " + string.Join(", ", bad.Select(i => i.Name).Distinct().Take(3)) + (bad.Count > 3 ? $" and {bad.Count - 3} more" : "");
         BackupBar.Message = last.Error ?? string.Join("\n", bad.Take(3).Select(i =>
-            $"{i.Name}, {(i.Kind switch { "branch" => "branch", "wip" => "uncommitted changes", "edits" => "local edits", _ => "shelf" })}: {(i.Why ?? "").Split('\n')[0]}"));
+            $"{i.Name}, {(i.Kind switch { "branch" => "branch", "wip" => "uncommitted changes", "edits" => "local edits", "review" => "code review", "appearance" => "checkout appearance", _ => "shelf" })}: {(i.Why ?? "").Split('\n')[0]}"));
         BackupBar.IsOpen = true;
     }
 

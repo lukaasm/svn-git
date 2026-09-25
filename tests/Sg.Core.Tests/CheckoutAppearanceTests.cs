@@ -20,7 +20,7 @@ public sealed class CheckoutAppearanceTests : IDisposable
         Assert.Equal(_root.Checkout("Fort").Icon, saved.Checkouts[0].Icon);
         Assert.False(Path.IsPathRooted(saved.Checkouts[0].Icon!));
         CheckoutAppearance.SetIcon(_root, "Fort", null);
-        Assert.Null(SgConfig.Load(_root.ConfigPath).Checkouts[0].Icon);
+        Assert.Equal("", SgConfig.Load(_root.ConfigPath).Checkouts[0].Icon);
         Assert.True(File.Exists(path));
         CheckoutAppearance.SetIcon(_root, "Dashboard", null);
         Assert.False(File.Exists(path));
@@ -36,7 +36,7 @@ public sealed class CheckoutAppearanceTests : IDisposable
         _root.Checkout("Fort").Icon = name;
         Assert.Null(CheckoutAppearance.IconPath(_root, _root.Checkout("Fort")));
         CheckoutAppearance.SetIcon(_root, "Fort", null);
-        Assert.Null(_root.Checkout("Fort").Icon);
+        Assert.Equal("", _root.Checkout("Fort").Icon);
     }
 
     [Fact]

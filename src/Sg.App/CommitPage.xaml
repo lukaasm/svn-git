@@ -13,7 +13,7 @@
         <local:EmptyState x:Name="NoChanges" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE73E;" Title="Nothing to commit"
                           Text="Every file in the worktree matches the last commit. Edit something here, or let an agent, and it shows up on this page.">
             <local:EmptyState.Action>
-                <StackPanel Orientation="Horizontal" Spacing="8">
+                <local:WrapRow Spacing="8">
                     <local:IconButton Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the changes in the worktree again. F5 does the same." />
                     <local:IconButton x:Name="CleanShelfButton" Glyph="&#xE7B8;" Text="Shelved changes" Click="Shelf_Click" Visibility="Collapsed"
                                       ToolTipService.ToolTip="Changes put aside from this branch. The worktree is clean because they are waiting here." />
@@ -21,46 +21,43 @@
                     <local:IconButton x:Name="AmendFromEmpty" Glyph="&#xE70F;" Text="Reword the last commit" Click="AmendFromEmpty_Click"
                                       ToolTipService.ToolTip="Replace the last commit with one that has the same files and a new message. Only for a commit that has not been pushed." />
                     <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
-                </StackPanel>
+                </local:WrapRow>
             </local:EmptyState.Action>
         </local:EmptyState>
 
-        <Grid x:Name="Filled" Grid.Row="1" RowDefinitions="*,Auto">
-            <Grid x:Name="Body" Grid.Row="0" Padding="0,0,0,8">
+        <Grid x:Name="Filled" Grid.Row="1" RowDefinitions="Auto,*,Auto" RowSpacing="8">
+            <StackPanel Spacing="8">
+                <InfoBar x:Name="AmendNotice" Severity="Informational" IsClosable="False" IsOpen="False"
+                         Message="This will replace the last local commit.">
+                    <InfoBar.ActionButton><Button Content="Cancel amend" Click="CancelAmend_Click" /></InfoBar.ActionButton>
+                </InfoBar>
+                <SelectorBar x:Name="CompactViews" Visibility="Collapsed" AutomationProperties.Name="Review view">
+                    <SelectorBarItem x:Name="ChangesTab" Text="Changes" IsSelected="True">
+                        <SelectorBarItem.Icon><FontIcon Glyph="&#xE8FD;" /></SelectorBarItem.Icon>
+                    </SelectorBarItem>
+                    <SelectorBarItem x:Name="DiffTab" Text="Diff">
+                        <SelectorBarItem.Icon><FontIcon Glyph="&#xE8A5;" /></SelectorBarItem.Icon>
+                    </SelectorBarItem>
+                </SelectorBar>
+            </StackPanel>
+            <Grid x:Name="Body" Grid.Row="1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="LeftCol" Width="560" MinWidth="320" />
                     <ColumnDefinition Width="10" />
                     <ColumnDefinition Width="*" MinWidth="400" />
                 </Grid.ColumnDefinitions>
 
-                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" RowSpacing="6">
-                    <!-- The filter takes what the header leaves; the actions get a row of their own, so
-                         none of them is cut off when the split is dragged narrow. -->
-                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <Grid x:Name="ChangesPane" Grid.Column="0" RowDefinitions="Auto,Auto,*" RowSpacing="6">
+                    <!-- The filter and selection controls have their own rows so they fit narrow panes. -->
+                    <StackPanel Spacing="6">
                         <TextBlock x:Name="FilesHeader" Text="Changes" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                        <TextBox x:Name="Filter" Grid.Column="1" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12" VerticalAlignment="Center"
+                        <TextBox x:Name="Filter" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12"
                                  ToolTipService.ToolTip="Show only the rows whose status or path contains this text. It changes the list, never what is checked or discarded." />
-                    </Grid>
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
-                        <Button Content="All" Click="All_Click" ToolTipService.ToolTip="Check every change, untracked files too." />
-                        <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
-                        <local:TaskGate>
-                            <local:IconButton Glyph="&#xE710;" Text="Stage"
-                                Click="Stage_Click" ToolTipService.ToolTip="Put the whole of every checked file in the index. A commit then takes exactly that, whatever you edit afterwards." />
-                        </local:TaskGate>
-                        <local:TaskGate>
-                            <local:IconButton Glyph="&#xE738;" Text="Unstage"
-                                Click="Unstage_Click" ToolTipService.ToolTip="Take the checked files out of the index again. The files on disk are untouched." />
-                        </local:TaskGate>
-                        <local:TaskGate>
-                            <local:IconButton Glyph="&#xE7A7;" Text="Discard"
-                                Click="Discard_Click" ToolTipService.ToolTip="Put the checked files back the way the last commit has them; untracked files get deleted. Asks first, and Undo on the bar brings them back for a week." />
-                        </local:TaskGate>
-                        <local:TaskGate>
-                            <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
-                                Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run." />
-                        </local:TaskGate>
                     </StackPanel>
+                    <local:WrapRow Grid.Row="1" Spacing="6">
+                        <local:IconButton x:Name="AllButton" Glyph="&#xE73A;" Text="All" Click="All_Click" ToolTipService.ToolTip="Check every change, untracked files too." />
+                        <local:IconButton x:Name="NoneButton" Glyph="&#xE739;" Text="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
+                    </local:WrapRow>
                     <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
                         <Grid>
                             <local:RowTreeView x:Name="Files" ItemTemplate="{StaticResource CheckedFileTreeTemplate}" />
@@ -71,52 +68,48 @@
 
                 <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
 
-                <Border Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                <Border x:Name="DiffPane" Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
                     <local:DiffView x:Name="Diff" Margin="1" />
                 </Border>
             </Grid>
 
             <!-- The message is asked for on the press, in a dialog, not held open under the list: the list and the diff are
                  what the page is for, and the box would sit empty through all of the reading. -->
-            <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-                <local:IconButton Glyph="&#xE72C;" Text="Refresh"
-                    Click="Refresh_Click" ToolTipService.ToolTip="Read the changes in the worktree again. F5 does the same." />
-                <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Unchecked and uncommitted changes stay as they are." />
-                <local:IconButton Grid.Column="2" x:Name="ShelfButton" Glyph="&#xE7B8;" Text="Shelved changes" Click="Shelf_Click"
-                    ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back." />
-                <CheckBox Grid.Column="3" x:Name="Amend" Content="Amend" Click="Amend_Click" VerticalAlignment="Center" MinWidth="0"
-                          ToolTipService.ToolTip="Replace the last commit instead of adding one under it. Its files stay in it, and the checked ones join them. Only for a commit that has not been pushed." />
-                <TextBlock Grid.Column="4" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                <!-- The left half commits. The right half is the other thing to do with the same checked
-                     files: put them aside instead. Both act on exactly what is ticked, so the decision at
-                     the end of reading a diff - send it, or keep it for later - is one button. -->
-                <local:TaskGate Grid.Column="5">
-                    <local:AccentSplitButton AutomationProperties.Name="Commit" x:Name="CommitButton"
+            <StackPanel Grid.Row="2" Spacing="8">
+                <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                <local:WrapRow Spacing="8">
+                <local:TaskGate>
+                    <Button AutomationProperties.Name="Commit" x:Name="CommitButton" Style="{StaticResource AccentButtonStyle}" IsEnabled="False"
                                              Click="Commit_Click"
                                              ToolTipService.ToolTip="Write the message, then commit the checked files to the git branch under your own git identity. Nothing goes to SVN. Ctrl+Enter opens this too.">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE73E;" FontSize="14" />
                             <TextBlock x:Name="CommitLabel" Text="Commit" />
                         </StackPanel>
-                        <local:AccentSplitButton.Flyout>
-                            <MenuFlyout Placement="TopEdgeAlignedRight">
-                                <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
-                                                ToolTipService.ToolTip="Take the checked changes out of the worktree and keep them, to put back later. The branch is left clean, so a rebase or a push can run.">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE7B8;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
-                                                ToolTipService.ToolTip="What is already put aside from this branch, and the button that writes it back.">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE81C;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </local:AccentSplitButton.Flyout>
-                    </local:AccentSplitButton>
+                    </Button>
                 </local:TaskGate>
-            </Grid>
+                <local:IconButton x:Name="RefreshButton" Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click"
+                                  ToolTipService.ToolTip="Read the changes in the worktree again. F5 does the same." />
+                <local:IconButton x:Name="AdvancedButton" Glyph="&#xE712;" Text="Advanced" ToolTipService.ToolTip="Stage, unstage, shelve, discard, or amend the last commit.">
+                    <Button.Flyout>
+                        <Flyout x:Name="AdvancedFlyout" Placement="TopEdgeAlignedLeft">
+                            <StackPanel Spacing="8">
+                                <local:TaskGate><local:IconButton x:Name="StageButton" Glyph="&#xE710;" Text="Stage checked files" Click="Stage_Click" /></local:TaskGate>
+                                <local:TaskGate><local:IconButton x:Name="UnstageButton" Glyph="&#xE738;" Text="Unstage checked files" Click="Unstage_Click" /></local:TaskGate>
+                                <local:TaskGate><local:IconButton x:Name="ShelveButton" Glyph="&#xE7B8;" Text="Shelve checked changes" Click="Shelve_Click" /></local:TaskGate>
+                                <local:TaskGate><local:IconButton x:Name="DiscardButton" Glyph="&#xE7A7;" Text="Discard checked changes…" Click="Discard_Click" /></local:TaskGate>
+                                <local:ActionHint>
+                                    <CheckBox x:Name="Amend" Content="Amend the last commit" Click="Amend_Click" />
+                                </local:ActionHint>
+                                <local:IconButton x:Name="ShelfButton" Glyph="&#xE7B8;" Text="Shelved changes" Click="Shelf_Click"
+                                                  ToolTipService.ToolTip="Review the changes already put aside from this branch." />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </local:IconButton>
+                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Uncommitted changes stay as they are." />
+                </local:WrapRow>
+            </StackPanel>
         </Grid>
 
         <!-- The message, asked for in a dialog over the middle of the window. Cancel keeps the text for the next time. -->

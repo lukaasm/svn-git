@@ -58,6 +58,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-push-message.ps1` creates multiline commits in a local SVN fixture with an external and verifies that the Push to SVN message follows the selected range, Send all restores the full message, and manual edits survive range changes. Shared and per-working-copy drafts survive navigation, including disabled overrides and empty drafts that still fail validation. It checks that returning from Readiness restores both filters and the commit boundary, including when history or the snapshot changed while away. A fixture-only Git proxy delays or fails preview reads to check disabled actions, stable layout, cancellation of obsolete reads and inline retry. It also checks the narrow Changes/Diff switch, file selection, advanced actions, and compact message dialog; use `-CompactOnly` for layout checks or `-PreviewOnly` for the preview and history recovery group. It runs through native UI Automation on a private desktop and cancels every dialog without pushing. Build the Debug CLI and app first.
 
+`scripts/test-review-layout.ps1` checks Commit and Merge at narrow and wide sizes through native UI Automation on a private desktop. Disposable Git/SVN fixtures cover hidden advanced actions, disabled-action help, visible amend mode, staging, message drafts, committing only checked files, merge preview invalidation, and confirmed merges of selected revisions. It never commits to a remote SVN repository. Build the Debug CLI and app first.
+
 `scripts/test-checkout-icons.ps1` drives the native file picker on a private desktop and checks expanded/collapsed folder identities, cancellation, image resizing and storage, legacy and multi-size ICO decoding, invalid ICO rejection, restart persistence, missing-image fallback, resetting one checkout without applying an unsaved rename, restoring its backed-up image, and export imports that apply or preserve appearance with immediate sidebar feedback. It also checks current/saved thumbnails, destination changes, and saved initials. DPI-aware assertions check that navigation and settings do not shrink or clip checkout identities; `-LayoutOnly` runs just the layout and picker checks. Screenshots are saved under `TestResults/UI` for visual inspection.
 
 `scripts/test-destination-preview.ps1` checks import and backup restore at 600 px and 1280 px with native UI Automation on a private desktop. A local SVN/Git fixture verifies checkout-first fields, wrapping actions, advanced options, responsive typing during delayed revision reads, cancellation, retry, and draft recovery with fresh destination validation. `scripts/test-checkout-icons.ps1` also covers the checkout overflow menu and import drafts, including changing the source file. Build the Debug CLI and app first. Isolated Debug runs can set `SG_UI_TEST_WINDOW_SIZE=600x900` to test initial layout without activating or resizing a window on the user's desktop.
@@ -324,10 +326,15 @@ In the app: "Shelved changes" on the checkout toolbar and on every worktree card
 changes pages and in the right click menu of their file lists, and, when a push refuses because the checkout
 has an edit on the same file, a "Shelve them" button on the check that puts exactly those edits aside.
 
-The three pages that write - Commit, Commit to SVN and Push to SVN - all end in the same accent split button.
-The left half does what the page is for. The right half drops a menu holding the other things to do with the
-same changes: on the commit pages, shelve them instead, and what is already on the shelf; on Push, apply the
-changes into the checkout without committing, and what is already on the shelf.
+Commit and Push to SVN keep the primary action beside Refresh and Advanced. Commit's Advanced menu holds
+staging, unstaging, shelving, discard, and amend; enabling amend shows a persistent notice with Cancel amend.
+Push's Advanced menu holds readiness, apply-only, and shelving options. Commit to SVN keeps its split button
+for shelf actions. Merge shows Merge and Preview merge first, with reverse merge under Advanced.
+
+Commit, Push, and Merge share a resizable list/detail layout. Narrow windows switch between Changes/Diff or
+Revisions/Preview without rebuilding the lists or losing selection. Picking a file opens its diff; running
+a merge preview opens its result. Changing the merge selection clears the old preview, and merge actions
+stay disabled until the current branch's revisions have loaded.
 
 ## Carrying a branch to another machine
 

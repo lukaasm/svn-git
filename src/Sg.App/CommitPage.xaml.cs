@@ -19,6 +19,7 @@ public sealed partial class CommitPage : SgPage
     readonly string _worktree;
     List<ChangeRow> _rows = new();
     readonly ListFilter _filter;
+    readonly ReviewLayout _layout;
     readonly ToggleButton _workingSide, _stagedSide;
     readonly bool _autoSelect;
 
@@ -41,7 +42,7 @@ public sealed partial class CommitPage : SgPage
         _autoSelect = autoSelect;
         Title = "Commit";
         Subtitle = worktree;
-        ColumnSplitter.Attach(Splitter);
+        _layout = new ReviewLayout(this, Body, ChangesPane, DiffPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (CommitButton.IsEnabled) _ = CommitAsync(); });
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync(_shownPath));
@@ -54,6 +55,7 @@ public sealed partial class CommitPage : SgPage
         Diff.SelectionChanged += SyncBlockButtons;
         Diff.DirtyChanged += SyncBlockButtons;
         Diff.ActionInvoked += OnDiffAction;
+        SyncCommitButton();
         _ = LoadAsync();
     }
 
@@ -141,6 +143,8 @@ public sealed partial class CommitPage : SgPage
         Subtitle = $"{branch}   {_worktree}";
         _lastMessage = head.Message;
         Amend.IsEnabled = head.HasParent;
+        ActionHint.SetHelp(Amend, head.HasParent ? "Replace the last local commit instead of creating a new one."
+            : "There is no local commit to amend yet.");
         AmendFromEmpty.Visibility = head.HasParent ? Visibility.Visible : Visibility.Collapsed;
         if (!head.HasParent) Amend.IsChecked = false;
         _rows = status.Entries.Select(e => new ChangeRow
@@ -198,6 +202,7 @@ public sealed partial class CommitPage : SgPage
 
     async void OnPicked(TreeNode node)
     {
+        _layout.ShowDetails();
         if (node.Row is ChangeRow row) { await ShowFileAsync(row, node); return; }
 
         // A folder: every tracked change under it, as one patch. Nothing in it can be staged by block.
@@ -386,10 +391,12 @@ public sealed partial class CommitPage : SgPage
         await LoadAsync();
     }
 
-    async void Shelve_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => ShelveAsync(Checked().Select(e2 => e2.Path).ToList()));
+    async void Shelve_Click(object sender, RoutedEventArgs e) =>
+        await RunCheckedActionAsync(sender, () => ShelveAsync(Checked().Select(p => p.Path).ToList()));
 
     void Shelf_Click(object sender, RoutedEventArgs e)
     {
+        AdvancedFlyout.Hide();
         var branch = Branch;
         Go(() => new ShelfPage(null, _worktree, branch) { Checkout = Checkout, Branch = branch }, "shelf:" + _worktree);
     }
@@ -420,6 +427,11 @@ public sealed partial class CommitPage : SgPage
         ActionHint.SetHelp(CommitButton, ready ? "Review the commit message and save the selected changes locally."
             : _rows.Count == 0 ? "There are no local changes to commit. Enable Amend to edit the last commit." : "Select at least one changed file to commit.");
         Message.Ready = ready;
+        SetAction(StageButton, picked.Count > 0, "Put the checked files in the staging area.");
+        SetAction(UnstageButton, picked.Any(p => p.Staged), "Remove the checked files from the staging area; keep their edits.", "No checked file has staged changes.");
+        SetAction(ShelveButton, picked.Count > 0, "Save the checked edits for later and remove them from the worktree.");
+        SetAction(DiscardButton, picked.Count > 0, "Review the checked files before discarding their changes. An undo shelf is kept.");
+        AmendNotice.IsOpen = amending;
         var verb = amending ? "Amend" : "Commit";
         CommitLabel.Text = picked.Count == 0 ? verb : $"{verb} {picked.Count} file" + (picked.Count == 1 ? "" : "s");
 
@@ -428,6 +440,12 @@ public sealed partial class CommitPage : SgPage
             ? (amending ? "Nothing new: this rewrites the message of the last commit." : "")
             : $"{_rows.Count} change(s), untracked files are unchecked."
               + (partly == 0 ? "" : $"  {partly} of them {(partly == 1 ? "goes" : "go")} in as staged only.");
+
+        static void SetAction(IconButton button, bool enabled, string help, string disabled = "Check at least one changed file first.")
+        {
+            button.IsEnabled = enabled;
+            ActionHint.SetHelp(button, enabled ? help : disabled);
+        }
     }
 
     /// <summary>
@@ -450,6 +468,7 @@ public sealed partial class CommitPage : SgPage
 
     void Amend_Click(object sender, RoutedEventArgs e)
     {
+        AdvancedFlyout.Hide();
         // The message of the commit being replaced starts the new one, the way git commit --amend does.
         if (Amend.IsChecked == true && Message.Text.Trim().Length == 0) Message.Text = _lastMessage;
         else if (Amend.IsChecked != true && Message.Text.TrimEnd() == _lastMessage.TrimEnd()) Message.Text = "";
@@ -461,8 +480,13 @@ public sealed partial class CommitPage : SgPage
         SyncEmptyState();
     }
 
-    /// <summary>The left half of the split button. Its right half drops the menu and never gets here.</summary>
-    async void Commit_Click(SplitButton sender, SplitButtonClickEventArgs e) => await CommitAsync();
+    void CancelAmend_Click(object sender, RoutedEventArgs e)
+    {
+        Amend.IsChecked = false;
+        Amend_Click(sender, e);
+    }
+
+    async void Commit_Click(object sender, RoutedEventArgs e) => await CommitAsync();
 
     async Task CommitAsync()
     {
@@ -563,13 +587,21 @@ public sealed partial class CommitPage : SgPage
     }
 
     async void Stage_Click(object sender, RoutedEventArgs e) =>
-        await Busy.During(sender, () => StageAsync(Checked().Select(p => p.Path).ToList()));
+        await RunCheckedActionAsync(sender, () => StageAsync(Checked().Select(p => p.Path).ToList()));
 
     async void Unstage_Click(object sender, RoutedEventArgs e) =>
-        await Busy.During(sender, () => UnstageAsync(Checked().Where(p => p.Staged).Select(p => p.Path).ToList()));
+        await RunCheckedActionAsync(sender, () => UnstageAsync(Checked().Where(p => p.Staged).Select(p => p.Path).ToList()));
 
     async void Discard_Click(object sender, RoutedEventArgs e) =>
-        await Busy.During(sender, () => DiscardAsync(Checked()));
+        await RunCheckedActionAsync(sender, () => DiscardAsync(Checked()));
+
+    async Task RunCheckedActionAsync(object sender, Func<Task> action)
+    {
+        AdvancedFlyout.Hide();
+        // Availability follows the fresh selection, including after a cancelled dialog or failure.
+        try { await Busy.During(sender, action, restoreEnabled: false); }
+        finally { SyncCommitButton(); }
+    }
 
     async void Refresh_Click(object sender, RoutedEventArgs e)
     {

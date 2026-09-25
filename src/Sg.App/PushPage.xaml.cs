@@ -15,6 +15,7 @@ public sealed partial class PushPage : SgPage
     }
     readonly string _worktree;
     readonly ListFilter _filter;
+    readonly ReviewLayout _layout;
     readonly PageReads _reads = new();
     bool _canPush;
     bool _reading, _hidden;
@@ -74,9 +75,7 @@ public sealed partial class PushPage : SgPage
         _worktree = worktree;
         Title = "Push to SVN";
         Subtitle = worktree;
-        ColumnSplitter.Attach(Splitter);
-        SizeChanged += (_, _) => ArrangeReview();
-        CompactViews.SelectionChanged += ReviewView_SelectionChanged;
+        _layout = new ReviewLayout(this, Body, ChangesPane, DiffPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (PushButton.IsEnabled) _ = PushAsync(); });
         FileActions.Attach(Files, n => PathUtil.Join(_worktree, n.FullPath));
@@ -390,7 +389,7 @@ public sealed partial class PushPage : SgPage
     async void OnPicked(TreeNode node)
     {
         if (_preview == null) return;
-        if (_compact) ShowDiff(true);
+        _layout.ShowDetails();
         var git = Session.Require().Git;
         var p = _preview;
         if (node.Row is not FileRow row)

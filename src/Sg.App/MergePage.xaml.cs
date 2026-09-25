@@ -1,6 +1,5 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Sg.Core;
 using Windows.System;
 
@@ -17,6 +16,7 @@ namespace Sg.App;
 public sealed partial class MergePage : SgPage
 {
     readonly CheckoutConfig _co;
+    readonly ReviewLayout _layout;
     List<MergeTarget> _targets = new();
     List<MergeSource> _sources = new();
     List<SvnRevRow> _rows = new();
@@ -30,7 +30,7 @@ public sealed partial class MergePage : SgPage
         Title = "Merge from another branch";
         Checkout = co.Name;
         Subtitle = $"{co.Name}   {co.Path}";
-        ColumnSplitter.Attach(Splitter);
+        _layout = new ReviewLayout(this, Body, RevisionsPane, PreviewPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadTargetsAsync());
         Session.Log.Sink = Pane;
@@ -53,10 +53,14 @@ public sealed partial class MergePage : SgPage
         _busyDepth += on ? 1 : -1;
         BusyBar.IsIndeterminate = _busyDepth > 0;
         Motion.FadeTo(BusyBar, _busyDepth > 0 ? 1 : 0);
+        SyncButtons();
     }
 
     async Task LoadTargetsAsync()
     {
+        if (_busyDepth > 0 || _reading || _running) return;
+        _planReady = false;
+        ResetPreview();
         var root = Session.Require();
         RevisionsSkeleton.Show();
         SetBusy(true);
@@ -77,6 +81,8 @@ public sealed partial class MergePage : SgPage
     /// <summary>The branches on offer follow the working copy: a merge stays inside one repository.</summary>
     async Task LoadSourcesAsync()
     {
+        _planReady = false;
+        ResetPreview();
         var root = Session.Require();
         var target = Target;
         if (target == null) return;
@@ -116,8 +122,10 @@ public sealed partial class MergePage : SgPage
     /// <summary>The revisions already taken are folded away until they are asked for.</summary>
     bool _mergedOpen;
 
-    async Task LoadRevisionsAsync()
+    async Task LoadRevisionsAsync(bool preserveOutcome = false)
     {
+        _planReady = false;
+        if (!preserveOutcome) ResetPreview();
         var root = Session.Require();
         var target = Target;
         var source = Source;
@@ -137,10 +145,12 @@ public sealed partial class MergePage : SgPage
                 Problems = pairs.SelectMany(p => Merge.Problems(root, _co, p.Target, p.SourceUrl)).Distinct().ToList(),
             };
         });
+        if (gen != _generation) return;
         RevisionsSkeleton.Hide();
         _reading = false;
-        if (read == null || gen != _generation) { SyncButtons(); return; }
+        if (read == null) { SyncButtons(); return; }
 
+        _planReady = true;
         _pairs = read.Pairs;
         _offered.Clear();
         // One colour per working copy, handed out in the order the pairs come, and the tag only where
@@ -217,6 +227,7 @@ public sealed partial class MergePage : SgPage
 
     /// <summary>The revisions on offer are still being read, so nothing can be picked and nothing sent.</summary>
     bool _reading;
+    bool _planReady;
 
     /// <summary>
     /// A merge, a test merge or a take-back-out is running. Busy.During disables the button that was
@@ -229,15 +240,18 @@ public sealed partial class MergePage : SgPage
     {
         // A merge that is offered before the list of revisions has arrived is a merge of everything,
         // pressed by somebody who has not seen what "everything" is yet.
-        var ready = Target != null && Source != null && !_reading && !_running;
+        var loading = _reading || _busyDepth > 0;
+        var ready = Target != null && Source != null && _planReady && !loading && !_running;
+        TargetBox.IsEnabled = SourceBox.IsEnabled = RefreshButton.IsEnabled = !loading && !_running;
+        Revisions.IsEnabled = _planReady && !loading && !_running;
         TestButton.IsEnabled = ready;
         // A test merge writes nothing, so it stays available even while a problem blocks the real one.
         MergeButton.IsEnabled = ready && !_blocked;
         var picked = Picked();
-        ClearPickButton.IsEnabled = picked.Count > 0;
+        ClearPickButton.IsEnabled = ready && picked.Count > 0;
         // Taking changes back out needs the revisions named: there is no "undo everything" to offer.
         TakeOutButton.IsEnabled = ready && !_blocked && picked.Count > 0;
-        var reason = _reading ? "Wait for the available revisions to load." : _running ? "A merge operation is in progress." : Target == null || Source == null ? "Choose both the source and target checkout." : null;
+        var reason = loading ? "Wait for the available revisions to load." : _running ? "A merge operation is in progress." : Target == null || Source == null ? "Choose both the source and target checkout." : !_planReady ? "Refresh the available revisions before merging." : null;
         TaskGate.SetHelp(TestButton, reason ?? "Preview the merge without writing changes.");
         TaskGate.SetHelp(MergeButton, reason ?? (_blocked ? "Resolve the problems listed above before merging." : "Merge the selected revisions into the target checkout."));
         TaskGate.SetHelp(TakeOutButton, reason ?? (_blocked ? "Resolve the problems listed above before reversing changes." : picked.Count == 0 ? "Select the revisions to reverse." : "Reverse the selected revisions in the target checkout."));
@@ -285,6 +299,7 @@ public sealed partial class MergePage : SgPage
             fold.Toggle();
             return;
         }
+        ResetPreview();
         SyncButtons();
         ShowPickedText();
     }
@@ -301,6 +316,7 @@ public sealed partial class MergePage : SgPage
     /// <summary>The same merge, run backwards: what TortoiseSVN calls reverting the changes of a revision.</summary>
     async void TakeOut_Click(object sender, RoutedEventArgs e)
     {
+        AdvancedFlyout.Hide();
         var target = Target;
         var picked = Picked();
         if (target == null || Source == null || picked.Count == 0) return;
@@ -328,7 +344,7 @@ public sealed partial class MergePage : SgPage
         var root = Session.Require();
         var target = Target;
         var source = Source;
-        if (target == null || source == null || _running) return;
+        if (target == null || source == null || _running || _reading || _busyDepth > 0 || !_planReady) return;
         _running = true;
         SyncButtons();
         try { await RunCoreAsync(root, target, source, dryRun, reverse); }
@@ -346,6 +362,7 @@ public sealed partial class MergePage : SgPage
 
         OutcomeHeader.Text = dryRun ? "What a merge would do" : "What the merge did";
         Diff.ShowText(Describe(r), $"{source.Name} → {target.Label}" + (dryRun ? "   test only, nothing written" : ""));
+        _layout.ShowDetails();
 
         if (dryRun)
         {
@@ -364,7 +381,13 @@ public sealed partial class MergePage : SgPage
         ResultBar.ActionButton = ChangesButton();
         ResultBar.IsOpen = true;
         // The revisions this branch has already taken change what a further merge would do.
-        await LoadRevisionsAsync();
+        await LoadRevisionsAsync(preserveOutcome: true);
+    }
+
+    void ResetPreview()
+    {
+        OutcomeHeader.Text = "What a merge would do";
+        Diff.ShowText("Choose Preview merge to see what the current selection would change. Nothing is written until you choose Merge.", "Merge preview");
     }
 
     /// <summary>The merge is only half the job; the changes window is where what it brought in goes out.</summary>

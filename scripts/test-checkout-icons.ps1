@@ -265,6 +265,10 @@ try {
         $expected = if ($apply) { 'The saved checkout appearance will be restored.' } else { 'Your existing checkout appearance will be kept.' }
         Start-UiScenario ("Export import previews and " + $(if ($apply) { 'restores an icon immediately' } else { 'preserves local initials' }))
         Select-Checkout $target
+        foreach ($label in @('Import', 'Merge', 'Server branch', 'Edit checkout')) {
+            $advanced = Find $label -Name
+            if ($advanced -and !$advanced.Current.IsOffscreen) { throw "Advanced checkout action is visible by default: $label" }
+        }
         $importButton = Find 'Import' -Name
         if (!$importButton -or $importButton.Current.IsOffscreen) { Invoke-Control (Find 'MoreButton' -within (Find 'Actions')) }
         Pick-File $export -Button (Wait-For { Find 'Import' -Name })
@@ -278,6 +282,13 @@ try {
         $initials = if ($apply) { 'TO' } else { 'FO' }
         Assert-AppearancePreview "Folder with $initials initials" $expected
         $null = Wait-For { (Find 'ImportButton').Current.IsEnabled }
+        (Find 'ActivityItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        $null = Wait-For { !(Find 'NameBox') }
+        Invoke-Control (Find 'NavigationViewBackButton')
+        $null = Wait-For { (Find 'ImportButton').Current.IsEnabled }
+        if ((Find 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne $branch) { throw 'Import branch draft was lost after navigating back.' }
+        $null = Wait-For { (Find 'ComparisonSummary').Current.Name -like "$target*" }
+        Assert-AppearancePreview "Folder with $initials initials" $expected
         Save-UiWindow $window (Join-Path $ArtifactDirectory ("import-preview-$target.png"))
         Invoke-Control (Find 'ImportButton')
         $null = Wait-For {
@@ -312,6 +323,15 @@ try {
     Select-Destination 'Dashboard'
     Assert-AppearancePreview 'Folder with a custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with DA initials'
     if ((Read-Config).checkouts[1].icon -ne $saved) { throw 'Previewing initials changed the destination image.' }
+    Enter-Value (Find 'NameBox') ''
+    (Find 'ActivityItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $null = Wait-For { !(Find 'NameBox') }
+    Invoke-Control (Find 'NavigationViewBackButton')
+    $null = Wait-For { (Find 'ComparisonSummary').Current.Name -like 'Dashboard*' }
+    if ((Find 'FilePath').Current.Name -ne $initialsExport) { throw 'Navigation restored the original export instead of the newly chosen file.' }
+    if ((Find 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'An empty import draft was overwritten.' }
+    if ((Find 'ImportButton').Current.IsEnabled) { throw 'An empty import branch permits submission.' }
+    Assert-AppearancePreview 'Folder with a custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with DA initials'
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'initials-preview.png')
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }

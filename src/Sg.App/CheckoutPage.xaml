@@ -83,11 +83,8 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Second row: everything the checkout can do, on the row itself. The bar moves what will not
-                 fit into the overflow on its own and takes it back when the window widens, so the "..." is
-                 a consequence of the width rather than a decision about what matters. Order is what that
-                 decision becomes: the bar folds from the end, so the last ones here are the first to go.
-                 Labels are short for the same reason - the tooltip carries the sentence. -->
+            <!-- Everyday actions stay visible. Import, history maintenance, and configuration stay in
+                 More even on wide windows; dynamic overflow also accommodates narrower windows. -->
             <CommandBar x:Name="Actions" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,2,0,0"
                         IsDynamicOverflowEnabled="True">
                 <!-- First, and so the last one the bar ever folds away: a checkout is opened to start work
@@ -96,36 +93,38 @@
                               ToolTipService.ToolTip="A git branch from the latest snapshot, and a worktree folder for it. Work there with plain git, or let an agent.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE8F4;" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton x:Name="ShelfButton" Label="Shelved changes" Click="Shelf_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
+                <AppBarButton x:Name="FolderButton" Label="Open folder" Click="OpenCheckout_Click">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xED25;" /></AppBarButton.Icon>
                 </AppBarButton>
                 <AppBarButton Label="SVN log" Click="SvnLog_Click"
                               ToolTipService.ToolTip="The SVN history of the checkout root and every external, with changed paths and diffs.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE81C;" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton Label="Merge" Click="Merge_Click"
-                              ToolTipService.ToolTip="Take changes from another branch of the same repository: all of them, or a few revisions. They land as local changes here, to read and commit like any other.">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE8AB;" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton x:Name="FolderButton" Label="Open folder" Click="OpenCheckout_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xED25;" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton Label="Server branch" Click="ServerBranch_Click"
-                              ToolTipService.ToolTip="Copy this branch on the SVN server, one revision per repository. Each external follows, keeps its branch, or gets a name of its own. A dry run comes first.">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE753;" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton Label="Import" Click="Import_Click"
-                              ToolTipService.ToolTip="Put back a branch another machine exported. It is rebuilt on this checkout's snapshot, so both sides only have to point at the same SVN repository.">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE8E5;" /></AppBarButton.Icon>
-                </AppBarButton>
                 <AppBarButton x:Name="BackupButton" Label="Backup" Click="Backup_Click">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton Label="Edit checkout" Click="Edit_Click"
-                              ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
-                </AppBarButton>
                 <CommandBar.SecondaryCommands>
+                    <AppBarButton x:Name="ShelfButton" Label="Shelved changes" Click="Shelf_Click">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
+                    </AppBarButton>
+                    <AppBarButton Label="Import" Click="Import_Click"
+                                  ToolTipService.ToolTip="Put back an exported branch onto this checkout's snapshot.">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE8E5;" /></AppBarButton.Icon>
+                    </AppBarButton>
+                    <AppBarSeparator />
+                    <AppBarButton Label="Merge" Click="Merge_Click"
+                                  ToolTipService.ToolTip="Take changes from another branch of the same repository: all of them, or a few revisions. They land as local changes here, to read and commit like any other.">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE8AB;" /></AppBarButton.Icon>
+                    </AppBarButton>
+                    <AppBarButton Label="Server branch" Click="ServerBranch_Click"
+                                  ToolTipService.ToolTip="Copy this branch on the SVN server, one revision per repository. Each external follows, keeps its branch, or gets a name of its own. A dry run comes first.">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE753;" /></AppBarButton.Icon>
+                    </AppBarButton>
+                    <AppBarSeparator />
+                    <AppBarButton Label="Edit checkout" Click="Edit_Click"
+                                  ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
+                    </AppBarButton>
                     <AppBarButton x:Name="UnavailableActionsButton" Label="Unavailable actions" Click="UnavailableActions_Click">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE946;" /></AppBarButton.Icon>
                     </AppBarButton>

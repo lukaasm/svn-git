@@ -144,8 +144,8 @@
             </StackPanel>
         </ScrollViewer>
 
-        <StackPanel x:Name="RestoreRow" Grid.Row="2" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
-            <local:FormColumns>
+        <StackPanel Grid.Row="2" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
+            <local:FormColumns x:Name="RestoreRow" Visibility="Collapsed">
                 <StackPanel Spacing="4">
                     <TextBlock Text="Into checkout" Style="{StaticResource BodyStrongTextBlockStyle}" />
                     <ComboBox x:Name="IntoBox" HorizontalAlignment="Stretch" SelectionChanged="Into_Changed"
@@ -158,12 +158,33 @@
                              ToolTipService.ToolTip="The name the branch and worktree get here. You can choose a different name." />
                 </StackPanel>
             </local:FormColumns>
-            <local:WrapRow Spacing="24" LineSpacing="4">
-                <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
-                          ToolTipService.ToolTip="Restore saved uncommitted changes through a shelf. Changes that do not merge remain on the shelf." />
-                <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
-                          ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name." />
-            </local:WrapRow>
+            <Expander x:Name="AdvancedOptions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                      AutomationProperties.AutomationId="RestoreAdvanced" AutomationProperties.Name="Advanced restore options and cleanup">
+                <Expander.Header>
+                    <local:WrapRow Spacing="12" LineSpacing="4">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE713;" FontSize="16" />
+                            <TextBlock Text="Advanced" />
+                        </StackPanel>
+                        <TextBlock x:Name="EditsNotice" Style="{StaticResource Secondary}" Visibility="Collapsed" VerticalAlignment="Center" />
+                        <local:StatusChip x:Name="ReplaceNotice" Severity="Caution" Glyph="&#xE7BA;" Text="Replacement enabled" Visibility="Collapsed" />
+                    </local:WrapRow>
+                </Expander.Header>
+                <StackPanel Spacing="8">
+                    <local:WrapRow x:Name="RestoreOptions" Spacing="24" LineSpacing="4" Visibility="Collapsed">
+                        <local:TaskGate>
+                            <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
+                                      ToolTipService.ToolTip="Restore saved uncommitted changes through a shelf. Changes that do not merge remain on the shelf." />
+                        </local:TaskGate>
+                        <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
+                                  ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name." />
+                    </local:WrapRow>
+                    <local:TaskGate HorizontalAlignment="Left">
+                        <local:IconButton Glyph="&#xE74D;" Text="Prune worktree" Click="Prune_Click" x:Name="PruneButton"
+                                          ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting." />
+                    </local:TaskGate>
+                </StackPanel>
+            </Expander>
         </StackPanel>
 
         <StackPanel Grid.Row="3" MaxWidth="1000" Spacing="8" Margin="0,4,0,0">
@@ -171,12 +192,18 @@
             <local:DestinationAction x:Name="ExistingDestination" />
             <local:WrapRow Spacing="8">
                 <local:TaskGate>
-                    <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
-                                      ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
+                    <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
+                            AutomationProperties.Name="{Binding Text, ElementName=RestoreLabel}"
+                            ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE896;" FontSize="14" />
+                            <TextBlock x:Name="RestoreLabel" Text="Restore" />
+                        </StackPanel>
+                    </Button>
                 </local:TaskGate>
                 <local:TaskGate>
-                    <local:IconButton Glyph="&#xE74D;" Text="Prune worktree" Click="Prune_Click" x:Name="PruneButton"
-                                      ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting." />
+                    <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
+                                      ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
                 </local:TaskGate>
                 <local:TaskGate>
                     <local:IconButton x:Name="AllWorktreesButton" Text="All worktrees…" Glyph="&#xE712;" AutomationProperties.Name="All worktrees actions">
@@ -193,16 +220,6 @@
                     </local:IconButton>
                 </local:TaskGate>
                 <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
-                <local:TaskGate>
-                    <Button x:Name="RestoreButton" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click"
-                            AutomationProperties.Name="{Binding Text, ElementName=RestoreLabel}"
-                            ToolTipService.ToolTip="Make the branch and its worktree here, then merge every commit onto this checkout's snapshot.">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE896;" FontSize="14" />
-                            <TextBlock x:Name="RestoreLabel" Text="Restore" />
-                        </StackPanel>
-                    </Button>
-                </local:TaskGate>
             </local:WrapRow>
         </StackPanel>
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />

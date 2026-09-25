@@ -14,7 +14,7 @@
 
         <!-- The shape of Windows Settings: checkouts in the pane, a back button over it, and on the
              right the path to the page on screen, the page, and nothing else. -->
-        <NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Left" OpenPaneLength="260"
+        <NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Auto" OpenPaneLength="260" CompactModeThresholdWidth="0"
                         IsBackButtonVisible="Visible" IsBackEnabled="False" BackRequested="Nav_BackRequested"
                         IsSettingsVisible="True" SelectionChanged="Nav_SelectionChanged"
                         ItemInvoked="Nav_ItemInvoked">

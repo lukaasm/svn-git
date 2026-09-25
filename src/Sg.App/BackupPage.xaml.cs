@@ -67,7 +67,10 @@ public sealed partial class BackupPage : SgPage
     readonly UiRefresh _searchRefresh;
     bool _hidden;
     readonly BranchTargetValidation _targetValidation = new();
-    sealed record ViewState(string Destination, string Query, int Filter, int Shown, double Offset, string[] Expanded);
+    sealed record RestoreDraft(DestinationDraft Destination, bool WithEdits, bool Replace);
+    sealed record ViewState(string Destination, string Query, int Filter, int Shown, double Offset, string[] Expanded,
+        RestoreDraft? Restore, bool Advanced);
+    RestoreDraft? _draft;
     ViewState? _returning;
     bool _restoring;
 
@@ -84,16 +87,22 @@ public sealed partial class BackupPage : SgPage
         var overview = Overview ? Visibility.Visible : Visibility.Collapsed;
         ScheduleOverview.Visibility = BackupToolbar.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = AllWorktreesButton.Visibility = overview;
         BackupNowButton.Visibility = PruneButton.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
+        AdvancedOptions.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         Session.Log.Sink = Pane;
     }
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
     string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
     internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, BackupFilter.SelectedIndex,
-        _shownWorktrees, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray());
+        _shownWorktrees, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray(), CurrentDraft(), AdvancedOptions.IsExpanded);
+    RestoreDraft? CurrentDraft() => _picked is { Kind: "branch", Unreadable: null }
+        ? new(DestinationDraft.Capture(NameBox.Text, Into), WipBox.IsChecked == true, !_form.Running && ForceBox.IsChecked == true)
+        : _draft;
     internal override void RestoreViewState(object? state)
     {
         if (state is not ViewState view || view.Destination != Destination) return;
         _returning = view; _restoring = true;
+        _draft = view.Restore;
+        AdvancedOptions.IsExpanded = view.Advanced;
         BackupSearch.Text = view.Query;
         BackupFilter.SelectedIndex = view.Filter;
         _shownWorktrees = view.Shown;
@@ -106,6 +115,7 @@ public sealed partial class BackupPage : SgPage
     async Task LoadAsync()
     {
         if (_hidden) return;
+        _draft = CurrentDraft();
         using var read = _reads.Begin();
         _previewReads.Cancel();
         _catalog = null; _entries.Clear(); _preview = null; _selectedRow = null;
@@ -126,6 +136,8 @@ public sealed partial class BackupPage : SgPage
         NoBackup.Visibility = configured ? Visibility.Collapsed : Visibility.Visible;
         Filled.Visibility = Nothing.Visibility = Visibility.Collapsed;
         RestoreRow.Visibility = Visibility.Collapsed;
+        RestoreOptions.Visibility = Visibility.Collapsed;
+        AdvancedOptions.Visibility = configured && Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         BackupNowButton.IsEnabled = false;
         PruneButton.IsEnabled = AllWorktreesButton.IsEnabled = configured;
         RestoreButton.IsEnabled = false;
@@ -182,7 +194,7 @@ public sealed partial class BackupPage : SgPage
         else
         {
             var selected = _entries.FirstOrDefault(e => e.Reference.Kind == _itemKind && e.Name == _itemName);
-            if (selected != null) { await PreviewAsync(selected); if (_separate) await SuggestSeparateNameAsync(); }
+            if (selected != null) { await PreviewAsync(selected); if (_separate && _draft == null) await SuggestSeparateNameAsync(); }
             else SelectionHint.Text = "No remote backup of this worktree is available. Back it up to create the first copy.";
         }
         if (_returning is { } view) { BrowseScroll.Restore(ContentScroll, view.Offset); _returning = null; }
@@ -242,6 +254,7 @@ public sealed partial class BackupPage : SgPage
     async Task PreviewAsync(BackupRow row)
     {
         if (_catalog is not { } catalog || _hidden) return;
+        _draft = CurrentDraft();
         var root = Session.Require();
         using var read = _previewReads.Begin();
         _selectedRow = row; _preview = null;
@@ -269,11 +282,13 @@ public sealed partial class BackupPage : SgPage
         _picked = entry;
         var has = entry != null && entry.Unreadable == null;
         RestoreRow.Visibility = has && entry!.Kind == "branch" ? Visibility.Visible : Visibility.Collapsed;
+        RestoreOptions.Visibility = RestoreRow.Visibility;
         RestoreButton.Visibility = RestoreRow.Visibility;
         SelectionHint.Visibility = entry == null ? Visibility.Visible : Visibility.Collapsed;
         CommitsHeader.Visibility = CommitsCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (!has)
         {
+            ShowOptionSummary();
             AppearancePreview.Hide();
             RevisionPreview.Clear();
             SyncButton();
@@ -282,11 +297,15 @@ public sealed partial class BackupPage : SgPage
         CommitsHeader.Text = entry!.Commits == 1 ? "Commit" : $"Commits ({entry.Commits})";
         Subjects.ItemsSource = entry.Commits == 0 ? new List<string> { "None: the branch equals its snapshot. Restoring it makes the worktree again, empty." } : entry.Subjects;
         _binding = true;
-        NameBox.Text = entry.Name;
-        IntoBox.SelectedItem = entry.Checkout.Length > 0 ? entry.Checkout : null;
-        WipBox.IsChecked = entry.HasWip;
+        NameBox.Text = _draft?.Destination.Branch ?? entry.Name;
+        IntoBox.SelectedItem = _draft == null ? (entry.Checkout.Length > 0 ? entry.Checkout : null) : _draft.Destination.Resolve(Session.Require())?.Name;
+        WipBox.IsChecked = entry.HasWip && (_draft?.WithEdits ?? true);
         WipBox.IsEnabled = entry.HasWip;
+        TaskGate.SetHelp(WipBox, entry.HasWip ? "Restore the saved uncommitted changes after replaying commits."
+            : "This backup has no saved uncommitted changes.");
+        ForceBox.IsChecked = _draft?.Replace ?? false;
         _binding = false;
+        ShowOptionSummary();
         ShowBases();
         SyncButton();
     }
@@ -331,7 +350,7 @@ public sealed partial class BackupPage : SgPage
             : name.Length == 0 ? "Give the branch a name."
             : check.Error != null ? check.Error
             : !RevisionPreview.Ready ? RevisionPreview.Reason
-            : taken && !force ? $"{name} is already a branch here. Choose another name, or select 'Replace if it exists here' to overwrite it."
+            : taken && !force ? $"{name} is already a branch here. Choose another name, or open Advanced to replace it."
             : taken ? $"{name} here is written over with the backup version. The original branch and worktree, including uncommitted changes, are preserved under a recovery name first."
             : $"{name} will be made on {Into.Name}, and its worktree with it.");
     }
@@ -350,7 +369,17 @@ public sealed partial class BackupPage : SgPage
 
     void Force_Changed(object sender, RoutedEventArgs e)
     {
-        if (!_binding) SyncButton();
+        if (_binding) return;
+        ShowOptionSummary();
+        SyncButton();
+    }
+
+    void ShowOptionSummary()
+    {
+        if (ReplaceNotice == null) return;
+        ReplaceNotice.Visibility = _picked != null && ForceBox.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        EditsNotice.Visibility = _picked?.HasWip == true ? Visibility.Visible : Visibility.Collapsed;
+        EditsNotice.Text = WipBox.IsChecked == true ? "Saved edits included" : "Saved edits excluded";
     }
 
     void Into_Changed(object sender, SelectionChangedEventArgs e)
@@ -394,6 +423,12 @@ public sealed partial class BackupPage : SgPage
             worktree: new(submitted.Checkout, submitted.Name, root.WorktreePathFor(submitted.Name))), sender);
         _targetValidation.Invalidate(); // A late name check must not replace the operation result.
         if (res == null) { SyncButton(); return; }
+
+        // Replacement is a choice for one submission, never consent to repeat it after navigation.
+        _binding = true;
+        ForceBox.IsChecked = false;
+        _binding = false;
+        ShowOptionSummary();
 
         var outcome = TaskResults.Describe(res);
         ResultBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;

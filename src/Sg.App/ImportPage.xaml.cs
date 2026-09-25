@@ -19,6 +19,18 @@ public sealed partial class ImportPage : SgPage
     ExportMeta? _meta;
     bool _binding;
     readonly BranchTargetValidation _targetValidation = new();
+    sealed record ViewState(string File, DestinationDraft? Destination);
+    DestinationDraft? _draft;
+
+    internal override object? CaptureViewState() => new ViewState(_file, CurrentDraft());
+    internal override void RestoreViewState(object? state)
+    {
+        if (state is not ViewState view) return;
+        _file = view.File;
+        _draft = view.Destination;
+    }
+
+    DestinationDraft? CurrentDraft() => _meta == null ? _draft : DestinationDraft.Capture(NameBox.Text, Into);
 
     /// <summary>A checkout here points at the URL the export names. When none does, saying so is the answer.</summary>
     bool _matched;
@@ -51,6 +63,7 @@ public sealed partial class ImportPage : SgPage
     async Task LoadAsync()
     {
         if (_hidden) return;
+        _draft = CurrentDraft();
         using var request = _reads.Begin();
         RevisionPreview.Clear();
         _targetValidation.Invalidate();
@@ -97,8 +110,8 @@ public sealed partial class ImportPage : SgPage
         // Only the checkout whose URL matches. Nothing is picked when none does, because building the
         // branch on a tree from another repository would merge every patch into something enormous
         // rather than refuse, and the page would have offered to do it.
-        IntoBox.SelectedItem = read.Co?.Name;
-        NameBox.Text = read.Meta.Branch;
+        IntoBox.SelectedItem = _draft == null ? read.Co?.Name : _draft.Resolve(root)?.Name;
+        NameBox.Text = _draft?.Branch ?? read.Meta.Branch;
         _binding = false;
         _matched = read.Co != null;
 
@@ -168,6 +181,10 @@ public sealed partial class ImportPage : SgPage
         var picked = await WindowHelper.PickOpenFile(this, Export.Extension);
         if (picked == null) return;
         _file = picked;
+        _draft = null;
+        _meta = null;
+        _waiting = null;
+        ResolveButton.Visibility = ConflictsHeader.Visibility = ConflictsCard.Visibility = Visibility.Collapsed;
         ResultBar.IsOpen = false;
         await LoadAsync();
     }

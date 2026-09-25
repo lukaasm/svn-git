@@ -224,7 +224,9 @@ public sealed partial class MainWindow : Window
             _ when page?.Checkout != null => Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (i.Tag as CheckoutRow)?.Name == page.Checkout),
             _ => null,
         };
-        if (select == null || ReferenceEquals(Nav.SelectedItem, select)) return;
+        // A page without a checkout must clear an old footer selection too. Otherwise returning
+        // from Activity leaves it selected, and selecting it again does not navigate.
+        if (ReferenceEquals(Nav.SelectedItem, select)) return;
         _syncingPane = true;
         try { Nav.SelectedItem = select; }
         finally { _syncingPane = false; }

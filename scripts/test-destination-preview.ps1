@@ -56,7 +56,7 @@ function Assert-Cancelled([string]$marker) {
     $childId = [int](Get-Content -LiteralPath ($marker + '.entered'))
     $null = Wait-For { !(Get-Process -Id $childId -ErrorAction SilentlyContinue) } 'The obsolete comparison left its Git process running.'
 }
-function Assert-Layout([bool]$narrow, [string]$action) {
+function Assert-Layout([bool]$narrow, [string]$action, [bool]$advanced = $false) {
     # ActionHint swaps its disabled wrapper after validation. Let the following layout settle.
     Start-Sleep -Milliseconds 250
     $a = (Find 'IntoBox').Current.BoundingRectangle
@@ -68,12 +68,22 @@ function Assert-Layout([bool]$narrow, [string]$action) {
     }
     $bounds = $window.Current.BoundingRectangle
     $ids = @('IntoBox', 'NameBox', 'Summary', $action)
-    if ($action -eq 'RestoreButton') { $ids += @('WipBox', 'ForceBox', 'BackupNowButton', 'PruneButton') }
+    if ($action -eq 'RestoreButton') { $ids += @('BackupNowButton', 'RestoreAdvanced') }
+    if ($advanced) { $ids += @('WipBox', 'ForceBox', 'PruneButton') }
     foreach ($id in $ids) {
         $control = Find $id; $r = $control.Current.BoundingRectangle
         if (!$control -or $control.Current.IsOffscreen -or $r.Width -lt 20 -or $r.Height -lt 16 -or $r.Left -lt $bounds.Left -or $r.Right -gt $bounds.Right -or $r.Bottom -gt $bounds.Bottom) {
             throw "Clipped destination control: $id ($r), window $bounds"
         }
+    }
+    $primary = (Find $action).Current.BoundingRectangle
+    $secondaryId = if ($action -eq 'RestoreButton') { 'BackupNowButton' } else { 'PickButton' }
+    $secondary = (Find $secondaryId).Current.BoundingRectangle
+    if ($primary.Top -gt $secondary.Top + 2 -or ([Math]::Abs($primary.Top - $secondary.Top) -le 2 -and $primary.Left -gt $secondary.Left)) {
+        throw 'The primary import/restore action is not first.'
+    }
+    if ($narrow -and $action -eq 'RestoreButton' -and (Find 'CheckoutNav_Fort').Current.BoundingRectangle.Width -gt $bounds.Width * 0.15) {
+        throw 'The sidebar did not collapse to an icon rail at narrow width.'
     }
 }
 function Stop-App {
@@ -154,6 +164,24 @@ try {
             Save-UiWindow $window (Join-Path $ArtifactDirectory "$view-$width.png")
             Complete-UiScenario
 
+            if ($view -eq 'backup') {
+                Start-UiScenario "Restore defaults are uncluttered and advanced actions fit at width $width"
+                foreach ($id in @('ForceBox', 'PruneButton')) {
+                    $control = Find $id
+                    if ($control -and !$control.Current.IsOffscreen) { throw "$id is exposed before opening Advanced." }
+                }
+                (Find 'RestoreAdvanced').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+                $null = Wait-For { (Find 'ForceBox') -and !(Find 'ForceBox').Current.IsOffscreen }
+                Assert-Layout ($width -eq 600) $action $true
+                if ((Find 'WipBox').Current.IsEnabled) { throw 'A backup without saved edits offers to restore them.' }
+                if ((Find 'WipBox').Current.HelpText -notlike '*no saved uncommitted*') { throw 'Disabled saved-edits option has no explanation.' }
+                (Find 'ForceBox').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+                (Find 'RestoreAdvanced').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse()
+                $null = Wait-For { (Find 'Replacement enabled' -Name) -and !(Find 'Replacement enabled' -Name).Current.IsOffscreen }
+                Save-UiWindow $window (Join-Path $ArtifactDirectory "backup-advanced-$width.png")
+                Complete-UiScenario
+            }
+
             if ($width -eq 1280) {
                 Start-UiScenario "$view remains editable during comparison and cancels obsolete reads"
                 $marker = Set-CommandGate
@@ -204,6 +232,39 @@ try {
                     Assert-Cancelled $marker
                     $null = Wait-For { Find 'BackupSearch' }
                     if (Find 'ComparisonSummary') { throw 'Old comparison returned after leaving restore.' }
+                    Complete-UiScenario
+
+                    Start-UiScenario 'Restore keeps destination and advanced choices after leaving during a read'
+                    Invoke-Control (Find 'ForwardButton')
+                    $null = Wait-For { (Find 'ComparisonSummary').Current.Name -like 'Fort*Revisions match' }
+                    if ((Find 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'responsive-name') { throw 'Restore draft was lost.' }
+                    if (!(Find 'Replacement enabled' -Name)) { throw 'Replacement choice was silently reset.' }
+                    (Find 'RestoreAdvanced').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+                    if ((Find 'ForceBox').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState -ne 'On') { throw 'Replacement choice was lost.' }
+                    (Find 'ForceBox').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+                    Enter-Value (Find 'NameBox') ''
+                    (Find 'ActivityItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                    $null = Wait-For { !(Find 'NameBox') } 'Activity did not open from the restored form.'
+                    Invoke-Control (Find 'NavigationViewBackButton')
+                    $null = Wait-For { (Find 'ComparisonSummary').Current.Name -like 'Fort*Revisions match' }
+                    if ((Find 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'An intentionally empty draft was replaced by the source name.' }
+                    if ((Find 'RestoreButton').Current.IsEnabled) { throw 'An empty branch name permits restore.' }
+                    if ((Find 'RestoreAdvanced').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -ne 'Expanded') { throw 'Advanced expansion was lost.' }
+                    Complete-UiScenario
+
+                    Start-UiScenario 'Returning to a restore draft checks the destination again'
+                    Enter-Value (Find 'NameBox') 'responsive-name'
+                    Select-Destination 'Dashboard'
+                    $null = Wait-For { (Find 'RestoreButton').Current.IsEnabled }
+                    (Find 'ActivityItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                    $null = Wait-For { !(Find 'NameBox') } 'Activity could not be selected again after navigating back.'
+                    & git -C $worktree branch responsive-name
+                    if ($LASTEXITCODE -ne 0) { throw 'Could not create a competing destination.' }
+                    Invoke-Control (Find 'NavigationViewBackButton')
+                    $null = Wait-For { (Find 'ComparisonSummary').Current.Name -like 'Dashboard*1 differs' }
+                    $null = Wait-For { (Find 'Summary').Current.Name -like '*already a branch*Advanced*' }
+                    if ((Find 'RestoreButton').Current.IsEnabled) { throw 'Restore reused stale destination validation.' }
+                    Save-UiWindow $window (Join-Path $ArtifactDirectory 'restore-draft.png')
                     Complete-UiScenario
                 }
             }

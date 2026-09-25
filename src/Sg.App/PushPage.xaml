@@ -96,7 +96,7 @@
                 <Thumb x:Name="Splitter" Grid.Column="1" Style="{StaticResource Splitter}" />
 
                 <Border x:Name="DiffPane" Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                    <local:DiffView x:Name="Diff" Margin="1" />
+                    <local:DiffView x:Name="Diff" Margin="1" RestartOnFileChange="True" />
                 </Border>
             </Grid>
 

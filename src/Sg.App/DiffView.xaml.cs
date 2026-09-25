@@ -183,7 +183,7 @@ public sealed partial class DiffView : UserControl
         _textView = false;
         _editable = editable;
         var readingKey = _readingKey = ReadingKey("diff", title);
-        _pendingJson = JsonSerializer.Serialize(new { original, modified, language, editable, preserveView, readingKey });
+        _pendingJson = JsonSerializer.Serialize(new { original, modified, language, editable, preserveView, readingKey, restartOnFileChange = RestartOnFileChange });
         _pendingText = unifiedFallback;
         Present();
     }
@@ -248,7 +248,7 @@ public sealed partial class DiffView : UserControl
         _textView = true;
         _editable = false;
         var readingKey = _readingKey = ReadingKey("text", title);
-        _pendingJson = JsonSerializer.Serialize(new { text, language = "plaintext", readingKey });
+        _pendingJson = JsonSerializer.Serialize(new { text, language = "plaintext", readingKey, restartOnFileChange = RestartOnFileChange });
         _pendingText = text;
         Present();
     }
@@ -264,7 +264,7 @@ public sealed partial class DiffView : UserControl
         _textView = true;
         _editable = false;
         var readingKey = _readingKey = ReadingKey("unified", title);
-        _pendingJson = JsonSerializer.Serialize(new { text = diff, language = "unified-diff", readingKey });
+        _pendingJson = JsonSerializer.Serialize(new { text = diff, language = "unified-diff", readingKey, restartOnFileChange = RestartOnFileChange });
         _pendingText = diff;
         Present();
     }
@@ -281,7 +281,11 @@ public sealed partial class DiffView : UserControl
         SyncToggles();
         SyncActions();
         SetLoading(false);
-        if (_failed) Fallback.Text = _pendingText;
+        if (_failed)
+        {
+            Fallback.Text = _pendingText;
+            if (RestartOnFileChange) FallbackScroll.ChangeView(0, 0, null, disableAnimation: true);
+        }
         else Flush();
     }
 

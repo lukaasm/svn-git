@@ -32,7 +32,14 @@ window.createDiffNavigation = function (post, editors, visible) {
       var current = editors();
       if (current.some(function (editor, i) { return editor.getModel() !== target.models[i]; })) return;
       restoring = true;
-      try { current.forEach(function (editor, i) { window.editorReadingPosition.restore(editor, target.state.editors[i]); }); }
+      try {
+        current.forEach(function (editor, i) {
+          if (target.restart) {
+            editor.setPosition({ lineNumber: 1, column: 1 });
+            editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 }, monaco.editor.ScrollType.Immediate);
+          } else window.editorReadingPosition.restore(editor, target.state.editors[i]);
+        });
+      }
       finally { restoring = false; pending = null; }
       capture();
     });
@@ -41,12 +48,15 @@ window.createDiffNavigation = function (post, editors, visible) {
     remember: remember,
     capture: capture,
     // Capture the previous document before setModel resets its cursor and scroll position.
-    begin: function (id, preserve) {
+    begin: function (id, preserve, restartOnFileChange) {
+      // A review page can prefer the first change on every file pick. Its first model still uses
+      // the host's saved state when Back navigation creates a fresh editor for the same page.
+      var restart = !preserve && restartOnFileChange && !!key && key !== id;
       capture(); key = id;
-      pending = { state: preserve ? null : positions.get(id) };
+      pending = { state: preserve || restart ? null : positions.get(id), restart: restart };
     },
     shown: function (waitForDiff) {
-      if (!pending || !pending.state) { pending = null; report(); return; }
+      if (!pending || (!pending.state && !pending.restart)) { pending = null; report(); return; }
       pending.models = editors().map(function (editor) { return editor.getModel(); });
       pending.ready = pending.ready || !waitForDiff;
       restore();

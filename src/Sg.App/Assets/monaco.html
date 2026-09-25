@@ -130,7 +130,7 @@ body.sg-flat .monaco-component {
   /* What the unified view last parsed: one fold per file, and the lines F7 walks. */
   var folds = [], navLines = [];
   function showDiff(m) {
-    navigation.begin(m.readingKey, m.preserveView);
+    navigation.begin(m.readingKey, m.preserveView, m.restartOnFileChange);
     var reading = m.preserveView ? capturedReading : null;
     capturedReading = pendingReading = null;
     if (reviews) reviews.clear();
@@ -256,7 +256,7 @@ body.sg-flat .monaco-component {
     return { text: out.join('\n'), language: best || 'plaintext', folds: folds, nav: nav, deco: deco };
   }
   function showText(m) {
-    navigation.begin(m.readingKey, false);
+    navigation.begin(m.readingKey, false, m.restartOnFileChange);
     capturedReading = pendingReading = null;
     if (reviews) reviews.clear();
     textShowing = true;

@@ -66,6 +66,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 Add `-ReadingOnly` to check diff scroll and directional selections when switching files and returning through navigation, including unified patches, inserted lines, and shortened files. It combines native UI Automation with the disposable app's WebView debugging port; the user's desktop and repositories are untouched.
 
+Add `-PushReadingOnly` to verify Push to SVN starts each selected file at the top, including previously viewed files and small changes surrounded by collapsed code. It checks expanded, collapsed, and inline diffs with 5,000-line fixtures. Back navigation restores the open file and its reading position. The test never pushes to SVN.
+
 Add `-BrowsingOnly` to check independent scroll positions and folder expansion in Code Review, History, and Backup Compare, including filtered lists, new commits, and selections removed while away. History remembers a separate file-tree view for each recently opened commit.
 
 Add `-TransferOnly` to exercise checkout-to-worktree copy/move previews, conflicts, move confirmation, worktree/branch renaming, stable empty-checkout refreshes, and recoverable/permanent discard confirmations on disposable repositories.

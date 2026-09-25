@@ -43,8 +43,9 @@ public sealed partial class PushPage : SgPage
     }
     SentDrafts _sent = new();
     int _draftRevision;
-    sealed record ViewState(PushScope Scope, string? Through, string CommitQuery, string FileQuery,
-        string Message, string LastDefault, RepoDraft[] Repos, SentDrafts Sent, int Revision);
+    sealed record ViewState(PushScope Scope, string? Through, string CommitQuery, ListFilter.ViewState Files,
+        ReviewLayout.ViewState Layout, string Message, string LastDefault, RepoDraft[] Repos, SentDrafts Sent, int Revision);
+    ViewState? _returning;
 
     /// <summary>
     /// The message the page last wrote into the box on its own. When the box still holds exactly that,
@@ -105,15 +106,18 @@ public sealed partial class PushPage : SgPage
     internal override object? CaptureViewState()
     {
         RememberRepoDrafts();
-        return new ViewState(_scope, _through, CommitFilterBox.Text, Filter.Text, Message.Text, _lastDefault, _repoDrafts.Values.ToArray(), _sent, _draftRevision);
+        var files = (_returning?.Files ?? _filter.CaptureView()) with { Query = Filter.Text };
+        return new ViewState(_scope, _through, CommitFilterBox.Text, files, _layout.Capture(), Message.Text, _lastDefault, _repoDrafts.Values.ToArray(), _sent, _draftRevision);
     }
     internal override void RestoreViewState(object? state)
     {
         if (state is not ViewState view) return;
+        _returning = view;
         _scope = view.Scope;
         _through = view.Through;
         CommitFilterBox.Text = view.CommitQuery;
-        Filter.Text = view.FileQuery;
+        Filter.Text = view.Files.Query;
+        _layout.Restore(view.Layout);
         _lastDefault = view.LastDefault;
         Message.Text = view.Message;
         _repoDrafts.Clear();
@@ -277,6 +281,13 @@ public sealed partial class PushPage : SgPage
             OldPath = e.OldPath,
             Display = $"{(g.Wc.Length == 0 ? "root" : g.Wc)}  {e.Status}  {e.Path}" + (e.OldPath != null ? $"  (was {e.OldPath})" : ""),
         })).ToList(), "Files, one SVN commit per working copy");
+        if (_returning is { } returning)
+        {
+            _returning = null;
+            var layout = _layout.Capture();
+            _filter.RestoreView(returning.Files with { Query = Filter.Text });
+            _layout.Restore(layout);
+        }
         ClearPublishedDrafts();
         // The message follows the commits being sent, until a hand has been in the box.
         if (Message.Text.Trim().Length == 0 || Message.Text.Trim() == _lastDefault.Trim())

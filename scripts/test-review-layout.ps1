@@ -1,5 +1,5 @@
 # Native UI Automation on a private desktop, with disposable Git and SVN repositories.
-param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$BrowsingOnly, [switch]$TransferOnly, [switch]$TransferPerformanceOnly,
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$PushReadingOnly, [switch]$BrowsingOnly, [switch]$TransferOnly, [switch]$TransferPerformanceOnly,
     [ValidateSet('All', 'Commit', 'Merge')][string]$NavigationScope = 'All')
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -8,6 +8,7 @@ if (!$Worker) {
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     if ($NavigationOnly) { $command += " -NavigationOnly -NavigationScope $NavigationScope" }
     if ($ReadingOnly) { $command += ' -ReadingOnly' }
+    if ($PushReadingOnly) { $command += ' -PushReadingOnly' }
     if ($BrowsingOnly) { $command += ' -BrowsingOnly' }
     if ($TransferOnly) { $command += ' -TransferOnly' }
     if ($TransferPerformanceOnly) { $command += ' -TransferPerformanceOnly' }
@@ -28,7 +29,7 @@ Add-Type -AssemblyName UIAutomationTypes
 $env:SG_UI_TEST_DIRECTORY = Join-Path $ArtifactDirectory 'settings'
 $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $ArtifactDirectory 'webview'
 $env:SG_UI_TEST_WINDOW_SIZE = '600x900'
-if ($ReadingOnly) {
+if ($ReadingOnly -or $PushReadingOnly) {
     $port = New-TestWebViewPort
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
 }
@@ -121,6 +122,15 @@ try {
     Check-Exit 'first source change'
     & svnmucc -m 'Second source change' put $file "$url/branches/source/second.txt" | Out-File $setupLog -Append
     Check-Exit 'second source change'
+    if ($PushReadingOnly) {
+        foreach ($name in @('base.txt', 'keep.txt', 'small.txt', 'middle.txt')) {
+            $length = switch ($name) { 'base.txt' { 5000 } 'small.txt' { 12 } default { 800 } }
+            $seed = Join-Path $ArtifactDirectory $name
+            [IO.File]::WriteAllLines($seed, [string[]](1..$length | ForEach-Object { "Original $name line $_ " + ('column ' * 35) }))
+            & svnmucc -m "Seed $name" put $seed "$url/trunk/$name" | Out-File $setupLog -Append
+            Check-Exit 'seed push reading files'
+        }
+    }
     $fixture = Join-Path $ArtifactDirectory 'root'
     & $cli init $fixture --no-fsmonitor 2>&1 | Out-File $setupLog -Append
     Check-Exit 'sg init'
@@ -148,6 +158,12 @@ try {
 
     if ($TransferOnly) {
         . "$PSScriptRoot/checkout-transfer-cases.ps1"
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
+
+    if ($PushReadingOnly) {
+        . "$PSScriptRoot/push-reading-cases.ps1"
         Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
         return
     }

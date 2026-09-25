@@ -6,6 +6,8 @@ namespace Sg.App;
 
 public sealed partial class DiffView
 {
+    /// <summary>Start a different file at the top while retaining this page's Back-navigation state.</summary>
+    public bool RestartOnFileChange { get; set; }
     DiffReadingState _readingPositions = new();
     int _readingVisit;
     string _readingKey = "";

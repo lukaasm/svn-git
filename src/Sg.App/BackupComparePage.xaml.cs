@@ -11,11 +11,12 @@ public sealed partial class BackupComparePage : SgPage
     BackupComparison? _comparison;
     readonly PageReads _reads = new(), _patchReads = new();
     readonly CommitFilter _filter;
+    readonly ListViewport _localViewport, _remoteViewport;
     List<CommitRow> _local = [], _remote = [];
     bool _binding, _hidden, _selectedRemote;
     CommitRow? _selected;
     DiffView? _diff;
-    sealed record ViewState(string Query, string? Sha, bool Remote);
+    sealed record ViewState(string Query, string? Sha, bool Remote, BrowseScroll.Anchor? Local, BrowseScroll.Anchor? Backup);
     ViewState? _returning;
 
     public BackupComparePage(string name, BackupCatalog? catalog = null)
@@ -24,17 +25,21 @@ public sealed partial class BackupComparePage : SgPage
         InitializeComponent();
         Title = "Compare backup"; Branch = name; Subtitle = name;
         _filter = new(Search, this);
+        _localViewport = new(LocalCommits, item => ((CommitRow)item).Sha);
+        _remoteViewport = new(RemoteCommits, item => ((CommitRow)item).Sha);
         _filter.Changed += () => { if (IsLoaded && _comparison != null) Filter(); };
         Unloaded += (_, _) => OnHidden();
     }
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
     public override void OnHidden() { _hidden = true; _reads.Cancel(); _patchReads.Cancel(); }
-    internal override object? CaptureViewState() => new ViewState(Search.Text, _selected?.Sha, _selectedRemote);
+    internal override object? CaptureViewState() => CaptureView();
+    ViewState CaptureView() => (_returning ?? new ViewState(Search.Text, _selected?.Sha, _selectedRemote,
+        _localViewport.Capture(), _remoteViewport.Capture())) with { Query = Search.Text };
     internal override void RestoreViewState(object? state)
     {
         if (state is ViewState view) { _returning = view; Search.Text = view.Query; }
     }
-    async void Refresh_Click(object sender, RoutedEventArgs e) { _catalog = null; await LoadAsync(); }
+    async void Refresh_Click(object sender, RoutedEventArgs e) { _returning = CaptureView(); _catalog = null; await LoadAsync(); }
     async Task LoadAsync()
     {
         var root = Session.Require();
@@ -69,8 +74,9 @@ public sealed partial class BackupComparePage : SgPage
         {
             var list = view.Remote ? RemoteCommits : LocalCommits;
             var row = ((IEnumerable<CommitRow>)list.ItemsSource).FirstOrDefault(c => c.Sha == sha);
-            if (row != null) { list.SelectedItem = row; list.ScrollIntoView(row); }
+            if (row != null) list.SelectedItem = row;
         }
+        _localViewport.Restore(_returning?.Local); _remoteViewport.Restore(_returning?.Backup);
         _returning = null;
     }
     static List<CommitRow> Rows(BackupHistory? history) => history?.Commits.Select(c => CommitRow.From(

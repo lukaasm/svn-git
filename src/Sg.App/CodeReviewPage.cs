@@ -162,8 +162,16 @@ public sealed partial class CodeReviewPage : SgPage
     static TextBlock Text(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     public override void OnShown(bool returning) { StartLiveUpdates(); _ = Reload(); }
     public override void OnHidden() { StopLiveUpdates(); ++_navigationRequest; _reads.Cancel(); }
-    internal override object? CaptureViewState() => _selectedFile;
-    internal override void RestoreViewState(object? state) => _selectedFile = state as string;
+    sealed record ViewState(ListFilter.ViewState Files, string? File, int Comments);
+    ViewState? _returning;
+    internal override object? CaptureViewState() => (_returning ?? new ViewState(_fileList.CaptureView(), _selectedFile, _filter.SelectedIndex))
+        with { Comments = _filter.SelectedIndex, Files = (_returning?.Files ?? _fileList.CaptureView()) with { Query = _fileSearch.Text } };
+    internal override void RestoreViewState(object? state)
+    {
+        if (state is not ViewState view) return;
+        _returning = view; _selectedFile = view.File;
+        _fileSearch.Text = view.Files.Query; _filter.SelectedIndex = view.Comments;
+    }
     void Error(string message) { _notice.Message = message; _notice.Severity = InfoBarSeverity.Error; _notice.IsOpen = true; }
     async Task Reload()
     {

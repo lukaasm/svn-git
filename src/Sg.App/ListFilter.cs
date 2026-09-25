@@ -40,6 +40,8 @@ public sealed class ListFilter
     bool _accelerated;
 
     TreeNode? _picked;
+    readonly ListViewport _viewport;
+    HashSet<string> _collapsed = new(StringComparer.Ordinal);
 
     /// <summary>
     /// A line was picked: a file or a folder, selected with the mouse or the keyboard. Fired once per
@@ -49,9 +51,8 @@ public sealed class ListFilter
     public event Action? Changed;
     public int ShownCount { get; private set; }
 
-    internal sealed record ViewState(string Query, string? Selected, string[] Collapsed);
-    internal ViewState CaptureView() => new(_box.Text, _picked?.FullPath,
-        Walk(_roots).Where(n => !n.IsExpanded).Select(n => n.FullPath).ToArray());
+    internal sealed record ViewState(string Query, string? Selected, string[] Collapsed, BrowseScroll.Anchor? Scroll);
+    internal ViewState CaptureView() => new(_box.Text, _picked?.FullPath, _collapsed.ToArray(), _viewport.Capture());
     internal void RestoreView(ViewState state)
     {
         _box.Text = state.Query;
@@ -67,6 +68,7 @@ public sealed class ListFilter
         _box = box;
         _list = list;
         _header = header;
+        _viewport = new(list, item => ((TreeNode)item).FullPath);
         _textOf = textOf;
         _groupOf = groupOf;
         _list.ItemsSource = _lines;
@@ -211,6 +213,8 @@ public sealed class ListFilter
     /// <summary>A folder opened or closed: its lines go in or come out under it, and nothing else moves.</summary>
     void Toggled(TreeNode node)
     {
+        if (node.IsExpanded) _collapsed.Remove(node.FullPath);
+        else _collapsed.Add(node.FullPath);
         var index = _lines.IndexOf(node);
         if (index < 0) return;
         if (node.IsExpanded)
@@ -231,9 +235,9 @@ public sealed class ListFilter
 
     void Apply(bool preserveView = false, ViewState? restore = null)
     {
+        var scroll = restore?.Scroll ?? (preserveView ? _viewport.Capture() : null);
         var selected = restore?.Selected ?? (preserveView ? _picked?.FullPath : null);
-        var collapsed = restore?.Collapsed.ToHashSet(StringComparer.Ordinal)
-            ?? (preserveView ? Walk(_roots).Where(n => !n.IsExpanded).Select(n => n.FullPath).ToHashSet(StringComparer.Ordinal) : []);
+        if (restore != null) _collapsed = restore.Collapsed.ToHashSet(StringComparer.Ordinal);
         var query = _box.Text.Trim();
         var shown = query.Length == 0
             ? _all
@@ -247,7 +251,7 @@ public sealed class ListFilter
         _roots = query.Length == 0 ? FileTree.Build(shown, _groupOf) : FileTree.Flat(shown, _groupOf);
         foreach (var node in Walk(_roots))
         {
-            if (collapsed.Contains(node.FullPath)) node.IsExpanded = false;
+            if (_collapsed.Contains(node.FullPath)) node.IsExpanded = false;
             node.SetBadge(_badges?.GetValueOrDefault(node.FullPath));
         }
         foreach (var n in Walk(_roots)) n.Toggled = Toggled;
@@ -268,6 +272,7 @@ public sealed class ListFilter
             : shown.Count == _all.Count ? $"{_label} ({_all.Count})"
             : $"{_label}, showing {shown.Count} of {_all.Count}";
         Changed?.Invoke();
+        _viewport.Restore(scroll);
     }
 
     /// <summary>Ctrl+F from anywhere in the window jumps to the box. It lives on the root, so the tree can hold focus.</summary>

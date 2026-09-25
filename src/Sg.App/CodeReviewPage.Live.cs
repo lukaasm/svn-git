@@ -95,7 +95,11 @@ public sealed partial class CodeReviewPage
             _filePaths = paths;
             _fileList.SetItems(paths.Select(f => new FileRow { Path = f }), "Files", preserveView: true);
             _selectedFile = paths.Contains(before) ? before : paths.FirstOrDefault();
-            if (_selectedFile != null && (firstLoad || before != _selectedFile)) _fileList.Select(row => row.TreePath == _selectedFile, reveal: before == null);
+            if (_returning is { } view)
+            {
+                _fileList.RestoreView(view.Files); _returning = null;
+            }
+            else if (_selectedFile != null && (firstLoad || before != _selectedFile)) _fileList.Select(row => row.TreePath == _selectedFile, reveal: before == null);
             _loadingFiles = false;
         }
         var badges = new Dictionary<string, TreeBadge>();

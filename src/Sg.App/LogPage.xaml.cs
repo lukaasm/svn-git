@@ -59,7 +59,8 @@ public sealed partial class LogPage : SgPage
         _filter.ExpectStats = true;
         _commitFilter = new CommitFilter(CommitFilterBox, this);
         _commitFilter.Changed += ShowCommits;
-        _ = LoadAsync();
+        _commitsViewport = new(Commits, item => ((CommitRow)item).IsGroup ? "snapshots" : ((CommitRow)item).Sha);
+        Unloaded += (_, _) => OnHidden();
 
         static void Add(MenuFlyout menu, string name, string glyph, bool on, string label, string tip, Action run)
         {
@@ -85,9 +86,10 @@ public sealed partial class LogPage : SgPage
     async Task LoadAsync(string? select = null)
     {
         var root = Session.Require();
+        using var read = _listReads.Begin();
         Session.Log.Sink = Pane;
         CommitsSkeleton.Show();
-        var rows = await Runner.Quiet(Pane, () =>
+        var rows = await read.Run(Pane, () =>
         {
             var git = root.Git;
             var branch = git.CurrentBranch(_worktree);
@@ -100,6 +102,7 @@ public sealed partial class LogPage : SgPage
             list.AddRange(reads[1].Where(c => c.Subject != "sg root").Select(c => CommitRow.From(c, snapshot: true)));
             return new { Branch = branch, Checkout = co.Name, List = list };
         });
+        if (!read.Current || _hidden) return;
         CommitsSkeleton.Hide();
         if (rows == null) return;
         Checkout ??= rows.Checkout;
@@ -115,6 +118,12 @@ public sealed partial class LogPage : SgPage
         // A reword or a squash leaves a sha nobody can click; a failed one leaves nothing selected.
         NothingPicked(empty ? "no commits" : null);
         ShowCommits();
+        if (_returning is { } view)
+        {
+            _returning = null;
+            await RestoreSelection(view);
+            return;
+        }
         if (empty) return;
         var shown = (List<CommitRow>)Commits.ItemsSource;
         var wanted = select == null ? -1 : shown.FindIndex(r => r.Sha == select);
@@ -128,6 +137,8 @@ public sealed partial class LogPage : SgPage
     /// </summary>
     void NothingPicked(string? why = null)
     {
+        RememberFiles(); _filesSha = null;
+        _commitReads.Cancel(); _patchReads.Cancel();
         _currentSha = "";
         UserColors.Plain(DetailHead, "");
         DetailMessage.Text = "";
@@ -269,7 +280,15 @@ public sealed partial class LogPage : SgPage
             return;
         }
         if (row.Sha == _currentSha) return;
+        await LoadCommitAsync(row);
+    }
+
+    async Task LoadCommitAsync(CommitRow row)
+    {
+        RememberFiles(); _filesSha = null;
         _currentSha = row.Sha;
+        using var read = _commitReads.Begin();
+        using var patchRead = _patchReads.Begin();
         var git = Session.Require().Git;
         var title = $"{row.Sha[..8]}  all files, unified";
         Diff.BeginLoading(title);
@@ -277,15 +296,13 @@ public sealed partial class LogPage : SgPage
         // Three reads, and the one the eye waits for is the cheapest. The patch of a snapshot is the whole
         // of an SVN sync; the header and the file list are two short reads that do not need it, so they run
         // beside it and the page fills in two steps. Run one after another, a snapshot froze all three.
-        var patchRead = Task.Run(() => git.CommitPatch(row.Sha));
-        var head = await Runner.Quiet(Pane, async () =>
+        var patchTask = patchRead.Run(Pane, () => git.CommitPatch(row.Sha));
+        var head = await read.Run(Pane, () =>
         {
-            var details = Task.Run(() => git.Details(row.Sha));
-            var files = Task.Run(() => git.ShowNameStatus(row.Sha));
-            await Task.WhenAll(details, files);
-            return new { Details = details.Result, Files = files.Result };
+            var (details, files) = Fan.Two(() => git.Details(row.Sha), () => git.ShowNameStatus(row.Sha));
+            return new { Details = details, Files = files };
         });
-        if (_currentSha != row.Sha) return;   // the user moved on; that selection hides the skeleton
+        if (!read.Current || _hidden || _currentSha != row.Sha) return;
         FilesSkeleton.Hide();
         // A commit a rewrite in another window took away reads like any other failure: the pane says so and
         // the page empties, so pressing the row again tries once more instead of hitting the sha guard.
@@ -300,18 +317,20 @@ public sealed partial class LogPage : SgPage
             OldPath = f.OldPath,
             Display = $"{f.Status}  {f.Path}" + (f.OldPath != null ? $"  (was {f.OldPath})" : ""),
         }).ToList(), "Files");
-        var patch = await Runner.Quiet(Pane, () => patchRead);
-        if (_currentSha != row.Sha) return;
+        _filesSha = row.Sha;
+        if (_fileViews.TryGetValue(row.Sha, out var filesView)) _filter.RestoreView(filesView);
+        var patch = await patchTask;
+        if (!read.Current || _hidden || _currentSha != row.Sha) return;
         if (patch == null) { Diff.ShowText("", "could not read the patch"); return; }
-        Diff.ShowUnified(patch, title);
+        if (!_filter.HasPick) Diff.ShowUnified(patch, title);
         _filter.SetStats(DiffStats.Parse(patch));
         // --select walks all the way to a file diff, so a check can see what the page really draws.
-        if (_autoSelect) _filter.SelectFirstFile();
+        if (_autoSelect && !_filter.HasPick && filesView == null) _filter.SelectFirstFile();
     }
 
     async void OnPicked(TreeNode node)
     {
-        if (_currentSha.Length == 0) return;
+        if (_hidden || _currentSha.Length == 0) return;
         var git = Session.Require().Git;
         var sha = _currentSha;
         var shortSha = sha[..Math.Min(8, sha.Length)];
@@ -322,7 +341,7 @@ public sealed partial class LogPage : SgPage
             var title = $"{folder}   {node.FileCount} file(s), {shortSha}^ → {shortSha}, unified";
             Diff.BeginLoading(title);
             var patch = await Task.Run(() => git.UnifiedDiff(_worktree, sha + "^", sha, folder));
-            if (_filter.IsCurrent(node) && _currentSha == sha) Diff.ShowUnified(patch, title);
+            if (!_hidden && _filter.IsCurrent(node) && _currentSha == sha) Diff.ShowUnified(patch, title);
             return;
         }
         await Diff.ShowFileAsync(row.Path, $"{row.Path}   {shortSha}^ → {shortSha}", new DiffView.Reads(
@@ -330,7 +349,7 @@ public sealed partial class LogPage : SgPage
                 () => row.Status == 'D' ? "" : git.ShowText(sha, row.Path),
                 () => git.UnifiedDiff(_worktree, sha + "^", sha, row.Path)),
             // The commit can change under the selection too, so both have to still be the ones asked for.
-            () => _filter.IsCurrent(node) && _currentSha == sha);
+            () => !_hidden && _filter.IsCurrent(node) && _currentSha == sha);
     }
 
     async void Squash_Click(object sender, RoutedEventArgs e)

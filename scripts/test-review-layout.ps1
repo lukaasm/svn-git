@@ -1,5 +1,5 @@
 # Native UI Automation on a private desktop, with disposable Git and SVN repositories.
-param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly,
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$BrowsingOnly,
     [ValidateSet('All', 'Commit', 'Merge')][string]$NavigationScope = 'All')
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -8,6 +8,7 @@ if (!$Worker) {
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     if ($NavigationOnly) { $command += " -NavigationOnly -NavigationScope $NavigationScope" }
     if ($ReadingOnly) { $command += ' -ReadingOnly' }
+    if ($BrowsingOnly) { $command += ' -BrowsingOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-review-layout-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(240)
@@ -139,6 +140,12 @@ try {
 
     if ($ReadingOnly) {
         . "$PSScriptRoot/diff-reading-cases.ps1"
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
+
+    if ($BrowsingOnly) {
+        . "$PSScriptRoot/list-browsing-cases.ps1"
         Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
         return
     }

@@ -28,7 +28,33 @@ window.restoreDiffReading = function (states) {
       editor.setSelection(new monaco.Selection(map(s.selectionStartLineNumber), s.selectionStartColumn, map(s.positionLineNumber), s.positionColumn));
     }
     editor.setScrollPosition({ scrollTop: editor.getTopForLineNumber(map(state.line)) + state.offset, scrollLeft: state.left });
+    window.keepScrollLeft(editor, state.left);
   });
+};
+
+/* A restored horizontal offset does not survive the layout that follows it. When the diff lands, the
+   original side is laid out narrow for a moment, which clamps its scroll to nothing, and the width
+   coming back does not bring the scroll with it: a diff came back 1 px in instead of 90. So for a short
+   while after a restore, each change of content width puts the saved offset back - until the reader
+   touches the editor, which makes the scroll theirs again. */
+window.keepScrollLeft = function (editor, left) {
+  if (!left) return;
+  var model = editor.getModel(), node = editor.getDomNode(), done = false, subs = [];
+  function stop() {
+    if (done) return;
+    done = true;
+    subs.forEach(function (s) { s.dispose(); });
+    if (node) node.removeEventListener('wheel', stop);
+  }
+  function again() {
+    if (done) return;
+    if (editor.getModel() !== model) { stop(); return; }
+    if (editor.getScrollLeft() < left - 1) editor.setScrollLeft(left, monaco.editor.ScrollType.Immediate);
+  }
+  subs.push(editor.onDidContentSizeChange(again), editor.onMouseDown(stop), editor.onKeyDown(stop), editor.onDidChangeModel(stop));
+  if (node) node.addEventListener('wheel', stop, { passive: true });
+  setTimeout(stop, 2000);
+  again();
 };
 
 /* Portable anchors contain only line numbers, columns and short fingerprints. Navigation can release
@@ -80,6 +106,7 @@ window.editorReadingPosition = (function () {
       end, Math.min(state.endColumn, model.getLineMaxColumn(end))));
     editor.revealLineNearTop(top, monaco.editor.ScrollType.Immediate);
     editor.setScrollPosition({ scrollTop: editor.getTopForLineNumber(top) + state.offset, scrollLeft: state.left }, monaco.editor.ScrollType.Immediate);
+    window.keepScrollLeft(editor, state.left);
   }
   return { capture: capture, restore: restore };
 })();

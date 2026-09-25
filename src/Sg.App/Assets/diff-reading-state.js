@@ -30,3 +30,56 @@ window.restoreDiffReading = function (states) {
     editor.setScrollPosition({ scrollTop: editor.getTopForLineNumber(map(state.line)) + state.offset, scrollLeft: state.left });
   });
 };
+
+/* Portable anchors contain only line numbers, columns and short fingerprints. Navigation can release
+   the editor and its models; a fresh read can still follow a nearby insertion or clamp a removed line. */
+window.editorReadingPosition = (function () {
+  function fingerprint(model, line) {
+    if (line < 1 || line > model.getLineCount()) return 0;
+    var text = model.getLineContent(line), hash = 2166136261;
+    // Long generated lines must not turn a scroll event into a walk over megabytes of text.
+    text = text.length + ':' + text.slice(0, 128) + text.slice(-128);
+    for (var i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    return hash >>> 0;
+  }
+  function anchor(model, line) {
+    return { line: line, hash: fingerprint(model, line), before: fingerprint(model, line - 1), after: fingerprint(model, line + 1) };
+  }
+  function capture(editor) {
+    var model = editor.getModel(), selection = editor.getSelection(), range = editor.getVisibleRanges()[0];
+    if (!model || !selection || !range) return null;
+    return { top: anchor(model, range.startLineNumber), offset: editor.getScrollTop() - editor.getTopForLineNumber(range.startLineNumber),
+      left: editor.getScrollLeft(), start: anchor(model, selection.selectionStartLineNumber), startColumn: selection.selectionStartColumn,
+      end: anchor(model, selection.positionLineNumber), endColumn: selection.positionColumn };
+  }
+  function restore(editor, state) {
+    var model = editor.getModel();
+    if (!model || !state || !state.top || !state.start || !state.end) return;
+    var hashes = new Map();
+    function hash(line) {
+      if (!hashes.has(line)) hashes.set(line, fingerprint(model, line));
+      return hashes.get(line);
+    }
+    function map(saved) {
+      var line = Math.max(1, Math.min(model.getLineCount(), saved.line)), nearest = null;
+      function match(candidate) {
+        if (candidate < 1 || candidate > model.getLineCount() || hash(candidate) !== saved.hash) return false;
+        if (nearest === null) nearest = candidate;
+        return hash(candidate - 1) === saved.before && hash(candidate + 1) === saved.after;
+      }
+      if (match(line)) return line;
+      for (var distance = 1; distance <= 2000; distance++) {
+        if (line - distance < 1 && line + distance > model.getLineCount()) break;
+        if (match(line - distance)) return line - distance;
+        if (match(line + distance)) return line + distance;
+      }
+      return nearest === null ? line : nearest;
+    }
+    var start = map(state.start), end = map(state.end), top = map(state.top);
+    editor.setSelection(new monaco.Selection(start, Math.min(state.startColumn, model.getLineMaxColumn(start)),
+      end, Math.min(state.endColumn, model.getLineMaxColumn(end))));
+    editor.revealLineNearTop(top, monaco.editor.ScrollType.Immediate);
+    editor.setScrollPosition({ scrollTop: editor.getTopForLineNumber(top) + state.offset, scrollLeft: state.left }, monaco.editor.ScrollType.Immediate);
+  }
+  return { capture: capture, restore: restore };
+})();

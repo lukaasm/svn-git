@@ -1,5 +1,5 @@
 # Native UI Automation on a private desktop, with disposable Git and SVN repositories.
-param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly,
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly,
     [ValidateSet('All', 'Commit', 'Merge')][string]$NavigationScope = 'All')
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -7,6 +7,7 @@ if (!$Worker) {
     $ArtifactDirectory = (New-Item -ItemType Directory -Path "$PSScriptRoot/../TestResults/UI/review-layout-$([Guid]::NewGuid().ToString('N'))").FullName
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
     if ($NavigationOnly) { $command += " -NavigationOnly -NavigationScope $NavigationScope" }
+    if ($ReadingOnly) { $command += ' -ReadingOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-review-layout-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(240)
@@ -18,11 +19,16 @@ if (!$Worker) {
 }
 . "$PSScriptRoot/ui-test-report.ps1"
 . "$PSScriptRoot/ui-automation.ps1"
+. "$PSScriptRoot/ui-webview.ps1"
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 $env:SG_UI_TEST_DIRECTORY = Join-Path $ArtifactDirectory 'settings'
 $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $ArtifactDirectory 'webview'
 $env:SG_UI_TEST_WINDOW_SIZE = '600x900'
+if ($ReadingOnly) {
+    $port = New-TestWebViewPort
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
+}
 $null = New-Item -ItemType Directory -Path $env:SG_UI_TEST_DIRECTORY
 @{ BackupMinutes = 0; UpdateCheckMinutes = 0; RemoteCheckMinutes = 0; Notify = $false; Tray = $false } | ConvertTo-Json |
     Set-Content -LiteralPath (Join-Path $env:SG_UI_TEST_DIRECTORY 'app.json')
@@ -115,6 +121,9 @@ try {
     $fixture = Join-Path $ArtifactDirectory 'root'
     & $cli init $fixture --no-fsmonitor 2>&1 | Out-File $setupLog -Append
     Check-Exit 'sg init'
+    # Git's Windows worktree repair cannot rewrite a hidden .git link in these fixtures.
+    & git -C (Join-Path $fixture '.sg') config core.hideDotFiles false
+    Check-Exit 'fixture Git metadata'
     & $cli checkout add --url "$url/trunk" --root $fixture --name checkout 2>&1 | Out-File $setupLog -Append
     Check-Exit 'sg checkout add'
     & $cli branch feature --root $fixture --from checkout 2>&1 | Out-File $setupLog -Append
@@ -127,6 +136,12 @@ try {
     [IO.File]::WriteAllText((Join-Path $worktree 'untracked.txt'), "Untracked content`n")
     $checkout = (Get-Content -LiteralPath (Join-Path $fixture '.sg/sg.json') -Raw | ConvertFrom-Json).checkouts[0].path
     $checkoutBefore = (& svn status $checkout) -join "`n"
+
+    if ($ReadingOnly) {
+        . "$PSScriptRoot/diff-reading-cases.ps1"
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
 
     if ($NavigationOnly) {
         . "$PSScriptRoot/review-navigation-cases.ps1"

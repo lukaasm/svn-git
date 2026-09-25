@@ -60,6 +60,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-review-layout.ps1` checks Commit and Merge at narrow and wide sizes through native UI Automation on a private desktop. Disposable Git/SVN fixtures cover hidden advanced actions, disabled-action help, visible amend mode, staging, message drafts, committing only checked files, merge preview invalidation, and confirmed merges of selected revisions. It never commits to a remote SVN repository. Build the Debug CLI and app first.
 
+Add `-ReadingOnly` to check diff scroll and directional selections when switching files and returning through navigation, including unified patches, inserted lines, and shortened files. It combines native UI Automation with the disposable app's WebView debugging port; the user's desktop and repositories are untouched.
+
 Add `-NavigationOnly` to check returning with a Commit draft, file filter, explicit checked/unchecked choices, and open diff; amend recovery when HEAD changes; clearing sent messages; and Merge source/revision recovery when server history or branches disappear. `-NavigationScope Commit` or `-NavigationScope Merge` limits those checks to one page.
 
 `scripts/test-checkout-icons.ps1` drives the native file picker on a private desktop and checks expanded/collapsed folder identities, cancellation, image resizing and storage, legacy and multi-size ICO decoding, invalid ICO rejection, restart persistence, missing-image fallback, resetting one checkout without applying an unsaved rename, restoring its backed-up image, and export imports that apply or preserve appearance with immediate sidebar feedback. It also checks current/saved thumbnails, destination changes, and saved initials. DPI-aware assertions check that navigation and settings do not shrink or clip checkout identities; `-LayoutOnly` runs just the layout and picker checks. Screenshots are saved under `TestResults/UI` for visual inspection.
@@ -344,6 +346,13 @@ newly appearing files stay unchecked. Amend is restored only for the same commit
 target URLs, exact revisions and the expanded history group. Missing revisions or branches require an explicit
 new choice, and old previews are cleared. Advanced → Checkout changes lets you inspect local edits and return
 to the merge plan. Page status reads are cancelled when you navigate away.
+
+Diff viewers remember vertical and horizontal scroll and the selected range when switching files or
+returning through Back and Forward. Paired diffs and plain/unified editors share this behavior. Pages still
+read fresh contents: nearby inserted lines keep the selection anchored to the same text, while removed
+lines clamp to the remaining file. History keeps at most 32 small position records per page in the current
+root, without retaining editors or source contents. A deliberate editor gesture takes precedence over a
+delayed restoration.
 
 ## Carrying a branch to another machine
 

@@ -92,6 +92,7 @@ body.sg-flat .monaco-component {
 <body><div id="c"></div><div id="t"></div>
 <script src="review-threads.js"></script>
 <script src="diff-reading-state.js"></script>
+<script src="diff-navigation.js"></script>
 <script>
 (function () {
   var post = function (m) { if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(m); };
@@ -107,6 +108,13 @@ body.sg-flat .monaco-component {
   };
   var diffEditor = null, textEditor = null, pending = null, layoutSideBySide = true, collapsed = false, textShowing = false, reviews = null;
   var capturedReading = null, pendingReading = null;
+  var navigation = window.createDiffNavigation(post, function () {
+    return textShowing ? [textEditor] : [diffEditor.getOriginalEditor(), diffEditor.getModifiedEditor()];
+  }, function () {
+    var box = document.getElementById(textShowing ? 't' : 'c').getBoundingClientRect();
+    return !pendingReading && box.width > 0 && box.height > 0;
+  });
+  window.sgCaptureReading = navigation.capture;
   /* The modified side is the file on disk, so a window that can write it lets the reader edit it here.
      contentGuard stops the change the app itself makes from reading back as an edit by the reader. */
   var editable = false, contentGuard = false, contentSub = null, registered = [];
@@ -122,6 +130,7 @@ body.sg-flat .monaco-component {
   /* What the unified view last parsed: one fold per file, and the lines F7 walks. */
   var folds = [], navLines = [];
   function showDiff(m) {
+    navigation.begin(m.readingKey, m.preserveView);
     var reading = m.preserveView ? capturedReading : null;
     capturedReading = pendingReading = null;
     if (reviews) reviews.clear();
@@ -144,6 +153,7 @@ body.sg-flat .monaco-component {
     diffEditor.updateOptions({ readOnly: !editable });
     contentSub = modified.onDidChangeContent(function () { if (!contentGuard) post('dirty'); });
     diffEditor.layout();
+    navigation.shown(true);
     post('sel:null');
   }
 
@@ -246,6 +256,7 @@ body.sg-flat .monaco-component {
     return { text: out.join('\n'), language: best || 'plaintext', folds: folds, nav: nav, deco: deco };
   }
   function showText(m) {
+    navigation.begin(m.readingKey, false);
     capturedReading = pendingReading = null;
     if (reviews) reviews.clear();
     textShowing = true;
@@ -262,6 +273,7 @@ body.sg-flat .monaco-component {
     navLines = patch ? patch.nav : [];
     textEditor.deltaDecorations([], patch ? patch.deco : []);
     textEditor.layout();
+    navigation.shown(false);
   }
   /* F7 and Shift+F7. The diff editor knows its changes; the unified view walks the file headers and the
      hunks the parse marked, which is the same walk now that the headers are a line of their own. */
@@ -375,6 +387,7 @@ body.sg-flat .monaco-component {
   }
 
   function show(m) {
+    if (m && m.command === 'reading-state') { navigation.remember(m.key, m.state); return; }
     if (m && m.command === 'capture-reading') {
       capturedReading = diffEditor && !textShowing ? { views: window.captureDiffReading(diffEditor), thread: reviews.capture() } : null;
       return;
@@ -454,6 +467,7 @@ body.sg-flat .monaco-component {
       reviews = window.createReviewThreads(diffEditor, post);
       diffEditor.getModifiedEditor().onDidChangeCursorSelection(reportSelection);
       diffEditor.onDidUpdateDiff(function () {
+        navigation.diffReady();
         var reading = pendingReading;
         if (reading) requestAnimationFrame(function () {
           if (pendingReading !== reading || diffEditor.getModel() !== reading.model) return;
@@ -472,6 +486,7 @@ body.sg-flat .monaco-component {
         lineNumbers: 'on', renderLineHighlight: 'none', scrollBeyondLastLine: false,
         folding: true, foldingStrategy: 'auto', showFoldingControls: 'always'
       });
+      [diffEditor.getOriginalEditor(), diffEditor.getModifiedEditor(), textEditor].forEach(navigation.watch);
       if (pending) show(pending);
       post('ready');
     }, function () { post('error:Monaco failed to load from ' + vs); });

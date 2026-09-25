@@ -52,8 +52,10 @@ public sealed partial class DiffView : UserControl
         // A page that was left is dropped, and the browser inside it must go too: a WebView2 is a
         // process, and three pages back would otherwise still hold three of them. Unloaded also
         // fires on a re-parent, so the check waits a beat and only closes what stayed unloaded.
-        Unloaded += (_, _) => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        Unloaded += (_, _) => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, async () =>
         {
+            if (IsLoaded) return;
+            await CaptureReadingPositionAsync();
             if (IsLoaded) return;
             Themes.Changed -= SendTheme;
             // Before Close, not after: _ready is what every send is guarded on, and the moment the
@@ -67,6 +69,7 @@ public sealed partial class DiffView : UserControl
 
     async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        AttachReadingPositions();
         if (_initialized) return;
         _initialized = true;
         try
@@ -93,6 +96,7 @@ public sealed partial class DiffView : UserControl
                 }
                 else if (msg.StartsWith("error:")) UseFallback(msg[6..]);
                 else if (msg.StartsWith("sel:")) OnSelection(msg[4..]);
+                else if (msg.StartsWith("reading:")) OnReadingPosition(msg[8..]);
                 else if (msg.StartsWith("act:")) ActionInvoked?.Invoke(msg[4..]);
                 else if (msg.StartsWith("review-comment:")) OnReviewComment(msg[15..]);
                 else if (msg.StartsWith("review:")) OnReviewAction(msg[7..]);
@@ -178,7 +182,8 @@ public sealed partial class DiffView : UserControl
         TitleText.Text = title ?? "";
         _textView = false;
         _editable = editable;
-        _pendingJson = JsonSerializer.Serialize(new { original, modified, language, editable, preserveView });
+        var readingKey = _readingKey = ReadingKey("diff", title);
+        _pendingJson = JsonSerializer.Serialize(new { original, modified, language, editable, preserveView, readingKey });
         _pendingText = unifiedFallback;
         Present();
     }
@@ -242,7 +247,8 @@ public sealed partial class DiffView : UserControl
         TitleText.Text = title ?? "";
         _textView = true;
         _editable = false;
-        _pendingJson = JsonSerializer.Serialize(new { text, language = "plaintext" });
+        var readingKey = _readingKey = ReadingKey("text", title);
+        _pendingJson = JsonSerializer.Serialize(new { text, language = "plaintext", readingKey });
         _pendingText = text;
         Present();
     }
@@ -257,7 +263,8 @@ public sealed partial class DiffView : UserControl
         TitleText.Text = title ?? "";
         _textView = true;
         _editable = false;
-        _pendingJson = JsonSerializer.Serialize(new { text = diff, language = "unified-diff" });
+        var readingKey = _readingKey = ReadingKey("unified", title);
+        _pendingJson = JsonSerializer.Serialize(new { text = diff, language = "unified-diff", readingKey });
         _pendingText = diff;
         Present();
     }
@@ -294,7 +301,12 @@ public sealed partial class DiffView : UserControl
 
     void Flush()
     {
-        if (_pendingJson != null) Post(_pendingJson);
+        if (_pendingJson != null && _ready)
+        {
+            // Read the latest position here, after a returning page has joined its navigation entry.
+            if (_readingPositions.Get(_readingKey) is { } state) Post(new { command = "reading-state", key = _readingKey, state });
+            Post(_pendingJson);
+        }
         SendReviews();
         FlushReviewReveal();
     }

@@ -81,6 +81,7 @@ public abstract class SgPage : Page
     // Navigation retains small browsing values and unsent drafts, never page controls.
     internal virtual object? CaptureViewState() => null;
     internal virtual void RestoreViewState(object? state) { }
+    internal DiffReadingState ReadingPositions { get; set; } = new();
 
     /// <summary>
     /// Leave this page: back to the one before it, or close the window when this is the only page in
@@ -121,6 +122,7 @@ public sealed class NavHost : ContentControl
     {
         public object? ViewState;
         public string? StateRoot;
+        public DiffReadingState Reading = new();
     }
 
     readonly List<Entry> _entries = new();
@@ -218,6 +220,9 @@ public sealed class NavHost : ContentControl
         var page = _entries[index].Make();
         _currentEntry = _entries[index];
         _currentRoot = Session.Root?.RootPath;
+        if (_currentEntry.StateRoot != _currentRoot) _currentEntry.Reading = new();
+        _currentEntry.Reading.BeginVisit();
+        page.ReadingPositions = _currentEntry.Reading;
         if (_currentEntry.StateRoot == _currentRoot) page.RestoreViewState(_currentEntry.ViewState);
         page.Host = this;
         page.HeaderChanged += OnHeaderChanged;

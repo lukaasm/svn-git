@@ -70,6 +70,18 @@ public sealed class GitSubmoduleTests
     }
 
     [Fact]
+    public void The_root_is_found_from_inside_a_submodule_of_a_clone_that_lives_elsewhere()
+    {
+        using var f = new GitFixture(checkoutInsideRoot: false, submodule: true);
+        f.Setup();
+
+        var found = SgRoot.Find(Path.Combine(SubDir(f), "src"), f.Log);
+
+        Assert.NotNull(found);
+        Assert.Equal(f.Root.RootPath, found!.RootPath);
+    }
+
+    [Fact]
     public void A_submodule_not_cloned_yet_is_cloned_by_sync()
     {
         using var f = new GitFixture(submodule: true);

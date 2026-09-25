@@ -84,7 +84,7 @@ public sealed class Svn
         ?? throw new SgException($"svn info failed for {target} in {cwd}");
 
     /// <summary>One call for many targets. Missing targets are skipped with a warning from svn; they simply do not appear.</summary>
-    public List<SvnInfo> InfoMany(string cwd, IEnumerable<string> targets, bool recursive)
+    public List<SvnInfo> InfoMany(string? cwd, IEnumerable<string> targets, bool recursive)
     {
         var tf = WriteTargets(targets);
         try

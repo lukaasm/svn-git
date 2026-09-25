@@ -100,7 +100,7 @@ public sealed class ServerTests : IDisposable
         Assert.Equal("project(fort)", File.ReadAllText(Path.Combine(co2.Path, "CMakeLists.txt")).Trim());
         Assert.False(File.Exists(Path.Combine(co2.Path, "junk.txt")));
         Assert.True(File.Exists(Path.Combine(co2.Path, ".git")));
-        Assert.Empty(f.Svn.Status(co2.Path, noIgnore: false).Where(e => e.Path.Length > 0 && e.Item is not ("external" or "unversioned" or "ignored")));
+        Assert.DoesNotContain(f.Svn.Status(co2.Path, noIgnore: false), e => e.Path.Length > 0 && e.Item is not ("external" or "unversioned" or "ignored"));
         Assert.Contains("schmetterling/engine.cpp", f.Root.Git.LsTree(f.Root.SnapshotRef(co2), recursive: true).Select(e => e.Path));
         Assert.Equal(2, Ops.Status(f.Root, checkSvn: false).Checkouts.Count);
         Assert.Equal("int engine = 1;", File.ReadAllText(Path.Combine(f.Checkout, "schmetterling", "engine.cpp")).Trim());

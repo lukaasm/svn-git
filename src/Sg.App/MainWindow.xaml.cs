@@ -538,14 +538,16 @@ public sealed partial class MainWindow : Window
             {
                 Pane.Append($"{DateTime.Now:HH:mm}  server: {result.Commits} new commit(s) for {name}. Sync when ready.");
                 var git = Session.Root?.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { IsGit: true } gc ? gc : null;
+                // A git checkout's entries are the clone and each submodule on a branch of its own.
                 var parts = git != null
-                    ? $"{ServerWords.Target(git)} moved on"
+                    ? string.Join(", ", result.Entries.Where(x => x.Behind).Select(x => $"{(x.Rel.Length == 0 ? ServerWords.Target(git) : x.Rel)} moved on"))
                     : string.Join(", ", result.Entries.Where(x => x.Behind).Select(x => $"{(x.Rel.Length == 0 ? "root" : x.Rel)} r{x.Snapshot}→r{x.Server}"));
                 Notifications.Show($"{result.Commits} new {(git != null ? "git" : "SVN")} commit(s) for {name}", parts + ".",
                     Notifications.Action("overview", ("checkout", name)),
                     new Notifications.ToastButton("Sync", Notifications.Action("sync", ("checkout", name))));
             }
-        var root = Session.Root;
+        // The root can be closed while the server answered; then there is nothing to read again.
+        if (Session.Root is not { } root) return;
         var status = await Runner.Quiet(Pane, () => Ops.Status(root, checkSvn: false));
         if (status != null && _current != null && status.Worktrees.Any(w => w.Base == _current.Name))
         {

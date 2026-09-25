@@ -106,7 +106,7 @@ public static class Dialogs
         await d.ShowAsync();
     }
 
-    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null, Action<TaskFollowUp>? navigate = null)
+    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null, Action<TaskFollowUp>? navigate = null, Action<CheckoutConfig>? transfer = null)
     {
         var name = new TextBox { Header = "Branch name", PlaceholderText = "feature-x", Text = draft?.Name ?? "" };
         var from = new ComboBox { Header = "From checkout", ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -145,6 +145,13 @@ public static class Dialogs
             DefaultButton = ContentDialogButton.Primary,
         };
         var validation = new BranchTargetValidation();
+        CheckoutConfig? transferFrom = null;
+        if (transfer != null)
+        {
+            var link = new HyperlinkButton { Content = "Copy or move checkout edits into a worktree…" };
+            link.Click += (_, _) => { if (from.SelectedItem is string n) { transferFrom = root.Checkout(n); d.Hide(); } };
+            panel.Children.Add(link);
+        }
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 420 };
         AutomationProperties.SetAutomationId(summary, "NewWorktreeSummary");
         panel.Children.Add(summary);
@@ -178,6 +185,7 @@ public static class Dialogs
         ContentDialogResult result;
         try { result = await d.ShowAsync(); }
         finally { validation.Invalidate(); }
+        if (transferFrom != null) { if (ReferenceEquals(root, Session.Root)) transfer?.Invoke(transferFrom); return null; }
         if (destination != null)
         {
             if (ReferenceEquals(root, Session.Root)) navigate?.Invoke(destination);

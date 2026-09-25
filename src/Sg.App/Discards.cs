@@ -1,16 +1,15 @@
 using System.Text;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Sg.Core;
 
 namespace Sg.App;
 
 /// <summary>
-/// Discarding, with a way back. Discard was the one action on the two commit pages with nothing behind
-/// it: the change was never committed anywhere, so once the file was written back there was nothing to
-/// take it from. Now a whole-file discard is a shelf first - the same shelf Shelve makes, titled with
-/// the moment - and the file goes back the same way it would have; a block discard keeps the text it
-/// wrote over. Either way the bar over the page offers Undo until the bar is closed, and a discard
-/// shelf nobody asked back for in a week is dropped the next time one is made.
+/// Shared discard confirmation and recovery for checkout/worktree files and diff blocks.
+/// Recovery is the default: files go to a shelf, blocks keep an undo copy. Permanent discard
+/// requires explicit consent each time and bypasses recovery creation and pruning.
 /// </summary>
 public static class Discards
 {
@@ -21,7 +20,33 @@ public static class Discards
     static readonly TimeSpan Keep = TimeSpan.FromDays(7);
 
     /// <summary>What a discard did: the shelf that keeps it, the files that went with nothing behind them, and why the shelf would not take those.</summary>
-    public sealed record Result(ShelfInfo? Shelf, IReadOnlyList<string> Unkept, string? Why);
+    public sealed record Result(ShelfInfo? Shelf, IReadOnlyList<string> Unkept, string? Why, bool Permanent = false, bool Completed = true);
+
+    /// <summary>Permanent discard is explicit, per invocation, and never carried into another dialog.</summary>
+    public static async Task<bool?> Confirm(object owner, string title, string description, bool blocks = false)
+    {
+        var choice = new CheckBox { Content = blocks ? "Discard permanently — don't keep an undo copy" : "Discard permanently — don't create a recovery shelf" };
+        AutomationProperties.SetAutomationId(choice, "DiscardPermanently");
+        var warning = new InfoBar { IsOpen = false, IsClosable = false, Severity = InfoBarSeverity.Warning,
+            Message = "No recovery copy will be created. These changes cannot be brought back with Undo in SG." };
+        AutomationProperties.SetAutomationId(warning, "PermanentDiscardWarning");
+        var panel = new StackPanel { Spacing = 12, MaxWidth = 440 };
+        panel.Children.Add(new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap });
+        var recovery = new TextBlock { Text = blocks ? "An undo copy is kept until the result is closed."
+            : "A recovery shelf is kept for a week. Use Undo after discarding to restore it.", TextWrapping = TextWrapping.Wrap };
+        panel.Children.Add(recovery); panel.Children.Add(choice); panel.Children.Add(warning);
+        var dialog = new ContentDialog { XamlRoot = Dialogs.RootOf(owner), Title = title, Content = panel,
+            PrimaryButtonText = "Discard", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        void Changed()
+        {
+            var permanent = choice.IsChecked == true;
+            warning.IsOpen = permanent;
+            recovery.Visibility = permanent ? Visibility.Collapsed : Visibility.Visible;
+            dialog.PrimaryButtonText = permanent ? "Discard permanently" : "Discard";
+        }
+        choice.Checked += (_, _) => Changed(); choice.Unchecked += (_, _) => Changed();
+        return await dialog.ShowAsync() == ContentDialogResult.Primary ? choice.IsChecked == true : null;
+    }
 
     /// <summary>
     /// Takes the picked paths out of the working copy onto a shelf, which puts each file back the way
@@ -29,14 +54,16 @@ public static class Discards
     /// change, a path the checkout skips - goes to plain, which discards it the old way, with nothing
     /// behind it. What was kept and what was not both come back, so the page can say which is which.
     /// </summary>
-    public static async Task<Result> ShelveAsync(StatusStrip pane, string folder, IReadOnlyList<string> paths, Action<IReadOnlyList<string>> plain)
+    public static async Task<Result> RunAsync(StatusStrip pane, string folder, IReadOnlyList<string> paths, Action<IReadOnlyList<string>> plain, bool permanent = false)
     {
         var root = Session.Require();
         ShelfInfo? shelf = null;
         IReadOnlyList<string> unkept = [];
         string? why = null;
-        await Runner.Run(pane, "discard", () =>
+        var completed = await Runner.Run(pane, permanent ? "discard permanently" : "discard", () =>
         {
+            using var gate = root.Lock();
+            if (permanent) { plain(paths); unkept = paths; return; }
             var rest = paths;
             try
             {
@@ -59,7 +86,7 @@ public static class Discards
             }
             Prune(root);
         });
-        return new Result(shelf, unkept, why);
+        return new Result(shelf, unkept, why, permanent, completed);
     }
 
     /// <summary>
@@ -69,6 +96,8 @@ public static class Discards
     /// </summary>
     public static void Report(InfoBar bar, StatusStrip pane, string what, Result r, Func<Task> reload)
     {
+        if (!r.Completed) { Clear(bar); return; }
+        if (r.Permanent) { AnnouncePermanent(bar, what); return; }
         var unkept = r.Unkept.Count == 0 ? ""
             : $" {Names(r.Unkept)} could not go onto the shelf{(r.Why != null ? " (" + r.Why + ")" : "")}, and went with no way back.";
         if (r.Shelf != null)
@@ -83,6 +112,12 @@ public static class Discards
             bar.Message = $"Discarded {what}.{unkept}";
             bar.IsOpen = true;
         }
+    }
+
+    public static void AnnouncePermanent(InfoBar bar, string what)
+    {
+        Clear(bar); bar.Severity = InfoBarSeverity.Warning;
+        bar.Message = $"Permanently discarded {what}. No recovery copy was created."; bar.IsOpen = true;
     }
 
     static string Names(IReadOnlyList<string> paths) =>

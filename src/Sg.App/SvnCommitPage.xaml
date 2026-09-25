@@ -8,6 +8,11 @@
         <!-- Above both states: a commit that just went through empties the page, and its result must outlive that. -->
         <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
+        <!-- Unknown inventory has no promised table shape. Keep a compact loader in the same body
+             as the empty/result state, and retain the current body on subsequent refreshes. -->
+        <local:ReadFeedback x:Name="InitialLoading" Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420" />
+        <ProgressBar x:Name="RefreshProgress" Grid.Row="1" VerticalAlignment="Top" Height="3" Canvas.ZIndex="1" Visibility="Collapsed" />
+
         <!-- A clean checkout has no list to pick from, no diff to read and no message to write, so none of
              that is on screen: the page is the one sentence, and the two buttons that still mean something. -->
         <local:EmptyState x:Name="Clean" Grid.Row="1" Visibility="Collapsed" Glyph="&#xE73E;" Title="The checkout is clean"
@@ -22,7 +27,8 @@
             </local:EmptyState.Action>
         </local:EmptyState>
 
-        <Grid x:Name="Filled" Grid.Row="1" RowDefinitions="Auto,*,Auto">
+        <ContentControl x:Name="FilledGate" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" IsTabStop="False">
+        <Grid x:Name="Filled" RowDefinitions="Auto,*,Auto" Visibility="Collapsed">
             <InfoBar x:Name="InfoText" Grid.Row="0" Severity="Informational" IsClosable="False" IsOpen="True"
                      Message="These are edits made directly in the SVN checkout. Commit sends the checked ones straight to SVN, one commit per working copy. Then the snapshot is refreshed." />
 
@@ -45,7 +51,7 @@
                         <Button Content="All" Click="All_Click" ToolTipService.ToolTip="Check every change, unversioned files too." />
                         <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
                         <local:IconButton Glyph="&#xE7A7;" Text="Discard"
-                            Click="Revert_Click" ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. Asks first, and Undo on the bar brings them back for a week." />
+                            Click="Revert_Click" ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. The confirmation keeps a recovery shelf by default, with an option to discard permanently." />
                         <local:TaskGate>
                             <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
                                 Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file." />
@@ -88,6 +94,9 @@
                         </StackPanel>
                         <local:AccentSplitButton.Flyout>
                             <MenuFlyout Placement="TopEdgeAlignedRight">
+                                <MenuFlyoutItem Text="Copy or move to worktree…" Click="Transfer_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
                                                 ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file.">
                                     <MenuFlyoutItem.Icon>
@@ -107,6 +116,7 @@
             </Grid>
         </Grid>
 
+        </ContentControl>
         <!-- The message, asked for in a dialog over the middle of the window. Cancel keeps the text for the next time. -->
         <local:MessageDialog x:Name="Message" Title="Commit to SVN" PrimaryButtonText="Commit to SVN"
                              Header="Commit message for SVN" CountTip="The server refuses a shorter message. The minimum is in Settings." />

@@ -188,7 +188,7 @@ public partial class App : Application
         // are about a folder need them. This runs on the launch path and again on every redirect, where a
         // second sg-ui hands its command line to this one: opening the overview, the monitor or the
         // settings used to ask git twice for nothing, with the window coming up behind it.
-        var aboutAPath = action is "push" or "commit" or "log" or "blame" or "shelf" or "merge" or "resolve" or "server-branch" or "code-review";
+        var aboutAPath = action is "push" or "commit" or "transfer" or "log" or "blame" or "shelf" or "merge" or "resolve" or "server-branch" or "code-review";
         var wt = aboutAPath && path != null && Session.Root != null ? Session.WorktreeAt(path) : null;
         var worktree = wt?.Path;
         var branch = wt?.Branch;
@@ -209,6 +209,9 @@ public partial class App : Application
                 break;
             case "commit" when checkout != null:
                 window = PageWindow.For(() => new SvnCommitPage(checkout, autoSelect: select), "changes:" + checkout.Name, 1500, 920);
+                break;
+            case "transfer" when checkout != null:
+                window = PageWindow.For(() => new CheckoutTransferPage(checkout), "transfer:" + checkout.Name, 1100, 920);
                 break;
             case "log" when worktree != null:
                 window = PageWindow.For(() => new LogPage(worktree, autoSelect: select) { Checkout = baseName, Branch = branch }, "log:" + worktree, 1500, 920);

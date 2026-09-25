@@ -1382,8 +1382,9 @@ public sealed class Git
         var f = WritePathspecFile(list.Select(p => ":(literal)" + p));
         try
         {
-            Run(worktree, ["reset", "-q", "HEAD", "--pathspec-from-file=" + f, "--pathspec-file-nul"]);
-            Run(worktree, ["checkout", "HEAD", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk();
+            // Restore both sides in one operation: staged additions and rename destinations do not
+            // exist in HEAD, so resetting first would turn them into unmatched, untracked paths.
+            Run(worktree, ["restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk();
         }
         finally { File.Delete(f); }
     }

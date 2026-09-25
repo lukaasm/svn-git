@@ -15,6 +15,8 @@ static class McpHost
         ("checkout", "Register or download an SVN checkout. arguments: add folder, or add --url URL; supports --name, --skip, --junction, --optional, --shared.", false),
         ("sync", "Sync SVN and create a snapshot. arguments: optional checkout, --ignores.", false),
         ("branch", "Create a branch and worktree. arguments: name, --from checkout, --without path, --minimal, --shared junction|clone|copy.", false),
+        ("transfer", "Preview copying checkout edits into a worktree. arguments: target --from checkout [--new] [--move] [--file path]... . Apply with --yes --version token from the preview. Conflicts block writes; move cleans source only after successful transfer. Recovery shelves retain both versions.", false),
+        ("rename", "Preview renaming a local worktree folder and branch. arguments: worktree new-name. Apply with --yes --version token. Keeps edits, shelves and code review comments; old remote backups remain available.", false),
         ("branch-update", "Preview a pull from SVN, or execute with --yes. Saves edits, syncs, replays and recovers edits.", false),
         ("activity", "List durable operations, or resume|close|recover operation-id. Recovery creates a separate branch.", false),
         ("review", "Review readiness: status|run|ready. Also inbox across the root, files, file path, threads, thread id, comment, reply, resolve, reopen, export and handoff. Prefer typed review tools for comments.", false),

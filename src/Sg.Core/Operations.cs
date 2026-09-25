@@ -72,7 +72,7 @@ public sealed class BranchUpdatePlan
 public static class Operations
 {
     static string Folder(SgRoot root) => System.IO.Path.Combine(root.StorePath, "operations");
-    static string FileFor(SgRoot root, string id)
+    internal static string FileFor(SgRoot root, string id)
     {
         if (!Guid.TryParseExact(id, "N", out _)) throw new SgException("invalid operation id");
         return System.IO.Path.Combine(Folder(root), id + ".json");

@@ -1305,11 +1305,10 @@ public static class Ops
         var versioned = selected.Where(c => c.Versioned).Select(c => c.Path).ToList();
         if (versioned.Count > 0)
         {
-            var r = svn.Revert(co.Path, versioned);
-            if (!r.Ok) root.Log.Warn("svn revert said: " + r.StdErr.Trim());
+            svn.Revert(co.Path, versioned).EnsureOk();
         }
         if (!deleteUnversioned) return;
-        foreach (var p in selected.Where(c => !c.Versioned).Select(c => c.Path))
+        foreach (var p in selected.Where(c => !c.Versioned || c.Item == "added").Select(c => c.Path))
         {
             var abs = PathUtil.Join(co.Path, p);
             if (File.Exists(abs)) File.Delete(abs);

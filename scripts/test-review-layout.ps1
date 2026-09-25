@@ -1,5 +1,5 @@
 # Native UI Automation on a private desktop, with disposable Git and SVN repositories.
-param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$BrowsingOnly,
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly, [switch]$ReadingOnly, [switch]$BrowsingOnly, [switch]$TransferOnly,
     [ValidateSet('All', 'Commit', 'Merge')][string]$NavigationScope = 'All')
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -9,6 +9,7 @@ if (!$Worker) {
     if ($NavigationOnly) { $command += " -NavigationOnly -NavigationScope $NavigationScope" }
     if ($ReadingOnly) { $command += ' -ReadingOnly' }
     if ($BrowsingOnly) { $command += ' -BrowsingOnly' }
+    if ($TransferOnly) { $command += ' -TransferOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-review-layout-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(240)
@@ -122,7 +123,7 @@ try {
     $fixture = Join-Path $ArtifactDirectory 'root'
     & $cli init $fixture --no-fsmonitor 2>&1 | Out-File $setupLog -Append
     Check-Exit 'sg init'
-    # Git's Windows worktree repair cannot rewrite a hidden .git link in these fixtures.
+    # Keep fixture metadata visible for diagnostics.
     & git -C (Join-Path $fixture '.sg') config core.hideDotFiles false
     Check-Exit 'fixture Git metadata'
     & $cli checkout add --url "$url/trunk" --root $fixture --name checkout 2>&1 | Out-File $setupLog -Append
@@ -137,6 +138,12 @@ try {
     [IO.File]::WriteAllText((Join-Path $worktree 'untracked.txt'), "Untracked content`n")
     $checkout = (Get-Content -LiteralPath (Join-Path $fixture '.sg/sg.json') -Raw | ConvertFrom-Json).checkouts[0].path
     $checkoutBefore = (& svn status $checkout) -join "`n"
+
+    if ($TransferOnly) {
+        . "$PSScriptRoot/checkout-transfer-cases.ps1"
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
 
     if ($ReadingOnly) {
         . "$PSScriptRoot/diff-reading-cases.ps1"

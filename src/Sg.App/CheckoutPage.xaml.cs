@@ -700,6 +700,29 @@ public sealed partial class CheckoutPage : SgPage
         finally { _removing = false; }
     }
 
+    async void Rename_Click(object sender, RoutedEventArgs e)
+    {
+        if (WorktreeOf(sender) is not { } row) return;
+        var root = Session.Require();
+        var name = new TextBox { Header = "New branch name", Text = row.Branch, MinWidth = 340 };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(name, "RenameWorktreeName");
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(name);
+        content.Children.Add(new TextBlock { Text = "The folder is renamed beside its current location. Local edits, shelves, and comments follow it. Old remote backups remain available; future backups use the new name.", TextWrapping = TextWrapping.Wrap, MaxWidth = 420 });
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Rename " + row.Branch, Content = content,
+            PrimaryButtonText = "Review rename", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var requestedName = name.Text;
+        var plan = await Runner.Quiet(Pane, () => WorktreeRename.Preview(root, row.Path, requestedName));
+        if (plan == null || !await Dialogs.Confirm(this, "Rename worktree and branch?", $"{plan.Branch} → {plan.Name}\n\n{plan.Path}\n→ {plan.NewPath}\n\nOpen editors and terminals may need to reopen the folder.", "Rename")) return;
+        await Busy.During(sender, async () =>
+        {
+            await Reports.Run(OpReport, Pane, "rename " + row.Branch, () => WorktreeRename.Apply(root, plan),
+                (card, result) => card.Show(ChipSeverity.Success, "\uE8AC", "Renamed to " + result.Name, result.NewPath));
+            await _owner.RefreshAsync();
+        });
+    }
+
     async Task RemoveAsync(WorktreeRow row, object sender)
     {
         var root = Session.Require();
@@ -781,6 +804,11 @@ public sealed partial class CheckoutPage : SgPage
     {
         var row = WorktreeOf(sender);
         if (row != null) Go(() => new ReviewPage(row.Path), "review:" + row.Path);
+    }
+
+    void Transfer_Click(object sender, RoutedEventArgs e)
+    {
+        if (_current != null) Go(() => new CheckoutTransferPage(_current.Config), "transfer:" + _current.Config.Name);
     }
     void CodeReview_Click(object sender, RoutedEventArgs e)
     {

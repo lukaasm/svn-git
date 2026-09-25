@@ -36,6 +36,8 @@ static class Cli
                 "checkout" => Checkout(a, log),
                 "sync" => Sync(a, log),
                 "branch" => Branch(a, log),
+                "transfer" => Transfer(a, log),
+                "rename" => Rename(a, log),
                 "rebase" => Rebase(a, log),
                 "branch-update" or "activity" or "review" or "storage" or "handoff" => Workflow(a, log),
                 "resolve" => ResolveCmd(a, log),
@@ -139,6 +141,11 @@ static class Cli
             sg branch <name> [--from <checkout>]      new branch and worktree from svn/<checkout>
                  [--without p]... [--minimal] [--shared junction|clone|copy]
             sg branch-update [--yes]                 preview/save edits, sync SVN, replay, recover edits
+            sg transfer <worktree> --from <checkout> [--new] [--move] [--file <path>]...
+                                                      preview checkout edits in a new or existing worktree
+                 --yes --version <preview-token>     apply that preview; conflicts and changed files are refused
+            sg rename <worktree> <new-name>          preview renaming a worktree folder and branch together
+                 --yes --version <preview-token>     apply the reviewed rename; keeps edits, shelves and comments
             sg activity [resume|close|recover <id>]  durable operations and separate recovery branches
             sg review [status|run|ready]              version-bound checks and readiness; configure reviewChecks in .sg/sg.json
             sg review inbox [--state open|resolved|all] [--search text] [--worktree name-or-path] [--offset N]
@@ -365,6 +372,28 @@ static class Cli
                               + (r.KeptSwitched.Count > 0 ? $", kept {string.Join(", ", r.KeptSwitched)} switched" : ""));
             Warn(r.Warnings);
         }
+        return 0;
+    }
+
+    static int Transfer(Args a, ILog log)
+    {
+        var root = FindRoot(a, log);
+        var co = root.Checkout(a.Get("--from") ?? throw new SgException("Choose the source checkout with --from."));
+        var paths = a.GetAll("--file");
+        var plan = CheckoutTransfer.Preview(root, co, a.Arg(0, "target worktree"), a.Has("--new"), a.Has("--move"), paths.Count == 0 ? null : paths);
+        if (!a.Has("--yes")) { Json(plan); return plan.Conflicts.Count > 0 ? 10 : 0; }
+        if (a.Get("--version") != plan.Token) throw new SgException("Preview first, then pass its token using --yes --version. Files or options may have changed.");
+        Json(CheckoutTransfer.Apply(root, plan));
+        return 0;
+    }
+
+    static int Rename(Args a, ILog log)
+    {
+        var root = FindRoot(a, log);
+        var plan = WorktreeRename.Preview(root, a.Arg(0, "worktree"), a.Arg(1, "new branch name"));
+        if (!a.Has("--yes")) { Json(plan); return 0; }
+        if (a.Get("--version") != plan.Token) throw new SgException("Preview first, then pass its token using --yes --version.");
+        Json(WorktreeRename.Apply(root, plan));
         return 0;
     }
 

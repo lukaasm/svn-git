@@ -78,6 +78,32 @@ public sealed class McpTests
         }
     }
 
+    [Fact]
+    public async Task Transfer_and_rename_require_current_preview_tokens_through_stdio()
+    {
+        using var fixture = new Fixture(); fixture.Setup();
+        using var client = new Client(false); await client.Init();
+        Fixture.Put(fixture.Checkout, "CMakeLists.txt", "project(transferred)\n");
+        var args = new[] { "received", "--from", fixture.Co.Name, "--new" };
+        var preview = await client.Tool("sg_transfer", new { workingDirectory = fixture.RootDir, arguments = args });
+        using var plan = JsonDocument.Parse(preview.GetProperty("output").GetString()!);
+        Assert.True(plan.RootElement.GetProperty("canApply").GetBoolean());
+        Assert.False(Directory.Exists(Path.Combine(fixture.RootDir, "received")));
+        await client.Tool("sg_transfer", new { workingDirectory = fixture.RootDir, arguments = args.Concat(new[] { "--yes", "--version", "stale" }).ToArray() }, error: true);
+        var token = plan.RootElement.GetProperty("token").GetString()!;
+        await client.Tool("sg_transfer", new { workingDirectory = fixture.RootDir, arguments = args.Concat(new[] { "--yes", "--version", token }).ToArray() });
+        var received = Path.Combine(fixture.RootDir, "received");
+        Assert.Equal("project(transferred)\n", File.ReadAllText(Path.Combine(received, "CMakeLists.txt")));
+        var rename = await client.Tool("sg_rename", new { workingDirectory = fixture.RootDir, arguments = new[] { "received", "renamed" } });
+        using var renamePlan = JsonDocument.Parse(rename.GetProperty("output").GetString()!);
+        await client.Tool("sg_rename", new { workingDirectory = fixture.RootDir, arguments = new[] { "received", "renamed", "--yes" } }, error: true);
+        Assert.True(Directory.Exists(received));
+        await client.Tool("sg_rename", new { workingDirectory = fixture.RootDir, arguments = new[] { "received", "renamed", "--yes", "--version", renamePlan.RootElement.GetProperty("token").GetString()! } });
+        Assert.False(Directory.Exists(received));
+        Assert.Equal("project(transferred)\n", File.ReadAllText(Path.Combine(fixture.RootDir, "renamed", "CMakeLists.txt")));
+        Assert.Equal("project(transferred)\n", File.ReadAllText(Path.Combine(fixture.Checkout, "CMakeLists.txt")));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -88,9 +114,9 @@ public sealed class McpTests
         using var client = new Client(apphost); await client.Init();
         var list = await client.Call("tools/list", new { });
         var names = list.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
-        foreach (var command in "init checkout sync branch branch-update activity review storage handoff rebase resolve push rm shelve shelf export import backup status server-branch server-checkout update version".Split(' '))
+        foreach (var command in "init checkout sync branch transfer rename branch-update activity review storage handoff rebase resolve push rm shelve shelf export import backup status server-branch server-checkout update version".Split(' '))
             Assert.Contains("sg_" + command.Replace('-', '_'), names);
-        Assert.Equal(32, names.Count);
+        Assert.Equal(34, names.Count);
         Assert.Contains("sg_review_inbox", names);
         var version = await client.Tool("sg_version", new { workingDirectory = path });
         Assert.Equal(0, version.GetProperty("exitCode").GetInt32());

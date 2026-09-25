@@ -332,16 +332,16 @@ public sealed partial class CommitPage : SgPage
         // Stage and Unstage move a block through the index and can be undone by the other one. Discard
         // rewrites the file, and what it takes out was never committed anywhere: it is the one action on
         // this page with nothing behind it, and it used to run on a single keystroke.
-        if (id == DiffBlocks.Discard && !await Dialogs.Confirm(this, "Discard " + DiffBlocks.Label(id, blocks).ToLowerInvariant(),
-                $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way the last commit has them?\n\n"
-                + "The change is not on the branch and not in SVN. Undo on the bar over the page brings it back, for as long as the file is left as the discard leaves it.", "Discard"))
-            return;
         if (id == DiffBlocks.Discard)
         {
+            var permanent = await Discards.Confirm(this, "Discard " + DiffBlocks.Label(id, blocks).ToLowerInvariant(),
+                $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way the last commit has them?", blocks: true);
+            if (permanent == null) return;
             var abs = PathUtil.Join(_worktree, path);
             var written = await Runner.Run(Pane, what, () => WriteReversed(abs, blocks));
             if (written == null) return;
-            Discards.Announce(ResultBar, what, "The text it wrote over is kept until the bar is closed.",
+            if (permanent.Value) Discards.AnnouncePermanent(ResultBar, what);
+            else Discards.Announce(ResultBar, what, "The text it wrote over is kept until the bar is closed.",
                 Discards.Rewrite(Pane, abs, written.Before, written.After, written.Encoding), () => LoadAsync(reselect: path));
             await LoadAsync(reselect: path);
             return;
@@ -585,22 +585,22 @@ public sealed partial class CommitPage : SgPage
         var root = Session.Require();
         if (picked.Count == 0) { await Dialogs.Info(this, "Nothing checked", "Check the files to discard."); return; }
         var what = picked.Count == 1 ? $"the changes in {picked[0].Path}" : $"the changes in {picked.Count} file(s)";
-        if (!await Dialogs.Confirm(this, "Discard changes",
-                $"Put {what} back the way the last commit has them? Untracked files get deleted.\n\n"
-                + "They go onto the shelf first, so Undo on the bar over the page brings them back. A discard nobody asks back for is dropped after a week.",
-                "Discard")) return;
+        var permanent = await Discards.Confirm(this, "Discard changes",
+            $"Put {what} back the way the last commit has them? Untracked files get deleted.");
+        if (permanent == null) return;
         // The shelf is the discard: saving one writes the files back the way the last commit has them.
         // What it cannot hold is discarded the old way, which is what this whole method used to be.
-        var result = await Discards.ShelveAsync(Pane, _worktree, picked.Select(p => p.Path).ToList(), rest =>
+        var result = await Discards.RunAsync(Pane, _worktree, picked.Select(p => p.Path).ToList(), rest =>
         {
             var left = rest.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            root.Git.RestoreFromHead(_worktree, picked.Where(p => p.Tracked && left.Contains(p.Path)).Select(p => p.Path));
+            root.Git.RestoreFromHead(_worktree, picked.Where(p => p.Tracked && left.Contains(p.Path))
+                .SelectMany(p => p.OldPath == null ? new[] { p.Path } : new[] { p.Path, p.OldPath }));
             foreach (var p in picked.Where(p => p.Untracked && left.Contains(p.Path)))
             {
                 var abs = PathUtil.Join(_worktree, p.Path);
                 if (File.Exists(abs)) File.Delete(abs);
             }
-        });
+        }, permanent.Value);
         Discards.Report(ResultBar, Pane, what, result, () => LoadAsync());
         await LoadAsync();
     }

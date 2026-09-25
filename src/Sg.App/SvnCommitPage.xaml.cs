@@ -19,6 +19,8 @@ public sealed partial class SvnCommitPage : SgPage
     List<SvnChangeRow> _rows = new();
     readonly ListFilter _filter;
     readonly bool _autoSelect;
+    readonly PageReads _reads = new();
+    bool _hasLoaded;
 
     /// <summary>The file the diff on show was read from, so a block action edits exactly what was read.</summary>
     string? _shownPath;
@@ -52,8 +54,13 @@ public sealed partial class SvnCommitPage : SgPage
         Diff.DirtyChanged += SyncBlockButtons;
         Diff.ActionInvoked += OnDiffAction;
         Session.Log.Sink = Pane;
-        _ = LoadAsync();
+        Pane.ShowReadFeedback = false;
+        InitialLoading.Show("Checking for checkout changes…", placeholders: false);
+        Unloaded += (_, _) => OnHidden();
     }
+
+    public override void OnShown(bool returning) => _ = LoadAsync(_shownPath);
+    public override void OnHidden() { ++_generation; _reads.Cancel(); }
 
     /// <summary>Right click on a line: the file actions, then what can be done to these changes.</summary>
     void ExtendMenu(MenuFlyout menu, TreeNode node)
@@ -72,6 +79,12 @@ public sealed partial class SvnCommitPage : SgPage
 
         Add("Shelve", "\uE7B8", "Take these out of the checkout and keep them, to put back later. A local edit that blocks a push stops blocking it.",
             () => ShelveAsync(changes.Select(c => c.Path).ToList()));
+
+        Add("Copy or move to worktree…", "\uE8C8", "Preview these changes in a new or existing worktree.", () =>
+        {
+            OpenTransfer(changes.Select(c => c.Path).ToArray());
+            return Task.CompletedTask;
+        });
 
         Add("Delete file", "\uE74D", "Delete these from disk. A versioned file is deleted through svn, so the deletion is a change to commit. Asks first.",
             () => DeleteAsync(changes.ToList()));
@@ -99,15 +112,38 @@ public sealed partial class SvnCommitPage : SgPage
     /// </summary>
     int _generation;
 
+    void Transfer_Click(object sender, RoutedEventArgs e) => OpenTransfer(_rows.Where(r => r.Checked).Select(r => r.Change.Path).ToArray());
+    void OpenTransfer(string[] paths)
+    {
+        if (paths.Length == 0) return;
+        Go(() => new CheckoutTransferPage(_co, paths), "transfer:" + _co.Name);
+    }
+
     /// <summary>reselect keeps one file open across a reload, for example after a block of it was reverted.</summary>
     async Task LoadAsync(string? reselect = null)
     {
         var root = Session.Require();
         var gen = ++_generation;
-        if (_filter.Count == 0) FilesSkeleton.Show();
-        var changes = await Runner.Quiet(Pane, () => Ops.CheckoutChanges(root, _co));
-        FilesSkeleton.Hide();
-        if (changes == null || gen != _generation) return;
+        using var read = _reads.Begin();
+        if (!_hasLoaded) InitialLoading.Show("Checking for checkout changes…", placeholders: false);
+        else { RefreshProgress.IsIndeterminate = true; RefreshProgress.Visibility = Visibility.Visible; }
+        FilledGate.IsEnabled = Clean.IsEnabled = false;
+        var changes = await read.Run(Pane, () => Ops.CheckoutChanges(root, _co));
+        if (!read.Current || gen != _generation) return;
+        InitialLoading.Hide(); RefreshProgress.IsIndeterminate = false; RefreshProgress.Visibility = Visibility.Collapsed;
+        FilledGate.IsEnabled = Clean.IsEnabled = true;
+        if (changes == null)
+        {
+            if (!_hasLoaded)
+            {
+                Clean.Title = "Couldn't read checkout changes"; Clean.Glyph = "\uE946";
+                Clean.Text = "Refresh to try again. The error details are in the log."; Clean.Show();
+            }
+            return;
+        }
+        _hasLoaded = true;
+        Clean.Title = "The checkout is clean"; Clean.Glyph = "\uE73E";
+        Clean.Text = "Nothing is edited directly in the checkout. Work that belongs to a branch lives in its worktree.";
         _rows = changes.Select(c => new SvnChangeRow
         {
             Change = c,
@@ -222,10 +258,9 @@ public sealed partial class SvnCommitPage : SgPage
         }
         // A revert writes the file back to BASE. SVN has no index to hold the change and nothing on this
         // page has committed it anywhere, so what it takes out has no other copy left.
-        if (!await Dialogs.Confirm(this, "Discard " + DiffBlocks.Label("discard", blocks).ToLowerInvariant(),
-                $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way SVN has them?\n\n"
-                + "The change is not in SVN. Undo on the bar over the page brings it back, for as long as the file is left as the discard leaves it.", "Discard"))
-            return;
+        var permanent = await Discards.Confirm(this, "Discard " + DiffBlocks.Label("discard", blocks).ToLowerInvariant(),
+            $"Put {(blocks.Count == 1 ? "this block" : $"these {blocks.Count} blocks")} of {path} back the way SVN has them?", blocks: true);
+        if (permanent == null) return;
         var abs = PathUtil.Join(_co.Path, path);
         var before = _shownModified;
         var what = DiffBlocks.Label("discard", blocks).ToLowerInvariant() + " of " + path;
@@ -238,7 +273,8 @@ public sealed partial class SvnCommitPage : SgPage
             return new { After = after, file.Encoding };
         });
         if (written == null) return;
-        Discards.Announce(ResultBar, what, "The text it wrote over is kept until the bar is closed.",
+        if (permanent.Value) Discards.AnnouncePermanent(ResultBar, what);
+        else Discards.Announce(ResultBar, what, "The text it wrote over is kept until the bar is closed.",
             Discards.Rewrite(Pane, abs, before, written.After, written.Encoding), () => LoadAsync(reselect: path));
         await LoadAsync(reselect: path);
     }
@@ -321,14 +357,12 @@ public sealed partial class SvnCommitPage : SgPage
         if (paths.Count == 0) { await Dialogs.Info(this, "Nothing checked", "Check the changes to revert."); return; }
         var root = Session.Require();
         var what = paths.Count == 1 ? $"the changes in {paths[0]}" : $"{paths.Count} change(s) in the checkout";
-        if (!await Dialogs.Confirm(this, "Discard changes",
-                $"Put {what} back the way SVN has them? Unversioned files get deleted.\n\n"
-                + "They go onto the shelf first, so Undo on the bar over the page brings them back. A discard nobody asks back for is dropped after a week. "
-                + "A file whose svn property changed is reverted outright: a shelf cannot hold a property.",
-                "Discard")) return;
+        var permanent = await Discards.Confirm(this, "Discard changes",
+            $"Put {what} back the way SVN has them? Unversioned files get deleted.\n\nSVN property changes cannot be saved on a recovery shelf.");
+        if (permanent == null) return;
         // The shelf is the discard: saving one reverts the files. What it cannot hold is reverted the old way.
-        var result = await Discards.ShelveAsync(Pane, _co.Path, paths,
-            rest => Ops.SvnRevert(root, _co, rest.ToList(), deleteUnversioned: true));
+        var result = await Discards.RunAsync(Pane, _co.Path, paths,
+            rest => Ops.SvnRevert(root, _co, rest.ToList(), deleteUnversioned: true), permanent.Value);
         Discards.Report(ResultBar, Pane, what, result, () => LoadAsync());
         await LoadAsync();
     }

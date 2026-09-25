@@ -11,6 +11,10 @@ Push keeps commit selection, files, and the primary action visible. At narrow wi
 
 Checkout toolbars show **New worktree**, **Open folder**, **SVN log**, and **Backup**; import, merge, server branching, and checkout settings are in **More**. Narrow windows automatically use the checkout icon rail. Backup restore keeps destination fields and primary actions visible, with replacement, saved-edit options, and pruning under **Advanced**. Enabled replacement stays visible in the collapsed header.
 
+**More → Copy or move checkout changes** transfers SVN checkout edits to a new or existing worktree belonging to that checkout. The same flow is linked from **New worktree** and the selected-file menu in **Changes in the checkout**. Copy keeps the source; Move asks for confirmation and cleans transferred source files only after they reach the destination. Preview lists additions, edits, deletions, conflicts, and paths left behind. Non-overlapping edits merge; conflicts block the transfer. Recovery shelves retain both previous versions, and the destination's staged selection is preserved. SVN properties, directory scheduling, shared/excluded content, and linked files stay in place; sparse destinations are refused.
+
+Worktree **Advanced → Rename worktree and branch** changes both names while retaining commits, local edits, shelves, comments, and backup exclusions. The folder stays beside its original location. Existing remote backups keep their old name; subsequent backups use the new name. Review results remain available, with readiness requiring confirmation again after the folder changes. CLI and MCP expose both workflows through `sg transfer` / `sg_transfer` and `sg rename` / `sg_rename`; each previews by default and requires `--yes --version <preview-token>` to apply.
+
 Import and restore drafts survive back/forward navigation in the current root, including empty branch names and a newly selected export file. Returning reads the source and validates the destination again. Checkout identity follows its folder through renames; removing a checkout leaves the destination unselected. Returning to a submitted restore does not reuse replacement consent.
 
 The Windows app keeps a **Tasks** pane aligned with the page content, including standalone action windows. Filter by All tasks, Active, Needs attention, or Finished; filtering preserves expanded results and never hides the overall activity summary. Clear finished removes session results across all filters while keeping running work and durable recovery records. Expand it for progress, cancellation, output, and results from this session; the latest 100 tasks are retained until cleared or the app exits. Navigating away leaves tasks running. Cancellation stays visibly pending until the worker stops and releases the repository; tasks that stop at a step boundary finish that step first. Cancelling a queued task reports that no work started. Use **Copy task details** on any expanded task to copy its current status, timestamps, repository, result, and retained output. Expand a finished task for its result action: open the created folder, review a paused replay or update, or return to Backup. Navigation actions stay tied to the task’s original root. Paused replays and partial results are marked **Needs attention**, and durable recovery remains in **Activity** after a restart.
@@ -63,6 +67,8 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 Add `-ReadingOnly` to check diff scroll and directional selections when switching files and returning through navigation, including unified patches, inserted lines, and shortened files. It combines native UI Automation with the disposable app's WebView debugging port; the user's desktop and repositories are untouched.
 
 Add `-BrowsingOnly` to check independent scroll positions and folder expansion in Code Review, History, and Backup Compare, including filtered lists, new commits, and selections removed while away. History remembers a separate file-tree view for each recently opened commit.
+
+Add `-TransferOnly` to exercise checkout-to-worktree copy/move previews, conflicts, move confirmation, worktree/branch renaming, stable empty-checkout refreshes, and recoverable/permanent discard confirmations on disposable repositories.
 
 Add `-NavigationOnly` to check returning with a Commit draft, file filter, explicit checked/unchecked choices, and open diff; amend recovery when HEAD changes; clearing sent messages; and Merge source/revision recovery when server history or branches disappear. `-NavigationScope Commit` or `-NavigationScope Merge` limits those checks to one page.
 
@@ -283,8 +289,9 @@ purple R for renamed, orange C for a conflict, grey ? for a file version control
 group the rows by working copy, one header per SVN commit that would go out. Right click a row in Checkout changes for
 **Revert**, or in Commit for **Discard changes**. Click inside a change in the diff of a modified file and press
 **Revert chunk** to put that block back the way BASE (or HEAD) has it; the rest of the file stays, like TortoiseSVN.
-A discard can be undone: whole files go onto the shelf as "discarded <time>" first, a discarded block keeps the text it
+A discard keeps recovery by default: whole files go onto the shelf as "discarded <time>" first, a discarded block keeps the text it
 wrote over, and the bar over the page offers Undo. A discard shelf nobody asks back for is dropped after a week.
+The confirmation also offers **Discard permanently**, unchecked each time. Selecting it shows a warning and skips the recovery shelf or block undo copy; no new backup is created and no Undo is offered. Existing shelves and backups are left alone.
 The commit message box starts with the prefix the branch's last commit carried, "gui: " say, with the caret after it.
 In the Project monitor, clicking a commit marks it and the older ones as read; newer ones stay unread.
 Lists show grey bars while they load, a button that started a long operation shows a ring until it finishes, and rows

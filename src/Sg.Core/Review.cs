@@ -34,7 +34,7 @@ public sealed class ReviewRecord
 /// <summary>Local checks run only on explicit request. A readiness stamp binds their inputs and the reviewed commit range.</summary>
 public static class Review
 {
-    static string FileFor(SgRoot root, string branch) => Path.Combine(root.StorePath, "reviews", WorkspaceVersion.Hash(branch) + ".json");
+    internal static string FileFor(SgRoot root, string branch) => Path.Combine(root.StorePath, "reviews", WorkspaceVersion.Hash(branch) + ".json");
     static ReviewRecord Current(SgRoot root, string path)
     {
         var git = root.Git;

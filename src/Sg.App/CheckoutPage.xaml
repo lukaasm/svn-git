@@ -104,6 +104,9 @@
                     <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
                 </AppBarButton>
                 <CommandBar.SecondaryCommands>
+                    <AppBarButton Label="Copy or move checkout changes…" Click="Transfer_Click">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE8C8;" /></AppBarButton.Icon>
+                    </AppBarButton>
                     <AppBarButton x:Name="ShelfButton" Label="Shelved changes" Click="Shelf_Click">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
                     </AppBarButton>
@@ -348,6 +351,12 @@
                                     <controls:SettingsExpander Header="Advanced" Description="Review checks, backup coverage, export, and worktree settings." HorizontalAlignment="Stretch" AutomationProperties.Name="Advanced" AutomationProperties.AutomationId="AdvancedWorktreeActions">
                                       <controls:SettingsExpander.HeaderIcon><FontIcon Glyph="&#xE713;" /></controls:SettingsExpander.HeaderIcon>
                                       <controls:SettingsExpander.Items>
+                                        <controls:SettingsCard Header="Rename worktree and branch" Description="Change the branch name and its folder together. Local edits, shelves, and code review comments are kept.">
+                                            <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE8AC;" /></controls:SettingsCard.HeaderIcon>
+                                            <local:TaskGate>
+                                                <local:IconButton MinWidth="124" Text="Rename…" Glyph="&#xE8AC;" Tag="{x:Bind}" Click="Rename_Click" AutomationProperties.AutomationId="RenameWorktreeAction" />
+                                            </local:TaskGate>
+                                        </controls:SettingsCard>
                                         <controls:SettingsCard Header="Review readiness" Description="Review a branch version and run local checks.">
                                             <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE73E;" /></controls:SettingsCard.HeaderIcon>
                                             <local:IconButton MinWidth="124" Text="Review" Glyph="&#xE73E;" Tag="{x:Bind}" Click="Review_Click" AutomationProperties.AutomationId="ReviewReadinessAction" />

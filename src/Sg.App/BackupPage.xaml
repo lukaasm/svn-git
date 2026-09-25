@@ -172,10 +172,12 @@
                 </Expander.Header>
                 <StackPanel Spacing="8">
                     <local:WrapRow x:Name="RestoreOptions" Spacing="24" LineSpacing="4" Visibility="Collapsed">
-                        <local:TaskGate>
+                        <!-- An input, not an action: the hint explains why it is off, and a running restore
+                             locks it with the rest of the form, so no task gate talks over that lock. -->
+                        <local:ActionHint>
                             <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
                                       ToolTipService.ToolTip="Restore saved uncommitted changes through a shelf. Changes that do not merge remain on the shelf." />
-                        </local:TaskGate>
+                        </local:ActionHint>
                         <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
                                   ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name." />
                     </local:WrapRow>

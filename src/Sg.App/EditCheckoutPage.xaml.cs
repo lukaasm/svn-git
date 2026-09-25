@@ -67,7 +67,7 @@ public sealed partial class EditCheckoutPage : SgPage
         if (root == null || co == null) return;
         try
         {
-            var path = await WindowHelper.PickOpenFile(this, ".png", ".jpg", ".jpeg", ".bmp", ".gif");
+            var path = await WindowHelper.PickOpenFile(this, ".png", ".ico", ".jpg", ".jpeg", ".bmp", ".gif");
             if (path == null || Session.Root != root) return;
             await Busy.During(ChooseIconButton, async () =>
             {

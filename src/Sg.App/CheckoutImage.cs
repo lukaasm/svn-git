@@ -13,16 +13,28 @@ internal static class CheckoutImage
         if (file.Length > 10 * 1024 * 1024) throw new SgException("Choose an image smaller than 10 MB.");
         using var input = file.AsRandomAccessStream();
         var decoder = await BitmapDecoder.CreateAsync(input);
-        if (decoder.PixelWidth == 0 || decoder.PixelHeight == 0 || (long)decoder.PixelWidth * decoder.PixelHeight > 16_000_000)
+        var frame = await decoder.GetFrameAsync(0);
+        // ICO frames are alternate sizes, unlike an animation. Start from the largest available
+        // image so a 16 px first entry does not blur in previews or on high-DPI displays.
+        if (decoder.DecoderInformation.CodecId == BitmapDecoder.IcoDecoderId)
+        {
+            for (uint i = 1; i < decoder.FrameCount; i++)
+            {
+                var candidate = await decoder.GetFrameAsync(i);
+                if ((long)candidate.PixelWidth * candidate.PixelHeight > (long)frame.PixelWidth * frame.PixelHeight)
+                    frame = candidate;
+            }
+        }
+        if (frame.PixelWidth == 0 || frame.PixelHeight == 0 || (long)frame.PixelWidth * frame.PixelHeight > 16_000_000)
             throw new SgException("Choose an image with at most 16 million pixels.");
-        var scale = Math.Min(1, (double)CheckoutAppearance.MaxDimension / Math.Max(decoder.OrientedPixelWidth, decoder.OrientedPixelHeight));
+        var scale = Math.Min(1, (double)CheckoutAppearance.MaxDimension / Math.Max(frame.OrientedPixelWidth, frame.OrientedPixelHeight));
         var transform = new BitmapTransform
         {
-            ScaledWidth = (uint)Math.Max(1, Math.Round(decoder.PixelWidth * scale)),
-            ScaledHeight = (uint)Math.Max(1, Math.Round(decoder.PixelHeight * scale)),
+            ScaledWidth = (uint)Math.Max(1, Math.Round(frame.PixelWidth * scale)),
+            ScaledHeight = (uint)Math.Max(1, Math.Round(frame.PixelHeight * scale)),
             InterpolationMode = BitmapInterpolationMode.Fant,
         };
-        using var bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+        using var bitmap = await frame.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
             transform, ExifOrientationMode.RespectExifOrientation, ColorManagementMode.ColorManageToSRgb);
         using var output = new InMemoryRandomAccessStream();
         var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);

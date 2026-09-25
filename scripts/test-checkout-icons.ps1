@@ -119,6 +119,38 @@ function Pick-File([string]$path, [switch]$Cancel, $Button = (Find 'ChooseIconBu
     # Closing the native modal can replace the XAML accessibility provider. Do not retain its old root.
     $script:window = Wait-For { Get-TestAppWindow $process }
 }
+
+function New-MultiSizeIcon([string]$path) {
+    # Distinct colors prove the chosen frame, rather than only testing that some image decoded.
+    $frames = @(@{ size = 16; color = [Drawing.Brushes]::Red },
+                @{ size = 64; color = [Drawing.Brushes]::Lime },
+                @{ size = 256; color = [Drawing.Brushes]::Blue })
+    foreach ($frame in $frames) {
+        $bitmap = [Drawing.Bitmap]::new($frame.size, $frame.size)
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        $stream = [IO.MemoryStream]::new()
+        try {
+            $graphics.Clear([Drawing.Color]::Transparent)
+            $graphics.FillEllipse($frame.color, 0, 0, $frame.size, $frame.size)
+            $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+            $frame.bytes = $stream.ToArray()
+        } finally { $stream.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
+    }
+    $writer = [IO.BinaryWriter]::new([IO.File]::Create($path))
+    try {
+        $writer.Write([uint16]0); $writer.Write([uint16]1); $writer.Write([uint16]$frames.Count)
+        $offset = 6 + 16 * $frames.Count
+        foreach ($frame in $frames) {
+            $size = if ($frame.size -eq 256) { 0 } else { $frame.size }
+            $writer.Write([byte]$size); $writer.Write([byte]$size)
+            $writer.Write([byte]0); $writer.Write([byte]0)
+            $writer.Write([uint16]1); $writer.Write([uint16]32)
+            $writer.Write([uint32]$frame.bytes.Length); $writer.Write([uint32]$offset)
+            $offset += $frame.bytes.Length
+        }
+        foreach ($frame in $frames) { $writer.Write([byte[]]$frame.bytes) }
+    } finally { $writer.Dispose() }
+}
 $process = $null; $window = $null
 $cli = (Resolve-Path "$PSScriptRoot/../src/sg/bin/Debug/net10.0/sg.exe").Path
 $app = (Resolve-Path "$PSScriptRoot/../src/Sg.App/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/sg-ui.exe").Path
@@ -184,6 +216,51 @@ try {
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'custom-expanded.png')
     Invoke-Control (Find 'TogglePaneButton')
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'custom-collapsed.png')
+    Complete-UiScenario
+
+    Start-UiScenario 'Legacy ICO images decode through the native picker'
+    Select-Checkout 'Fort'
+    Edit-Checkout
+    $legacyIcon = Join-Path $ArtifactDirectory 'legacy.ico'
+    $legacyStream = [IO.File]::Create($legacyIcon)
+    try { [Drawing.SystemIcons]::Warning.Save($legacyStream) } finally { $legacyStream.Dispose() }
+    Pick-File $legacyIcon
+    $previous = $saved
+    $saved = Wait-For { $name = (Read-Config).checkouts[0].icon; if ($name -and $name -ne $previous) { $name } }
+    $asset = Join-Path $root ('.sg/icons/' + $saved)
+    $stored = [Drawing.Image]::FromFile($asset)
+    try { if ($stored.Width -gt 128 -or $stored.Height -gt 128) { throw 'The legacy icon was not bounded.' } } finally { $stored.Dispose() }
+    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
+    Complete-UiScenario
+
+    Start-UiScenario 'ICO uses the largest image and preserves transparency in its portable copy'
+    $source = Join-Path $ArtifactDirectory 'multiple-sizes.ico'
+    New-MultiSizeIcon $source
+    Pick-File $source
+    $previous = $saved
+    $saved = Wait-For { $name = (Read-Config).checkouts[0].icon; if ($name -and $name -ne $previous) { $name } }
+    $asset = Join-Path $root ('.sg/icons/' + $saved)
+    $stored = [Drawing.Bitmap]::new($asset)
+    try {
+        if ($stored.Width -ne 128 -or $stored.Height -ne 128) { throw 'The largest ICO image was not resized to 128 pixels.' }
+        $center = $stored.GetPixel(64, 64)
+        if ($center.B -lt 240 -or $center.R -gt 10 -or $center.G -gt 10) { throw 'The ICO decoder chose a smaller image.' }
+        if ($stored.GetPixel(0, 0).A -ne 0) { throw 'ICO transparency was lost.' }
+    } finally { $stored.Dispose() }
+    if (!(Test-Path -LiteralPath $source)) { throw 'The original ICO was removed.' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'ico-settings.png')
+    Complete-UiScenario
+
+    Start-UiScenario 'A malformed ICO leaves the existing checkout image intact'
+    $invalid = Join-Path $ArtifactDirectory 'invalid.ico'
+    [IO.File]::WriteAllBytes($invalid, [byte[]]@(0, 0, 1, 0, 1, 0))
+    Pick-File $invalid
+    $null = Wait-For { Find 'Could not use this image' -Name }
+    Invoke-Control (Wait-For { Find 'CloseButton' })
+    if ((Read-Config).checkouts[0].icon -ne $saved -or !(Test-Path -LiteralPath $asset)) { throw 'An invalid ICO changed the saved image.' }
+    Select-Checkout 'Fort'
+    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'ico-navigation.png')
     Complete-UiScenario
 
     Start-UiScenario 'Custom images survive restarting the app and deleting the source'

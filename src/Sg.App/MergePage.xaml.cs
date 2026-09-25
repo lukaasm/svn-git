@@ -34,7 +34,7 @@ public sealed partial class MergePage : SgPage
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadTargetsAsync());
         Session.Log.Sink = Pane;
-        _ = LoadTargetsAsync();
+        Unloaded += (_, _) => OnHidden();
     }
 
     MergeTarget? Target => TargetBox.SelectedItem as MergeTarget;
@@ -58,7 +58,8 @@ public sealed partial class MergePage : SgPage
 
     async Task LoadTargetsAsync()
     {
-        if (_busyDepth > 0 || _reading || _running) return;
+        if (_hidden || _busyDepth > 0 || _reading || _running) return;
+        if (Target != null) _returning ??= CaptureViewState() as ViewState;
         _planReady = false;
         ResetPreview();
         var root = Session.Require();
@@ -66,13 +67,21 @@ public sealed partial class MergePage : SgPage
         SetBusy(true);
         try
         {
-            var targets = await Runner.Quiet(Pane, () => Merge.Targets(root, _co));
-            if (targets == null) return;
+            using var read = _reads.Begin();
+            var targets = await read.Run(Pane, () => Merge.Targets(root, _co));
+            if (!read.Current || _hidden || root != Session.Root || targets == null) return;
             _targets = targets;
             _binding = true;
             TargetBox.ItemsSource = _targets;
-            TargetBox.SelectedIndex = _targets.Count > 0 ? 0 : -1;
+            TargetBox.SelectedItem = _returning is { TargetUrl: { } url } view
+                ? _targets.FirstOrDefault(t => t.Url == url && t.Wc == view.TargetWc)
+                : _targets.FirstOrDefault();
             _binding = false;
+            if (Target == null)
+            {
+                SelectionUnavailable("The previous merge target is no longer available. Choose a target to continue.");
+                return;
+            }
             await LoadSourcesAsync();
         }
         finally { SetBusy(false); RevisionsSkeleton.Hide(); }
@@ -81,6 +90,7 @@ public sealed partial class MergePage : SgPage
     /// <summary>The branches on offer follow the working copy: a merge stays inside one repository.</summary>
     async Task LoadSourcesAsync()
     {
+        if (_hidden) return;
         _planReady = false;
         ResetPreview();
         var root = Session.Require();
@@ -94,12 +104,14 @@ public sealed partial class MergePage : SgPage
     async Task LoadSourcesCoreAsync(SgRoot root, MergeTarget target)
     {
         var gen = ++_generation;
-        var sources = await Runner.Quiet(Pane, () => Merge.Sources(root, target));
-        if (sources == null || gen != _generation) return;
+        using var read = _reads.Begin();
+        var sources = await read.Run(Pane, () => Merge.Sources(root, target));
+        if (!read.Current || _hidden || root != Session.Root || sources == null || gen != _generation) return;
         _sources = sources;
         _binding = true;
         SourceBox.ItemsSource = _sources;
-        SourceBox.SelectedIndex = _sources.Count > 0 ? 0 : -1;
+        SourceBox.SelectedItem = _returning is { SourceUrl: { } url }
+            ? _sources.FirstOrDefault(s => s.Url == url) : _sources.FirstOrDefault();
         _binding = false;
         if (_sources.Count == 0)
         {
@@ -108,6 +120,11 @@ public sealed partial class MergePage : SgPage
             Revisions.ItemsSource = _rows;
             Diff.ShowText("", "nothing to merge from");
             SyncButtons();
+            return;
+        }
+        if (Source == null)
+        {
+            SelectionUnavailable("The previous source branch is no longer available. Choose a source to continue.");
             return;
         }
         await LoadRevisionsAsync();
@@ -124,6 +141,7 @@ public sealed partial class MergePage : SgPage
 
     async Task LoadRevisionsAsync(bool preserveOutcome = false)
     {
+        if (_hidden) return;
         _planReady = false;
         if (!preserveOutcome) ResetPreview();
         var root = Session.Require();
@@ -134,7 +152,8 @@ public sealed partial class MergePage : SgPage
         _reading = true;
         SyncButtons();
         RevisionsSkeleton.Show();
-        var read = await Runner.Quiet(Pane, () =>
+        using var request = _reads.Begin();
+        var read = await request.Run(Pane, () =>
         {
             // A merge of the root covers the externals too: the content of a monorepo lives in them.
             var pairs = Merge.Pairs(root, _co, target, source.Url);
@@ -145,7 +164,7 @@ public sealed partial class MergePage : SgPage
                 Problems = pairs.SelectMany(p => Merge.Problems(root, _co, p.Target, p.SourceUrl)).Distinct().ToList(),
             };
         });
-        if (gen != _generation) return;
+        if (!request.Current || _hidden || root != Session.Root || gen != _generation) return;
         RevisionsSkeleton.Hide();
         _reading = false;
         if (read == null) { SyncButtons(); return; }
@@ -179,6 +198,11 @@ public sealed partial class MergePage : SgPage
             : $"Revisions on {source.Name}";
         ShowProblems(read.Problems);
         ShowRevisions();
+        if (_returning is { } view)
+        {
+            _returning = null;
+            RestoreRevisions(view);
+        }
     }
 
     /// <summary>
@@ -241,17 +265,18 @@ public sealed partial class MergePage : SgPage
         // A merge that is offered before the list of revisions has arrived is a merge of everything,
         // pressed by somebody who has not seen what "everything" is yet.
         var loading = _reading || _busyDepth > 0;
-        var ready = Target != null && Source != null && _planReady && !loading && !_running;
+        var ready = Target != null && Source != null && _planReady && !loading && !_running && _missingSelection == null;
         TargetBox.IsEnabled = SourceBox.IsEnabled = RefreshButton.IsEnabled = !loading && !_running;
         Revisions.IsEnabled = _planReady && !loading && !_running;
         TestButton.IsEnabled = ready;
         // A test merge writes nothing, so it stays available even while a problem blocks the real one.
         MergeButton.IsEnabled = ready && !_blocked;
         var picked = Picked();
-        ClearPickButton.IsEnabled = ready && picked.Count > 0;
+        ClearPickButton.IsEnabled = _planReady && !loading && !_running && (picked.Count > 0 || _missingSelection != null);
+        ClearPickButton.Content = _missingSelection != null ? "Use all revisions" : "Clear selection";
         // Taking changes back out needs the revisions named: there is no "undo everything" to offer.
         TakeOutButton.IsEnabled = ready && !_blocked && picked.Count > 0;
-        var reason = loading ? "Wait for the available revisions to load." : _running ? "A merge operation is in progress." : Target == null || Source == null ? "Choose both the source and target checkout." : !_planReady ? "Refresh the available revisions before merging." : null;
+        var reason = loading ? "Wait for the available revisions to load." : _running ? "A merge operation is in progress." : Target == null || Source == null ? "Choose both the source and target checkout." : !_planReady ? "Refresh the available revisions before merging." : _missingSelection != null ? "Choose revisions again: some saved selections are no longer available." : null;
         TaskGate.SetHelp(TestButton, reason ?? "Preview the merge without writing changes.");
         TaskGate.SetHelp(MergeButton, reason ?? (_blocked ? "Resolve the problems listed above before merging." : "Merge the selected revisions into the target checkout."));
         TaskGate.SetHelp(TakeOutButton, reason ?? (_blocked ? "Resolve the problems listed above before reversing changes." : picked.Count == 0 ? "Select the revisions to reverse." : "Reverse the selected revisions in the target checkout."));
@@ -262,6 +287,7 @@ public sealed partial class MergePage : SgPage
     {
         var picked = Picked();
         if (Source == null || Target == null) { Summary.Text = ""; return; }
+        if (_missingSelection != null) { Summary.Text = "Review the missing revisions before continuing."; return; }
         // Which working copies it lands in, named, because a merge of the root is several of them.
         var where = picked.Count == 0
             ? string.Join(", ", _pairs.Select(x => x.Label))
@@ -274,12 +300,14 @@ public sealed partial class MergePage : SgPage
     async void Target_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_binding) return;
+        ForgetSelection();
         await LoadSourcesAsync();
     }
 
     async void Source_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_binding) return;
+        ForgetSelection();
         await LoadRevisionsAsync();
     }
 
@@ -299,6 +327,7 @@ public sealed partial class MergePage : SgPage
             fold.Toggle();
             return;
         }
+        ForgetSelection();
         ResetPreview();
         SyncButtons();
         ShowPickedText();
@@ -306,7 +335,9 @@ public sealed partial class MergePage : SgPage
 
     void ClearPick_Click(object sender, RoutedEventArgs e)
     {
+        ForgetSelection();
         Revisions.SelectedItems.Clear();
+        ResetPreview();
         SyncButtons();
         ShowPickedText();
     }
@@ -344,7 +375,7 @@ public sealed partial class MergePage : SgPage
         var root = Session.Require();
         var target = Target;
         var source = Source;
-        if (target == null || source == null || _running || _reading || _busyDepth > 0 || !_planReady) return;
+        if (_hidden || target == null || source == null || _running || _reading || _busyDepth > 0 || !_planReady || _missingSelection != null) return;
         _running = true;
         SyncButtons();
         try { await RunCoreAsync(root, target, source, dryRun, reverse); }

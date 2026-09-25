@@ -6,7 +6,10 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Above both states: a commit that just went through empties the page, and its result must outlive that. -->
-        <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+        <StackPanel Spacing="8" Margin="0,0,0,8">
+            <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" />
+            <InfoBar x:Name="DraftNotice" Severity="Warning" IsClosable="True" IsOpen="False" />
+        </StackPanel>
 
         <!-- A clean worktree has no list to pick from, no diff to read and no message to write, so none of
              that is on screen: the page is the one sentence, and the two buttons that still mean something. -->
@@ -32,7 +35,7 @@
                     <InfoBar.ActionButton><Button Content="Cancel amend" Click="CancelAmend_Click" /></InfoBar.ActionButton>
                 </InfoBar>
                 <SelectorBar x:Name="CompactViews" Visibility="Collapsed" AutomationProperties.Name="Review view">
-                    <SelectorBarItem x:Name="ChangesTab" Text="Changes" IsSelected="True">
+                    <SelectorBarItem x:Name="ChangesTab" Text="Changes">
                         <SelectorBarItem.Icon><FontIcon Glyph="&#xE8FD;" /></SelectorBarItem.Icon>
                     </SelectorBarItem>
                     <SelectorBarItem x:Name="DiffTab" Text="Diff">

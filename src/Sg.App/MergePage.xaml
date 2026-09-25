@@ -6,7 +6,10 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- A merge that landed sends the user on to the checkout changes, and its result outlives the reload. -->
-        <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
+        <StackPanel Spacing="8" Margin="0,0,0,8">
+            <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" />
+            <InfoBar x:Name="SelectionNotice" Severity="Warning" IsClosable="False" IsOpen="False" />
+        </StackPanel>
 
         <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="8">
             <!-- Runs from the first server call. Before it, the two round trips that fill the two combo
@@ -30,7 +33,7 @@
             <InfoBar x:Name="ProblemBar" Grid.Row="1" Severity="Warning" IsClosable="False" IsOpen="False" Margin="0,0,0,8" />
 
             <SelectorBar x:Name="CompactViews" Grid.Row="2" Visibility="Collapsed" AutomationProperties.Name="Review view">
-                <SelectorBarItem x:Name="RevisionsTab" Text="Revisions" IsSelected="True">
+                <SelectorBarItem x:Name="RevisionsTab" Text="Revisions">
                     <SelectorBarItem.Icon><FontIcon Glyph="&#xE81C;" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
                 <SelectorBarItem x:Name="PreviewTab" Text="Preview">
@@ -87,13 +90,17 @@
                 <local:ActionHint><local:IconButton x:Name="TestButton" Glyph="&#xE9D9;" Text="Preview merge" Click="Test_Click" IsEnabled="False"
                                   ToolTipService.ToolTip="Run the merge without writing anything, and list what it would change." /></local:ActionHint>
                 <local:IconButton x:Name="RefreshButton" Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the branches and their revisions again. F5 does the same." />
-                <local:IconButton x:Name="AdvancedButton" Glyph="&#xE712;" Text="Advanced" ToolTipService.ToolTip="Reverse selected revisions in the checkout.">
+                <local:IconButton x:Name="AdvancedButton" Glyph="&#xE712;" Text="Advanced" ToolTipService.ToolTip="Inspect checkout changes or reverse selected revisions.">
                     <Button.Flyout>
                         <Flyout x:Name="AdvancedFlyout" Placement="TopEdgeAlignedLeft">
-                            <local:TaskGate>
-                                <local:IconButton x:Name="TakeOutButton" Glyph="&#xE7A7;" Text="Take back out…" Click="TakeOut_Click" IsEnabled="False"
-                                                  ToolTipService.ToolTip="Reverse the selected revisions as local checkout changes. Asks before applying." />
-                            </local:TaskGate>
+                            <StackPanel Spacing="8">
+                                <local:TaskGate>
+                                    <local:IconButton x:Name="TakeOutButton" Glyph="&#xE7A7;" Text="Take back out…" Click="TakeOut_Click" IsEnabled="False"
+                                                      ToolTipService.ToolTip="Reverse the selected revisions as local checkout changes. Asks before applying." />
+                                </local:TaskGate>
+                                <local:IconButton x:Name="CheckoutChangesButton" Glyph="&#xE8A5;" Text="Checkout changes" Click="CheckoutChanges_Click"
+                                                  ToolTipService.ToolTip="Review local checkout edits. Your merge selection is kept when you return." />
+                            </StackPanel>
                         </Flyout>
                     </Button.Flyout>
                 </local:IconButton>

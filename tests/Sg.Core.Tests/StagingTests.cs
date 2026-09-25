@@ -220,12 +220,15 @@ public sealed class StagingTests : IDisposable
         var first = _git.HeadSummary(_dir);
         Assert.Equal("first", first.Message);
         Assert.False(first.HasParent);
+        Assert.Equal(_git.HeadSha(_dir), first.Sha);
 
         Write("f.txt", Edited);
         _git.CommitPathsAsUser(_dir, new[] { "f.txt" }, Array.Empty<string>(), "second");
         var second = _git.HeadSummary(_dir);
         Assert.Equal("second", second.Message);
         Assert.True(second.HasParent);
+        Assert.Equal(_git.HeadSha(_dir), second.Sha);
+        Assert.NotEqual(first.Sha, second.Sha);
     }
 
     [Fact]

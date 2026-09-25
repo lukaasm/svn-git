@@ -14,6 +14,19 @@ internal sealed class ReviewLayout
     bool _compact, _showDetail;
     double _wideLeft;
 
+    internal sealed record ViewState(bool Details, double ListWidth);
+    public ViewState Capture() => new(_showDetail,
+        !_compact && _body.ColumnDefinitions[0].Width.IsAbsolute ? _body.ColumnDefinitions[0].Width.Value : _wideLeft);
+    public void Restore(ViewState state)
+    {
+        _showDetail = state.Details;
+        _wideLeft = state.ListWidth;
+        // Restore selection before first layout; its initial SelectionChanged must not reset the tab.
+        _views.SelectedItem = _views.Items[_showDetail ? 1 : 0];
+        if (!_compact) _body.ColumnDefinitions[0].Width = new GridLength(_wideLeft);
+        Arrange();
+    }
+
     public ReviewLayout(FrameworkElement page, Grid body, FrameworkElement list, FrameworkElement detail,
         Thumb splitter, SelectorBar views)
     {

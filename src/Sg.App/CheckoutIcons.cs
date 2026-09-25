@@ -13,7 +13,7 @@ namespace Sg.App;
 /// <summary>Checkout identity uses the same theme palette as usernames, in both sidebar sizes and headers.</summary>
 internal static class CheckoutIcons
 {
-    internal const double Size = 32;
+    internal const double Size = 24;
     sealed record Identity(string? Store, string Name, string? Image);
     static Identity IdentityOf(CheckoutConfig checkout) => new(Session.Root?.StorePath, checkout.Name, checkout.Icon);
     internal static bool Matches(IconElement? icon, CheckoutConfig checkout) => Equals(icon?.Tag, IdentityOf(checkout));
@@ -33,7 +33,7 @@ internal static class CheckoutIcons
     static FontIcon Create(string name, object? identity, string? path, byte[]? png)
     {
         var icon = new FontIcon { Glyph = IdentityColor.Initials(name), FontFamily = new FontFamily("Segoe UI"),
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 14, Width = Size, Height = Size, Tag = identity };
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 11, Width = Size, Height = Size, Tag = identity };
         CompositionColorBrush? stroke = null;
         ContainerVisual? visual = null;
         LoadedImageSurface? surface = null;
@@ -63,7 +63,7 @@ internal static class CheckoutIcons
             // Keep a folder silhouette in both NavigationView modes; initials sit inside its body.
             var outline = compositor.CreateShapeVisual();
             outline.Size = new Vector2((float)Size, (float)Size);
-            Vector2[] corners = [new(1, 31), new(1, 2), new(10, 2), new(14, 6), new(31, 6), new(31, 31), new(1, 31)];
+            Vector2[] corners = [new(2, 21), new(2, 4), new(8, 4), new(11, 7), new(22, 7), new(22, 21), new(2, 21)];
             for (var i = 1; i < corners.Length; i++)
             {
                 var line = compositor.CreateLineGeometry();
@@ -88,14 +88,15 @@ internal static class CheckoutIcons
                 {
                     if (surface != loading || visual == null || args.Status != LoadedImageSourceLoadStatus.Success) return;
                     var image = compositor.CreateSpriteVisual();
-                    image.Size = new Vector2(26, 24);
-                    image.Offset = new Vector3(3, 6.5f, 0);
+                    image.Size = new Vector2((float)Size, (float)Size);
                     var brush = compositor.CreateSurfaceBrush(loading);
                     brush.Stretch = CompositionStretch.Uniform;
                     image.Brush = brush;
-                    visual.Children.InsertAtBottom(image);
+                    // A custom image is the identity itself; reserve the folder for the initials fallback.
+                    visual.Children.RemoveAll();
+                    visual.Children.InsertAtTop(image);
                     icon.Glyph = "";
-                    AutomationProperties.SetHelpText(icon, "Folder with a custom checkout image");
+                    AutomationProperties.SetHelpText(icon, "Custom checkout image");
                 };
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)

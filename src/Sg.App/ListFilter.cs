@@ -49,6 +49,19 @@ public sealed class ListFilter
     public event Action? Changed;
     public int ShownCount { get; private set; }
 
+    internal sealed record ViewState(string Query, string? Selected, string[] Collapsed);
+    internal ViewState CaptureView() => new(_box.Text, _picked?.FullPath,
+        Walk(_roots).Where(n => !n.IsExpanded).Select(n => n.FullPath).ToArray());
+    internal void RestoreView(ViewState state)
+    {
+        _box.Text = state.Query;
+        _debounce.Stop();
+        Apply(restore: state);
+        var selected = _picked;
+        _picked = null;
+        Pick(selected);
+    }
+
     public ListFilter(TextBox box, ListView list, TextBlock header, Func<object, string> textOf, Func<object, string>? groupOf = null)
     {
         _box = box;
@@ -216,10 +229,11 @@ public sealed class ListFilter
         if (lost) _list.SelectedItem = node;
     }
 
-    void Apply(bool preserveView = false)
+    void Apply(bool preserveView = false, ViewState? restore = null)
     {
-        var selected = preserveView ? _picked?.FullPath : null;
-        var collapsed = preserveView ? Walk(_roots).Where(n => !n.IsExpanded).Select(n => n.FullPath).ToHashSet(StringComparer.Ordinal) : [];
+        var selected = restore?.Selected ?? (preserveView ? _picked?.FullPath : null);
+        var collapsed = restore?.Collapsed.ToHashSet(StringComparer.Ordinal)
+            ?? (preserveView ? Walk(_roots).Where(n => !n.IsExpanded).Select(n => n.FullPath).ToHashSet(StringComparer.Ordinal) : []);
         var query = _box.Text.Trim();
         var shown = query.Length == 0
             ? _all

@@ -66,11 +66,13 @@ function Assert-CheckoutIcon([string]$name, $within = $null) {
     $icon = Find ('CheckoutIcon_' + $name) -within $item
     $dpi = [DialogAccessibility]::GetDpiForWindow($process.MainWindowHandle)
     if ($dpi -eq 0) { throw 'Could not read the test window display scale.' }
-    $minimum = 32 * $dpi / 96 - 1
+    $minimum = 24 * $dpi / 96 - 1
+    $maximum = 24 * $dpi / 96 + 1
     $bounds = $icon.Current.BoundingRectangle; $row = $item.Current.BoundingRectangle
     if ($icon.Current.IsOffscreen -or $bounds.Width -lt $minimum -or $bounds.Height -lt $minimum) {
         throw "Checkout identity was scaled down: $name ($bounds); expected at least $minimum px."
     }
+    if ($bounds.Width -gt $maximum -or $bounds.Height -gt $maximum) { throw "Checkout identity exceeds the compact size: $name ($bounds)." }
     if ($bounds.Left -lt $row.Left -or $bounds.Right -gt $row.Right -or $bounds.Top -lt $row.Top -or $bounds.Bottom -gt $row.Bottom) {
         throw "Checkout identity is clipped by its row: $name ($bounds) in $row."
     }
@@ -81,7 +83,7 @@ function Select-Destination([string]$name) {
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     $null = Wait-For { Find 'NameBox' }
 }
-function Assert-AppearancePreview([string]$currentHelp, [string]$note, [string]$savedHelp = 'Folder with a custom checkout image') {
+function Assert-AppearancePreview([string]$currentHelp, [string]$note, [string]$savedHelp = 'Custom checkout image') {
     $null = Wait-For { (Find 'CurrentAppearanceIcon').Current.HelpText -eq $currentHelp }
     $null = Wait-For { (Find 'SavedAppearanceIcon').Current.HelpText -eq $savedHelp }
     $null = Wait-For { (Find 'AppearanceNote').Current.Name -eq $note }
@@ -223,7 +225,7 @@ try {
     if (!(Test-Path -LiteralPath $source) -or !(Test-Path -LiteralPath $asset)) { throw 'The source or the stored image is missing.' }
     $stored = [Drawing.Image]::FromFile($asset)
     try { if ($stored.Width -ne 128 -or $stored.Height -ne 64) { throw 'The normalized image lost its aspect ratio.' } } finally { $stored.Dispose() }
-    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
+    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Custom checkout image' }
     if ((Read-Config).checkouts[1].icon) { throw 'The image changed another checkout.' }
     Assert-CheckoutIcon 'Fort' -within (Find 'IconCard')
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'custom-settings.png')
@@ -252,7 +254,7 @@ try {
     $asset = Join-Path $root ('.sg/icons/' + $saved)
     $stored = [Drawing.Image]::FromFile($asset)
     try { if ($stored.Width -gt 128 -or $stored.Height -gt 128) { throw 'The legacy icon was not bounded.' } } finally { $stored.Dispose() }
-    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
+    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Custom checkout image' }
     Complete-UiScenario
 
     Start-UiScenario 'ICO uses the largest image and preserves transparency in its portable copy'
@@ -281,7 +283,7 @@ try {
     Invoke-Control (Wait-For { Find 'CloseButton' })
     if ((Read-Config).checkouts[0].icon -ne $saved -or !(Test-Path -LiteralPath $asset)) { throw 'An invalid ICO changed the saved image.' }
     Select-Checkout 'Fort'
-    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
+    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Custom checkout image' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'ico-navigation.png')
     Complete-UiScenario
 
@@ -310,7 +312,7 @@ try {
     $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $root + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For { Get-TestAppWindow $process }
     Select-Checkout 'Fort'
-    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with a custom checkout image' }
+    $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Custom checkout image' }
     Complete-UiScenario
 
     Start-UiScenario 'A missing managed image falls back to initials'
@@ -353,8 +355,8 @@ try {
     }
     Invoke-Control (Wait-For { Find 'PrimaryButton' })
     $null = Wait-For { (Read-Config).checkouts[1].icon -eq $saved }
-    $null = Wait-For { (Find 'CheckoutIcon_Dashboard').Current.HelpText -eq 'Folder with a custom checkout image' }
-    Assert-AppearancePreview 'Folder with a custom checkout image' 'Checkout appearance restored.'
+    $null = Wait-For { (Find 'CheckoutIcon_Dashboard').Current.HelpText -eq 'Custom checkout image' }
+    Assert-AppearancePreview 'Custom checkout image' 'Checkout appearance restored.'
     if ((Read-Config).checkouts[0].icon -ne '') { throw 'Restoring changed the source checkout initials choice.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'restored-appearance.png')
     Complete-UiScenario
@@ -373,7 +375,7 @@ try {
         Pick-File $export -Button (Wait-For { Find 'Import' -Name })
         $null = Wait-For { Find 'IntoBox' }
         Select-Destination 'Dashboard'
-        Assert-AppearancePreview 'Folder with a custom checkout image' 'Your existing checkout appearance will be kept.'
+        Assert-AppearancePreview 'Custom checkout image' 'Your existing checkout appearance will be kept.'
         Select-Destination $target
         $branch = 'imported-' + $target.ToLowerInvariant()
         Enter-Value (Wait-For { Find 'NameBox' }) $branch
@@ -401,8 +403,8 @@ try {
         $choice = ((Read-Config).checkouts | Where-Object name -eq $target).icon
         if ($apply) {
             if ($choice -ne $saved) { throw 'Import did not restore the saved image.' }
-            $null = Wait-For { (Find ('CheckoutIcon_' + $target)).Current.HelpText -eq 'Folder with a custom checkout image' }
-            Assert-AppearancePreview 'Folder with a custom checkout image' 'Checkout appearance restored.'
+            $null = Wait-For { (Find ('CheckoutIcon_' + $target)).Current.HelpText -eq 'Custom checkout image' }
+            Assert-AppearancePreview 'Custom checkout image' 'Checkout appearance restored.'
         } else {
             if ($choice -ne '') { throw 'Import replaced the local initials choice.' }
             $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with FO initials' }
@@ -418,9 +420,9 @@ try {
     Pick-File $initialsExport -Button (Find 'PickButton')
     $null = Wait-For { Find 'IntoBox' }
     Select-Destination 'Tools'
-    Assert-AppearancePreview 'Folder with a custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with TO initials'
+    Assert-AppearancePreview 'Custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with TO initials'
     Select-Destination 'Dashboard'
-    Assert-AppearancePreview 'Folder with a custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with DA initials'
+    Assert-AppearancePreview 'Custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with DA initials'
     if ((Read-Config).checkouts[1].icon -ne $saved) { throw 'Previewing initials changed the destination image.' }
     Enter-Value (Find 'NameBox') ''
     (Find 'ActivityItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
@@ -430,7 +432,7 @@ try {
     if ((Find 'FilePath').Current.Name -ne $initialsExport) { throw 'Navigation restored the original export instead of the newly chosen file.' }
     if ((Find 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'An empty import draft was overwritten.' }
     if ((Find 'ImportButton').Current.IsEnabled) { throw 'An empty import branch permits submission.' }
-    Assert-AppearancePreview 'Folder with a custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with DA initials'
+    Assert-AppearancePreview 'Custom checkout image' 'Your existing checkout appearance will be kept.' 'Folder with DA initials'
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'initials-preview.png')
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }

@@ -997,13 +997,13 @@ public sealed class Git
         return new StatusSnapshot(branch, res);
     }
 
-    /// <summary>The parents and the whole message of HEAD, from one git process instead of two.</summary>
+    /// <summary>The identity, parents and whole message of HEAD in one read.</summary>
     public HeadSummary HeadSummary(string worktree)
     {
-        var r = Run(worktree, "log", "-1", "--format=%P%x1f%B", "HEAD");
+        var r = Run(worktree, "log", "-1", "--format=%H%x1f%P%x1f%B", "HEAD");
         if (!r.Ok) return new HeadSummary("", "");
-        var p = r.StdOut.Split('\x1f', 2);
-        return new HeadSummary(p[0].Trim(), p.Length > 1 ? p[1].TrimEnd() : "");
+        var p = r.StdOut.Split('\x1f', 3);
+        return new HeadSummary(p.Length > 1 ? p[1].Trim() : "", p.Length > 2 ? p[2].TrimEnd() : "") { Sha = p[0].Trim() };
     }
 
     /// <summary>
@@ -1558,9 +1558,10 @@ public sealed record Author(string Name, string Email, string Date);
 /// <summary>The status of a worktree and the branch it is on, read together. Branch is null on a detached HEAD.</summary>
 public sealed record StatusSnapshot(string? Branch, List<StatusEntry> Entries);
 
-/// <summary>What HEAD is, in the two facts a commit window asks for: whether it has a parent, and its message.</summary>
+/// <summary>The current commit's identity, parents and message.</summary>
 public sealed record HeadSummary(string Parents, string Message)
 {
+    public string Sha { get; init; } = "";
     /// <summary>Replacing it would leave a commit behind. The store's root commit would not.</summary>
     public bool HasParent => Parents.Length > 0;
 }

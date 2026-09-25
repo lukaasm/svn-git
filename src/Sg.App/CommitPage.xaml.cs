@@ -56,7 +56,7 @@ public sealed partial class CommitPage : SgPage
         Diff.DirtyChanged += SyncBlockButtons;
         Diff.ActionInvoked += OnDiffAction;
         SyncCommitButton();
-        _ = LoadAsync();
+        Unloaded += (_, _) => OnHidden();
     }
 
     /// <summary>The two halves of a part staged file, as a pair of buttons in the diff's own header.</summary>
@@ -124,33 +124,53 @@ public sealed partial class CommitPage : SgPage
     /// <summary>reselect keeps one file open across a reload, for example after a block of it was staged.</summary>
     async Task LoadAsync(string? reselect = null)
     {
+        if (_hidden) return;
+        ClearPublishedDraft();
+        if (_hasStatus) _returning ??= CaptureViewState() as ViewState;
+        _reading = true;
+        Amend.IsEnabled = false;
+        Files.IsEnabled = false;
+        SyncCommitButton();
+        using var request = _reads.Begin();
         var root = Session.Require();
         Session.Log.Sink = Pane;
         var gen = ++_generation;
         if (_filter.Count == 0) FilesSkeleton.Show();
         // The status walk is the slow one on a worktree this size, and reading HEAD used to queue behind
         // it. Two processes side by side, and the status brings the branch name back with it.
-        var data = await Runner.Quiet(Pane, () =>
+        var data = await request.Run(Pane, () =>
         {
             var (s, h) = Fan.Two(() => root.Git.Status(_worktree), () => root.Git.HeadSummary(_worktree));
             return new { Status = s, Head = h };
         });
+        if (!request.Current || _hidden || root != Session.Root || gen != _generation) return;
         FilesSkeleton.Hide();
-        if (data == null || gen != _generation) return;
+        if (data == null) return;
+        var view = _returning == null ? null : CaptureViewState() as ViewState;
+        _reading = false;
+        Files.IsEnabled = true;
         var (status, head) = (data.Status, data.Head);
         var branch = status.Branch ?? "(detached)";
         Branch ??= branch;
         Subtitle = $"{branch}   {_worktree}";
         _lastMessage = head.Message;
+        _head = head.Sha;
         Amend.IsEnabled = head.HasParent;
         ActionHint.SetHelp(Amend, head.HasParent ? "Replace the last local commit instead of creating a new one."
             : "There is no local commit to amend yet.");
         AmendFromEmpty.Visibility = head.HasParent ? Visibility.Visible : Visibility.Collapsed;
+        if (view is { Amend: true } && view.Head != head.Sha)
+        {
+            Amend.IsChecked = false;
+            DraftNotice.Message = "The last commit changed while you were away. Your message is kept, and Amend is off. Review the new commit before enabling it again.";
+            DraftNotice.IsOpen = true;
+        }
         if (!head.HasParent) Amend.IsChecked = false;
+        SyncMessageMode();
         _rows = status.Entries.Select(e => new ChangeRow
         {
             Entry = e,
-            Checked = e.Tracked,
+            Checked = view == null ? e.Tracked : view.Checked.GetValueOrDefault(e.Path),
             Display = $"{e.BothCodes}  {e.Path}" + (e.OldPath != null ? $"  (was {e.OldPath})" : ""),
         }).ToList();
         // Not during All and None: the summary walks every row, counts them and re-cleans the message, and
@@ -158,12 +178,16 @@ public sealed partial class CommitPage : SgPage
         // with the one call that all of them stood in for.
         foreach (var r in _rows) r.PropertyChanged += (_, a) => { if (!_bulk && a.PropertyName == nameof(ChangeRow.Checked)) SyncCommitButton(); };
         _filter.SetItems(_rows, "Changes");
+        _hasStatus = true;
+        _returning = null;
         SyncEmptyState();
         SyncCommitButton();
         _ = ShelfActions.ShowCountAsync(ShelfButton, CleanShelfButton, null, Branch, () => gen == _generation);
+        if (view != null) _filter.RestoreView(view.Files);
         if (reselect != null)
             _filter.Select(r => ((ChangeRow)r).Entry.Path.Equals(reselect, StringComparison.OrdinalIgnoreCase));
         else if (_autoSelect && !_filter.HasPick) _filter.SelectFirstFile();
+        if (view != null) _layout.Restore(view.Layout);
         if (_rows.Count == 0) { Clear(); Diff.ShowText("", "no changes"); return; }
 
         // The numbers beside each row come from a read of counts alone, and nothing waits for them:
@@ -177,14 +201,16 @@ public sealed partial class CommitPage : SgPage
         const string title = "all tracked changes against HEAD, unified. Untracked files are not in it.";
         Clear();
         Diff.BeginLoading(title);
-        var patch = await Task.Run(() => root.Git.UnifiedDiff(_worktree, "HEAD", null));
-        if (gen == _generation && !_filter.HasPick) Diff.ShowUnified(patch, title);
+        var patch = await request.Run(Pane, () => root.Git.UnifiedDiff(_worktree, "HEAD", null));
+        if (patch != null && request.Current && !_hidden && gen == _generation && !_filter.HasPick) Diff.ShowUnified(patch, title);
     }
 
     async Task ShowCountsAsync(int gen)
     {
-        var counts = await Task.Run(() => Session.Require().Git.NumStat(_worktree, "HEAD"));
-        if (gen == _generation) _filter.SetStats(counts);
+        using var request = _countReads.Begin();
+        var root = Session.Require();
+        var counts = await request.Run(Pane, () => root.Git.NumStat(_worktree, "HEAD"));
+        if (counts != null && request.Current && !_hidden && gen == _generation) _filter.SetStats(counts);
     }
 
     string _lastMessage = "";
@@ -202,6 +228,7 @@ public sealed partial class CommitPage : SgPage
 
     async void OnPicked(TreeNode node)
     {
+        if (_hidden) return;
         _layout.ShowDetails();
         if (node.Row is ChangeRow row) { await ShowFileAsync(row, node); return; }
 
@@ -211,7 +238,7 @@ public sealed partial class CommitPage : SgPage
         var title = $"{folder}   {node.FileCount} file(s), HEAD → working tree, unified. Untracked files are not in it.";
         Diff.BeginLoading(title);
         var patch = await Task.Run(() => Session.Require().Git.UnifiedDiff(_worktree, "HEAD", null, folder));
-        if (_filter.IsCurrent(node)) Diff.ShowUnified(patch, title);
+        if (!_hidden && _filter.IsCurrent(node)) Diff.ShowUnified(patch, title);
     }
 
     int _diffRequest;
@@ -422,9 +449,10 @@ public sealed partial class CommitPage : SgPage
     {
         var picked = Checked();
         var amending = Amend.IsChecked == true;
-        var ready = picked.Count > 0 || amending;
+        var ready = !_reading && (picked.Count > 0 || amending);
+        AllButton.IsEnabled = NoneButton.IsEnabled = !_reading;
         CommitButton.IsEnabled = ready;
-        ActionHint.SetHelp(CommitButton, ready ? "Review the commit message and save the selected changes locally."
+        ActionHint.SetHelp(CommitButton, _reading ? "Wait for the current changes to load." : ready ? "Review the commit message and save the selected changes locally."
             : _rows.Count == 0 ? "There are no local changes to commit. Enable Amend to edit the last commit." : "Select at least one changed file to commit.");
         Message.Ready = ready;
         SetAction(StageButton, picked.Count > 0, "Put the checked files in the staging area.");
@@ -441,10 +469,10 @@ public sealed partial class CommitPage : SgPage
             : $"{_rows.Count} change(s), untracked files are unchecked."
               + (partly == 0 ? "" : $"  {partly} of them {(partly == 1 ? "goes" : "go")} in as staged only.");
 
-        static void SetAction(IconButton button, bool enabled, string help, string disabled = "Check at least one changed file first.")
+        void SetAction(IconButton button, bool enabled, string help, string disabled = "Check at least one changed file first.")
         {
-            button.IsEnabled = enabled;
-            ActionHint.SetHelp(button, enabled ? help : disabled);
+            button.IsEnabled = enabled && !_reading;
+            ActionHint.SetHelp(button, _reading ? "Wait for the current changes to load." : enabled ? help : disabled);
         }
     }
 
@@ -472,8 +500,8 @@ public sealed partial class CommitPage : SgPage
         // The message of the commit being replaced starts the new one, the way git commit --amend does.
         if (Amend.IsChecked == true && Message.Text.Trim().Length == 0) Message.Text = _lastMessage;
         else if (Amend.IsChecked != true && Message.Text.TrimEnd() == _lastMessage.TrimEnd()) Message.Text = "";
-        Message.Title = Amend.IsChecked == true ? "Amend the last commit" : "Commit";
-        Message.PrimaryButtonText = Amend.IsChecked == true ? "Amend" : "Commit";
+        SyncMessageMode();
+        DraftNotice.IsOpen = false;
         SyncCommitButton();
         // Unticking it on a clean worktree used to leave the page filled with nothing: an empty file card,
         // a diff saying "no changes" and a dead Commit button, with no way back to the one sentence.
@@ -490,7 +518,10 @@ public sealed partial class CommitPage : SgPage
 
     async Task CommitAsync()
     {
+        if (_reading || _hidden) return;
+        ClearPublishedDraft();
         var amending = Amend.IsChecked == true;
+        var amendHead = _head;
         Message.Confirm = amending
             ? () => "This replaces the last commit on " + Branch + ". Do it only if nobody has it yet. Continue?"
             : null;
@@ -510,7 +541,12 @@ public sealed partial class CommitPage : SgPage
         {
             ResultBar.IsOpen = false;
             var sha = await Runner.Run(Pane, amending ? "amend" : "commit",
-                () => root.Git.CommitPathsAsUser(_worktree, paths, staged, msg, amending));
+                () =>
+                {
+                    if (amending && root.Git.HeadSha(_worktree) != amendHead)
+                        throw new SgException("The last commit changed. Refresh and review it before amending.");
+                    return root.Git.CommitPathsAsUser(_worktree, paths, staged, msg, amending);
+                });
             if (sha != null)
             {
                 MessageDialog.Remember(msg);
@@ -521,6 +557,8 @@ public sealed partial class CommitPage : SgPage
                 ResultBar.IsOpen = true;
                 Message.Text = "";
                 Amend.IsChecked = false;
+                _draftVersion = ++_published.Version;
+                SetAll(false);
                 Message.Title = "Commit";
                 Message.PrimaryButtonText = "Commit";
             }

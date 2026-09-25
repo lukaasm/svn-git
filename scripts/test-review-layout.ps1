@@ -1,10 +1,12 @@
 # Native UI Automation on a private desktop, with disposable Git and SVN repositories.
-param([switch]$Worker, [string]$ArtifactDirectory)
+param([switch]$Worker, [string]$ArtifactDirectory, [switch]$NavigationOnly,
+    [ValidateSet('All', 'Commit', 'Merge')][string]$NavigationScope = 'All')
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
     if (!('UiTestDesktop' -as [type])) { Add-Type -Path "$PSScriptRoot/UiTestDesktop.cs" }
     $ArtifactDirectory = (New-Item -ItemType Directory -Path "$PSScriptRoot/../TestResults/UI/review-layout-$([Guid]::NewGuid().ToString('N'))").FullName
     $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Worker -ArtifactDirectory '" + $ArtifactDirectory.Replace("'", "''") + "'"
+    if ($NavigationOnly) { $command += " -NavigationOnly -NavigationScope $NavigationScope" }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-review-layout-' + [Guid]::NewGuid().ToString('N')))
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(240)
@@ -39,13 +41,19 @@ function Find([string]$id, [switch]$Name, $within = $window) {
 }
 function Wait-For([scriptblock]$read, [string]$message = 'Review UI assertion timed out.') {
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
-    do { $value = & $read; if ($value) { return $value }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline)
+    do {
+        try { $value = & $read; if ($value) { return $value } }
+        catch [System.Windows.Automation.ElementNotAvailableException] { } # Navigation replaces native subtrees.
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
     throw $message
 }
 function Invoke-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Select-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() }
 function Row([string]$list, [string]$match) {
-    (Find $list).FindAll([System.Windows.Automation.TreeScope]::Children,
+    $control = Find $list
+    if (!$control) { return }
+    $control.FindAll([System.Windows.Automation.TreeScope]::Children,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)) |
         Where-Object { $_.Current.Name -like $match } | Select-Object -First 1
 }
@@ -57,10 +65,16 @@ function Assert-Fits([string]$id) {
 function Assert-Disabled([string]$id, [string]$reason) {
     $control = Wait-For { Find $id }
     if ($control.Current.IsEnabled -or $control.Current.HelpText -notlike $reason) { throw "Missing disabled reason on $id : $($control.Current.HelpText)" }
-    $hint = Find "DisabledHint_$id"
-    if (!$hint -or !$hint.Current.IsKeyboardFocusable -or $hint.Current.HelpText -notlike $reason) { throw "Disabled $id does not expose keyboard help." }
+    $null = Wait-For {
+        $hint = Find "DisabledHint_$id"
+        $hint -and $hint.Current.IsKeyboardFocusable -and $hint.Current.HelpText -like $reason
+    } "Disabled $id does not expose keyboard help."
 }
-function Close-Dialog { Invoke-Control (Find 'CloseButton'); $null = Wait-For { !(Find 'CloseButton') } }
+function Close-Dialog {
+    # InfoBars also expose CloseButton; the message dialog's action is specifically Cancel.
+    Invoke-Control (Wait-For { Find 'Cancel' -Name })
+    $null = Wait-For { !(Find 'Cancel' -Name) }
+}
 function Message-Box {
     $header = Find 'Commit message' -Name
     if (!$header) { return }
@@ -113,6 +127,12 @@ try {
     [IO.File]::WriteAllText((Join-Path $worktree 'untracked.txt'), "Untracked content`n")
     $checkout = (Get-Content -LiteralPath (Join-Path $fixture '.sg/sg.json') -Raw | ConvertFrom-Json).checkouts[0].path
     $checkoutBefore = (& svn status $checkout) -join "`n"
+
+    if ($NavigationOnly) {
+        . "$PSScriptRoot/review-navigation-cases.ps1"
+        Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
+        return
+    }
 
     Start-UiScenario 'Compact Commit exposes common actions and preserves the file selection across views'
     Launch 'commit' $worktree

@@ -89,11 +89,11 @@ try {
 
     Start-UiScenario 'Disabled checkout actions expose reasons and a keyboard tooltip'
     Invoke-Control (Find 'AddCheckoutButton')
-    $button = Wait-For { $b = Find 'Add the checkout' -Name; if ($b -and $b.Current.HelpText -eq 'Choose an SVN working-copy folder.') { $b } }
+    $button = Wait-For { $b = Find 'Add the checkout' -Name; if ($b -and $b.Current.HelpText -eq 'Choose an SVN working copy or a git clone.') { $b } }
     $hint = Find 'DisabledHint_AddButton'
     if (!$hint.Current.IsKeyboardFocusable) { throw 'Disabled action explanation is not keyboard accessible.' }
     $hint.SetFocus()
-    $null = Wait-For { Find 'Choose an SVN working-copy folder.' -Name }
+    $null = Wait-For { Find 'Choose an SVN working copy or a git clone.' -Name }
     Complete-UiScenario
 
     Start-UiScenario 'Rapid folder edits keep validation current and leave navigation responsive'

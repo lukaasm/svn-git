@@ -43,8 +43,6 @@ internal static class CheckoutIcons
 
     static FontIcon Create(string name, object? identity, string? path, byte[]? png, CheckoutKind? kind)
     {
-        // The server in words, after the rest of the help text and the tooltip. Empty when none is known.
-        var server = kind is { } known ? ", " + KindText(known) : "";
         var icon = new FontIcon { Glyph = IdentityColor.Initials(name), FontFamily = new FontFamily("Segoe UI"),
             FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = 11, Width = Size, Height = Size, Tag = identity };
         CompositionColorBrush? stroke = null;
@@ -68,7 +66,7 @@ internal static class CheckoutIcons
         {
             Unload();
             icon.Glyph = IdentityColor.Initials(name);
-            AutomationProperties.SetHelpText(icon, "Folder with " + IdentityColor.Initials(name) + " initials" + server);
+            AutomationProperties.SetHelpText(icon, "Folder with " + IdentityColor.Initials(name) + " initials");
             var compositor = ElementCompositionPreview.GetElementVisual(icon).Compositor;
             visual = compositor.CreateContainerVisual();
             stroke = compositor.CreateColorBrush();
@@ -112,7 +110,7 @@ internal static class CheckoutIcons
                     visual.Children.InsertAtTop(image);
                     if (kind != null) visual.Children.InsertAtTop(Badge(compositor, kind.Value));
                     icon.Glyph = "";
-                    AutomationProperties.SetHelpText(icon, "Custom checkout image" + server);
+                    AutomationProperties.SetHelpText(icon, "Custom checkout image");
                 };
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
@@ -122,8 +120,14 @@ internal static class CheckoutIcons
         icon.ActualThemeChanged += (_, _) => Paint();
         AutomationProperties.SetName(icon, name + " checkout");
         AutomationProperties.SetAutomationId(icon, "CheckoutIcon_" + name);
-        AutomationProperties.SetHelpText(icon, "Folder with " + IdentityColor.Initials(name) + " initials" + server);
-        ToolTipService.SetToolTip(icon, kind is { } k ? name + "\n" + KindText(k) : name);
+        AutomationProperties.SetHelpText(icon, "Folder with " + IdentityColor.Initials(name) + " initials");
+        // The server mark in words: the help text says what the icon shows, this says which server it speaks.
+        if (kind is { } k)
+        {
+            AutomationProperties.SetFullDescription(icon, KindText(k));
+            ToolTipService.SetToolTip(icon, name + "\n" + KindText(k));
+        }
+        else ToolTipService.SetToolTip(icon, name);
         Paint();
         return icon;
     }

@@ -327,7 +327,8 @@ try {
     Start-UiScenario 'Reset restores initials without applying an unsaved checkout rename'
     Edit-Checkout
     Enter-Value (Find 'NameBox') 'Dashboard'
-    Invoke-Control (Find 'ResetIconButton')
+    # A task gate holds the button while any task owns the root; a click then does nothing.
+    Invoke-Control (Wait-For { $b = Find 'ResetIconButton'; if ($b -and $b.Current.IsEnabled) { $b } })
     $null = Wait-For { !(Read-Config).checkouts[0].icon }
     if ((Read-Config).checkouts[0].name -ne 'Fort') { throw 'Reset applied an unsaved name.' }
     $null = Wait-For { (Find 'CheckoutIcon_Fort').Current.HelpText -eq 'Folder with FO initials' }

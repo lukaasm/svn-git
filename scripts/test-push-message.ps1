@@ -86,7 +86,8 @@ function Assert-Cancelled([string]$marker) {
 function Assert-Pending {
     if ((Find 'PushButton').Current.IsEnabled) { throw 'Push still accepts the previous preview while the new commit range is loading.' }
     $null = Wait-For { Find 'Updating push preview…' -Name }
-    if ((Find 'PushButton').Current.HelpText -notlike '*preview*') { throw 'Disabled Push does not explain that its preview is loading.' }
+    # The header and the button's explanation are updated in separate steps; wait for both.
+    $null = Wait-For { (Find 'PushButton').Current.HelpText -like '*preview*' } 'Disabled Push does not explain that its preview is loading.'
     $hint = Find 'DisabledHint_PushButton'
     if (!$hint -or !$hint.Current.IsKeyboardFocusable -or $hint.Current.HelpText -notlike '*preview*') {
         throw 'The loading explanation is not available to keyboard users.'

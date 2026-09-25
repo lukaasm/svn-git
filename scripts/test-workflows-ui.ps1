@@ -250,7 +250,10 @@ try {
     [IO.File]::WriteAllText((Join-Path $other 'base.txt'), "fresh SVN content`n")
     $null = Run 'svn' @('commit', '--non-interactive', $other, '-m', 'Fresh upstream content')
     Start-App 'rebase' $imported
-    $null = Wait-For 'structured update plan' { Find-Ui 'View SVN log' -Name -Invokable }
+    # The revisions and the log link start folded away; the page keeps them open across navigation.
+    $revisions = Wait-For 'structured update plan' { Find-Ui 'PullRevisions' }
+    $revisions.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    $null = Wait-For 'SVN revisions unfolded' { Find-Ui 'View SVN log' -Name -Invokable }
     if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'update-plan.png') } catch { Write-Host "Optional preview capture: $_" } }
     Invoke-Ui 'Review local commits' -Name
     $null = Wait-For 'local commit log opened' { Find-Ui 'Commits' }
@@ -307,6 +310,9 @@ try {
     Set-Ui 'NameBox' 'imported'
     Assert-Blocked 'RestoreButton' '*already a branch*'
     Assert-DestinationAction 'Open folder' (Join-Path $root 'imported')
+    # Replacing a branch is an advanced restore option, folded away until asked for.
+    $advanced = Wait-For 'advanced restore options' { Find-Ui 'RestoreAdvanced' }
+    $advanced.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     $force = Wait-For 'replace existing option' { Find-Ui 'ForceBox' }
     $force.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     $null = Wait-For 'replacement explains recovery' {
@@ -384,9 +390,10 @@ try {
         $subtitle -and $subtitle.Current.Name.Contains((Join-Path $root 'paused-import'))
     }
     Invoke-Ui 'PART_BackButton'
-    $null = Wait-For 'import preview finishes reloading after back' {
+    # The page keeps the destination draft across navigation, so the edited name comes back with it.
+    $null = Wait-For 'import preview finishes reloading after back, with its draft' {
         $field = Find-Ui 'NameBox'
-        $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'source'
+        $field -and $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'different-form-name'
     }
     Set-Ui 'NameBox' 'paused-import'
     Assert-Blocked 'ImportButton' '*already a branch*'

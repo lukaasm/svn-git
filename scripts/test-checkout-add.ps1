@@ -86,7 +86,7 @@ try {
     Complete-UiScenario
 
     Start-UiScenario 'Adding from an SVN URL selects the newly created checkout rather than the old one'
-    (Find 'Check out from an SVN URL' -Name).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    (Find 'Check out from a URL' -Name).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     Enter-Value (Find 'UrlBox') "$url/trunk"
     Enter-Value (Find 'NameBox') 'FromUrl'
     Enter-Value (Find 'FolderBox') (Join-Path $ArtifactDirectory 'url-checkout')

@@ -44,8 +44,8 @@ function Assert-Reading($expected, [int]$added = 0) {
         if ($actual[$i].selection.selectionStartLineNumber -ne ($expected[$i].selection.selectionStartLineNumber + $shift) -or
             $actual[$i].selection.selectionStartColumn -ne $expected[$i].selection.selectionStartColumn -or
             $actual[$i].selection.positionColumn -ne $expected[$i].selection.positionColumn) { throw "Selection direction or column lost on side $i." }
-        if ([Math]::Abs($actual[$i].left - $expected[$i].left) -gt 2) { throw "Horizontal scroll lost on side $i." }
-        if (!$added -and [Math]::Abs($actual[$i].top - $expected[$i].top) -gt 2) { throw "Vertical scroll lost on side $i." }
+        if ([Math]::Abs($actual[$i].left - $expected[$i].left) -gt 2) { throw "Horizontal scroll lost on side ${i}: expected $($expected[$i].left), got $($actual[$i].left)." }
+        if (!$added -and [Math]::Abs($actual[$i].top - $expected[$i].top) -gt 2) { throw "Vertical scroll lost on side ${i}: expected $($expected[$i].top), got $($actual[$i].top)." }
     }
 }
 function Leave-Commit {

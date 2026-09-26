@@ -33,6 +33,11 @@
                 <Setter Property="MinWidth" Value="0" />
             </Style>
 
+            <!-- The one button on the right of a worktree card, on the overview and on the Backup page: one
+                 width whatever word is on it, so the buttons line up down the right edge. The widest word it
+                 carries is "Resolve conflicts", with room around it. -->
+            <x:Double x:Key="CardActionWidth">196</x:Double>
+
             <!-- A thin bar under a header: invisible until something loads, so nothing jumps when it shows. -->
             <Style x:Key="LoadingBar" TargetType="ProgressBar">
                 <Setter Property="IsIndeterminate" Value="False" />

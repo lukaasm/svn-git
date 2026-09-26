@@ -85,12 +85,34 @@ public sealed partial class BackupPage : SgPage
         Title = "Backup";
         Branch = Worktree;
         var overview = Overview ? Visibility.Visible : Visibility.Collapsed;
-        ScheduleOverview.Visibility = BackupToolbar.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = AllWorktreesButton.Visibility = overview;
+        ScheduleOverview.Visibility = BackupToolbar.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = BackupActions.Visibility = overview;
+        // The overview is a place, like the checkout page: the back button leaves it. Close stays on a
+        // worktree's page, where it is the other half of Restore.
+        LeaveButton.Visibility = Overview ? Visibility.Collapsed : Visibility.Visible;
+        Loaded += (_, _) => { Session.Tasks.StateChanged += GateAll; GateAll(); };
+        Unloaded += (_, _) => Session.Tasks.StateChanged -= GateAll;
         BackupNowButton.Visibility = PruneButton.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         AdvancedOptions.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         Session.Log.Sink = Pane;
     }
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
+
+    bool _configured;
+
+    /// <summary>
+    /// The menu's items cannot sit in a task gate, so they take its rule here: off while a task holds the
+    /// root, and saying which one, as the checkout's own menu does.
+    /// </summary>
+    void GateAll()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(GateAll); return; }
+        var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
+        BackupAllButton.IsEnabled = PruneAllButton.IsEnabled = _configured && busy == null;
+        TaskGate.SetHelp(BackupAllButton, busy?.BlockingExplanation
+            ?? "Send every included worktree: its branch, its shelves, and its uncommitted changes when Settings allow.");
+        TaskGate.SetHelp(PruneAllButton, busy?.BlockingExplanation
+            ?? "List the backup refs no local work answers to. Nothing is deleted before you confirm the list.");
+    }
     string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
     internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, BackupFilter.SelectedIndex,
         _shownWorktrees, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray(), CurrentDraft(), AdvancedOptions.IsExpanded);
@@ -139,7 +161,8 @@ public sealed partial class BackupPage : SgPage
         RestoreOptions.Visibility = Visibility.Collapsed;
         AdvancedOptions.Visibility = configured && Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         BackupNowButton.IsEnabled = false;
-        PruneButton.IsEnabled = AllWorktreesButton.IsEnabled = configured;
+        PruneButton.IsEnabled = _configured = configured;
+        GateAll();
         RestoreButton.IsEnabled = false;
         if (!configured)
         {
@@ -183,7 +206,11 @@ public sealed partial class BackupPage : SgPage
         BackupNowButton.IsEnabled = local?.CanBackUp == true;
         TaskGate.SetHelp(BackupNowButton, local?.CanBackUp == true ? $"Back up only {Worktree}, including its shelves and enabled uncommitted changes."
             : local?.Excluded == true ? "This worktree is excluded from backup. Include it in its worktree settings first." : "No local worktree folder is available to back up.");
-        Headline.Text = Overview ? $"{_worktrees.Count} worktrees · {others.Count(o => o.Reference.Kind == "shelf")} shelves" : _itemName!;
+        // What needs doing, not a census: the counts of everything are in the list's own line below.
+        var attention = _worktrees.Count(w => w.NeedsAttention);
+        Headline.Text = !Overview ? _itemName!
+            : attention == 0 ? $"Every worktree is backed up ({_worktrees.Count})"
+            : $"{attention} of {_worktrees.Count} worktrees need a backup";
 
         _binding = true;
         IntoBox.ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList();
@@ -219,7 +246,7 @@ public sealed partial class BackupPage : SgPage
                 || w.Checkout?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)).ToList();
         var branchNames = _worktrees.Where(w => w.Remote != null).Select(w => w.Name).ToHashSet(StringComparer.Ordinal);
         var others = matches.Where(e => e.Reference.Kind != "branch" && !(e.Reference.Kind == "wip" && branchNames.Contains(e.Name))).ToList();
-        BranchesHeader.Text = $"Worktrees ({_matchingWorktrees.Count})";
+        BranchesHeader.Text = "Worktrees";
         var take = reset ? WorktreePageSize : Math.Max(WorktreePageSize, _shownWorktrees);
         Branches.Children.Clear();
         _shownWorktrees = 0;
@@ -284,7 +311,7 @@ public sealed partial class BackupPage : SgPage
         RestoreRow.Visibility = has && entry!.Kind == "branch" ? Visibility.Visible : Visibility.Collapsed;
         RestoreOptions.Visibility = RestoreRow.Visibility;
         RestoreButton.Visibility = RestoreRow.Visibility;
-        SelectionHint.Visibility = entry == null ? Visibility.Visible : Visibility.Collapsed;
+        SelectionHint.Visibility = entry == null && SelectionHint.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         CommitsHeader.Visibility = CommitsCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (!has)
         {

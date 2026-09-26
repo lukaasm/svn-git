@@ -46,13 +46,26 @@
 
                 <StackPanel x:Name="Filled" Spacing="8">
                     <Border Style="{StaticResource Card}">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
-                            <FontIcon Glyph="&#xE74E;" FontSize="20" VerticalAlignment="Top" Margin="0,2,0,0"
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
+                            <FontIcon Glyph="&#xE74E;" FontSize="20" VerticalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                                 <TextBlock x:Name="Headline" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
                                 <TextBlock x:Name="UrlText" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                             </StackPanel>
+                            <!-- What reaches every worktree at once sits behind the same "..." the checkout's own
+                                 toolbar has: each card already backs up its own, so these are the rare ones. -->
+                            <CommandBar x:Name="BackupActions" Grid.Column="2" Background="Transparent" VerticalAlignment="Center"
+                                        DefaultLabelPosition="Right" AutomationProperties.Name="all worktrees">
+                                <CommandBar.SecondaryCommands>
+                                    <AppBarButton x:Name="BackupAllButton" Label="Back up all worktrees" AutomationProperties.AutomationId="BackupAll" Click="BackupAll_Click">
+                                        <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
+                                    </AppBarButton>
+                                    <AppBarButton x:Name="PruneAllButton" Label="Prune all stale backups…" AutomationProperties.AutomationId="PruneAll" Click="PruneAll_Click">
+                                        <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
+                                    </AppBarButton>
+                                </CommandBar.SecondaryCommands>
+                            </CommandBar>
                         </Grid>
                     </Border>
 
@@ -70,8 +83,9 @@
                     <TextBlock x:Name="BackupMatches" Style="{StaticResource Secondary}" TextWrapping="Wrap"
                                AutomationProperties.LiveSetting="Polite" />
                     <TextBlock x:Name="BranchesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                    <TextBlock x:Name="SelectionHint" Text="Status compares commits. Working files and shelves are checked when you back up. Manage opens restore options."
-                               Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                    <!-- Only for a message the page has to give, like a worktree with no remote copy. What a
+                         card's status means is in the status's own tooltip. -->
+                    <TextBlock x:Name="SelectionHint" Style="{StaticResource Secondary}" TextWrapping="Wrap" Visibility="Collapsed" />
                     <StackPanel x:Name="Branches" Spacing="4" />
                     <local:IconButton x:Name="MoreWorktrees" Text="Show 20 more" Glyph="&#xE70E;" Visibility="Collapsed"
                                       HorizontalAlignment="Left" Click="MoreWorktrees_Click" />
@@ -207,21 +221,7 @@
                     <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
                                       ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
                 </local:TaskGate>
-                <local:TaskGate>
-                    <local:IconButton x:Name="AllWorktreesButton" Text="All worktrees…" Glyph="&#xE712;" AutomationProperties.Name="All worktrees actions">
-                        <Button.Flyout>
-                            <MenuFlyout>
-                                <MenuFlyoutItem Text="Back up all worktrees" AutomationProperties.AutomationId="BackupAll" Click="BackupAll_Click">
-                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Prune all stale backups" AutomationProperties.AutomationId="PruneAll" Click="PruneAll_Click">
-                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </Button.Flyout>
-                    </local:IconButton>
-                </local:TaskGate>
-                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
+                <Button x:Name="LeaveButton" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             </local:WrapRow>
         </StackPanel>
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />

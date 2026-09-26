@@ -92,9 +92,8 @@ function Assert-BackupStatus([string]$name, [string]$status, [bool]$confirmed = 
         $label = $card.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $status))
         if (!$label) { return $false }
-        if (!$confirmed) { return $true }
-        @($card.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
-            Where-Object { $_.Current.Name -like 'Confirmed here *' }).Count -eq 1
+        # The badge is a glyph; its words are its name and its sentence, with when it was confirmed, is its help.
+        !$confirmed -or $label.Current.HelpText -like '*Confirmed here *'
     }
 }
 function Assert-Blocked([string]$buttonId, [string]$explanation) {
@@ -296,7 +295,8 @@ try {
     # Back up via GUI to a local bare repository, checking content rather than just a success label.
     Start-UiScenario 'Create backup'
     Start-App 'backup' $root
-    Invoke-Ui 'AllWorktreesButton'
+    # Every worktree at once is the rare action, behind the page's "..." like the checkout's own.
+    Invoke-Ui 'MoreButton'
     Invoke-Ui 'BackupAll'
     Wait-Receipt
     # Backups rewrite history, so verify the tree content rather than comparing commit IDs.
@@ -365,7 +365,7 @@ try {
     }
     $backupTask.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Invoke-Ui ('TaskResult_' + $backupTask.Current.AutomationId.Substring(5))
-    $null = Wait-For 'backup page reopened from receipt' { Find-Ui 'AllWorktreesButton' }
+    $null = Wait-For 'backup page reopened from receipt' { Find-Ui 'BackupActions' }
     Write-Host 'PASS: retained task action reopens Backup after navigation.'
     Stop-App
     # A real add/add conflict keeps the import resumable, even after editing the destination form.

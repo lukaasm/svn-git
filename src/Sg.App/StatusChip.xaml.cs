@@ -1,4 +1,6 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
@@ -72,6 +74,31 @@ public sealed partial class StatusChip : UserControl
     }
 
     static void Changed(DependencyObject d, DependencyPropertyChangedEventArgs e) => ((StatusChip)d).Apply();
+
+    /// <summary>
+    /// One element to a screen reader, not a glyph and a number and a word apart: a chip with only a
+    /// glyph on it still says what it is, from its automation name or else its words, and its tooltip
+    /// sentence is its help text.
+    /// </summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
+
+    sealed partial class Peer(StatusChip chip) : FrameworkElementAutomationPeer(chip)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Text;
+        protected override string GetClassNameCore() => nameof(StatusChip);
+        protected override IList<AutomationPeer>? GetChildrenCore() => null;
+        protected override string GetNameCore()
+        {
+            var name = AutomationProperties.GetName(chip);
+            if (!string.IsNullOrEmpty(name)) return name;
+            return chip.Count == 0 ? chip.Text : chip.Text.Length == 0 ? chip.Count.ToString() : chip.Count + " " + chip.Text;
+        }
+        protected override string GetHelpTextCore()
+        {
+            var help = AutomationProperties.GetHelpText(chip);
+            return !string.IsNullOrEmpty(help) ? help : ToolTipService.GetToolTip(chip) as string ?? "";
+        }
+    }
 
     void Apply()
     {

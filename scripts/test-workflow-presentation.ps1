@@ -210,7 +210,7 @@ try {
     Invoke 'NavigationViewBackButton' -Id
     $null = Wait-For { Find 'Check current coverage' }
     Invoke 'Open backup restore preview'
-    $null = Wait-For { Find 'AllWorktreesButton' -Id }
+    $null = Wait-For { Find 'BackupActions' -Id }
     Start-UiScenario 'Storage previews and recovery navigation'
     (Wait-For { Find 'StorageItem' -Id }).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     $archive = Wait-For { Find 'Archive options · source' }

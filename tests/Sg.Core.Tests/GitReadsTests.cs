@@ -98,6 +98,13 @@ public sealed class GitReadsTests : IDisposable
         }
         // Read here, not by git: git log ran for git's own side of each, and for the encoded commit only.
         Assert.Equal(commits.Length + 1, _log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains(" log -1 ")));
+
+        // The message alone, as %B gives it: read from the commit inside an operation, by git for the encoded one.
+        var bodies = commits.Select(git.BodyByGit).ToList();
+        _log.Clear();
+        using (root.Lock())
+            for (var i = 0; i < commits.Length; i++) Assert.Equal(bodies[i], git.Body(commits[i]));
+        Assert.Equal(1, _log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains(" log -1 --format=%B ")));
     }
 
     [Fact]

@@ -31,6 +31,16 @@ static class CommitText
         return new CommitIdentity(a.Name, a.Email, a.Date, c.Name, c.Email, c.Date, message + "\n");
     }
 
+    /// <summary>`git log -1 --format=%B`: the message as it is kept, with the newline the format puts after it.</summary>
+    public static string? Message(byte[] raw)
+    {
+        var text = Utf8.GetString(raw);
+        var end = text.IndexOf("\n\n", StringComparison.Ordinal);
+        foreach (var line in (end < 0 ? text : text[..end]).Split('\n'))
+            if (line.StartsWith("encoding ", StringComparison.Ordinal)) return null;
+        return (end < 0 ? "" : text[(end + 2)..]) + "\n";
+    }
+
     /// <summary>"Name &lt;email&gt; seconds zone" as %an, %ae and %aI give them back.</summary>
     static (string Name, string Email, string Date)? Ident(string line)
     {

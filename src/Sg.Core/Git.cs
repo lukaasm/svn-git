@@ -703,7 +703,16 @@ public sealed class Git
     }
     public void SetHeadDetached(string worktree, string sha) => Ok(worktree, "update-ref", "--no-deref", "HEAD", sha);
     public string HeadSha(string worktree) => Out(worktree, "rev-parse", "HEAD");
-    public string Body(string sha) => Ok(null, "log", "-1", "--format=%B", sha).StdOut;
+    /// <summary>
+    /// A commit's whole message as `git log -1 --format=%B` prints it. Inside an operation it is read from
+    /// the commit's own bytes through the operation's reader; a sync asked it of git three times over.
+    /// </summary>
+    public string Body(string sha) => OfCommit("body ", sha, () =>
+        Reader() is { } reader && reader.TryContents(sha + "^{commit}", out var header, out var raw) && header is { Type: "commit" }
+        && raw != null && CommitText.Message(raw) is { } message
+            ? message : BodyByGit(sha));
+
+    internal string BodyByGit(string sha) => Ok(null, "log", "-1", "--format=%B", sha).StdOut;
     /// <summary>The first line of a commit message. %s cuts at a \n and not at a lone \r, so Msg does the rest.</summary>
     public string Subject(string sha) => Msg.Subject(Out(null, "log", "-1", "--format=%s", sha));
 

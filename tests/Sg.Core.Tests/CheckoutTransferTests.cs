@@ -24,6 +24,32 @@ public sealed class CheckoutTransferTests
     }
 
     [Fact]
+    public void New_worktree_takes_the_checkout_edits_in_the_same_step()
+    {
+        using var f = new Fixture(); f.Setup();
+        Fixture.Put(f.Checkout, "CMakeLists.txt", "project(changed)\n");
+        Fixture.Put(f.Checkout, "notes/new.txt", "not yet versioned\n");
+        var made = CheckoutTransfer.NewWorktree(f.Root, "carried", f.Co, CheckoutEdits.Move);
+        Assert.Null(made.Stayed); Assert.NotNull(made.Carried); Assert.True(made.Carried!.Moved);
+        Assert.Equal("project(changed)\n", File.ReadAllText(Path.Combine(made.Branch.Path, "CMakeLists.txt")));
+        Assert.Equal("not yet versioned\n", File.ReadAllText(Path.Combine(made.Branch.Path, "notes/new.txt")));
+        Assert.Empty(Ops.CheckoutChanges(f.Root, f.Co));
+        // The task's receipt opens the new worktree, as it does for a worktree made without edits.
+        Assert.Equal(TaskState.Succeeded, TaskResults.Describe(made).State);
+        Assert.Equal(made.Branch.Path, TaskResults.FollowUp(made)!.Path);
+    }
+
+    [Fact]
+    public void New_worktree_is_kept_when_the_checkout_edits_cannot_go()
+    {
+        using var f = new Fixture(); f.Setup();
+        var made = CheckoutTransfer.NewWorktree(f.Root, "clean", f.Co, CheckoutEdits.Copy);
+        Assert.Null(made.Carried); Assert.NotNull(made.Stayed);
+        Assert.True(Directory.Exists(made.Branch.Path));
+        Assert.Equal(TaskState.NeedsAttention, TaskResults.Describe(made).State);
+    }
+
+    [Fact]
     public void Move_to_existing_worktree_merges_edits_preserves_index_and_keeps_recovery()
     {
         using var f = new Fixture(); f.Setup();

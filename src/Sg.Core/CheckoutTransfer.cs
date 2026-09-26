@@ -23,6 +23,12 @@ public sealed class CheckoutTransferPlan
 internal sealed record TransferContent(string Path, string Item, string? Base, string? Source, string? Before, string? After);
 public sealed record CheckoutTransferResult(string Path, int Files, bool Moved, string SourceShelf, string DestinationShelf, IReadOnlyList<TransferNotice> LeftBehind);
 
+/// <summary>What a new worktree does with the edits made directly in its checkout.</summary>
+public enum CheckoutEdits { Stay, Copy, Move }
+
+/// <summary>A new worktree, and what became of the checkout edits it was asked to take: carried, or why they stayed.</summary>
+public sealed record NewWorktreeResult(BranchResult Branch, CheckoutTransferResult? Carried, string? Stayed);
+
 /// <summary>Preview and transfer checkout edits without moving either branch tip or the destination index.</summary>
 public static class CheckoutTransfer
 {
@@ -140,6 +146,26 @@ public static class CheckoutTransfer
                 if (Directory.Exists(full)) Walk(p); else files.Add((p, "unversioned"));
             }
         }
+    }
+
+    /// <summary>
+    /// A new worktree, then the checkout's edits into it when they were asked for, in one step. The edits
+    /// go only when the preview is clean; otherwise they stay, the worktree is kept, and the result says why.
+    /// </summary>
+    public static NewWorktreeResult NewWorktree(SgRoot root, string name, CheckoutConfig co, CheckoutEdits edits,
+        IEnumerable<string>? without = null, bool minimal = false, SharedMode? shared = null)
+    {
+        var branch = Ops.Branch(root, name, co, without, minimal, shared);
+        if (edits == CheckoutEdits.Stay) return new(branch, null, null);
+        try
+        {
+            var plan = Preview(root, co, name, move: edits == CheckoutEdits.Move);
+            if (plan.CanApply) return new(branch, Apply(root, plan), null);
+            return new(branch, null, plan.Files.Count == 0 && plan.Conflicts.Count == 0
+                ? "The checkout has no edits that can go to a worktree."
+                : $"{plan.Conflicts.Count} of the edits overlap with the worktree's files, so none were taken.");
+        }
+        catch (SgException e) { return new(branch, null, e.Message); }
     }
 
     public static CheckoutTransferResult Apply(SgRoot root, CheckoutTransferPlan preview)

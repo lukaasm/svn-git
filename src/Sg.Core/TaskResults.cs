@@ -21,6 +21,9 @@ public static class TaskResults
         SyncResult r => (r.Conflicts + r.Warnings.Count > 0 ? TaskState.NeedsAttention : TaskState.Succeeded,
             $"{r.Checkout}: r{r.Revision}, {r.Conflicts} conflicts." + Note(string.Join("\n", r.Warnings))),
         BranchResult r => (TaskState.Succeeded, $"Worktree {r.Branch} is ready.\n{r.Path}"),
+        NewWorktreeResult r => (r.Stayed == null ? TaskState.Succeeded : TaskState.NeedsAttention, Describe(r.Branch).Detail
+            + (r.Carried is { } c ? $"\n{c.Files} checkout edit(s) {(c.Moved ? "moved" : "copied")} into it. Recovery shelves retained." : "")
+            + (r.Stayed != null ? "\nThe checkout's edits stayed: " + r.Stayed + "\nOpen Transfer checkout changes to review them." : "")),
         CheckoutTransferResult r => (TaskState.Succeeded, $"{r.Files} file(s) {(r.Moved ? "moved" : "copied")} to {r.Path}. Recovery shelves retained."),
         WorktreeRenamePlan r => (TaskState.Succeeded, $"Renamed {r.Branch} to {r.Name}.\n{r.NewPath}"),
         ReviewRecord r => (r.Checks.Any(c => c.ExitCode != 0) ? TaskState.NeedsAttention : TaskState.Succeeded,
@@ -49,6 +52,7 @@ public static class TaskResults
         ImportResult r => new(r.Waiting ? TaskTargetKind.Replay : TaskTargetKind.Folder, r.Path),
         RestoreResult r => new(r.Waiting ? TaskTargetKind.Replay : TaskTargetKind.Folder, r.Path),
         BranchResult r => new(TaskTargetKind.Folder, r.Path),
+        NewWorktreeResult r => FollowUp(r.Branch),
         CheckoutTransferResult r => new(TaskTargetKind.Folder, r.Path),
         WorktreeRenamePlan r => new(TaskTargetKind.Folder, r.NewPath),
         CheckoutResult r => new(TaskTargetKind.Folder, r.Checkout.Path),

@@ -1216,14 +1216,15 @@ public sealed partial class MainWindow : Window
         var root = Session.Root;
         var draft = _branchForm.RetryAvailable && ReferenceEquals(root, _branchRequestRoot) ? _branchForm.Submitted : null;
         var input = await Dialogs.NewBranch(this, root, preselect, draft, target => TaskNavigation.Open(root.RootPath, target, Host),
-            co => Host.Go(() => new CheckoutTransferPage(co), "transfer:" + co.Name));
+            name => LocalEdits.TryGetValue(name, out var known) ? known : null);
         if (input == null) return;
         _branchRequestRoot = root;
-        var r = await _branchForm.Run(input, submitted => Reports.Run(Overview.Report, Pane, "new branch " + submitted.Name,
-            () => Ops.Branch(root, submitted.Name, root.Checkout(submitted.Checkout), submitted.Without, submitted.Minimal, submitted.Shared),
-            (card, x) => card.Show(ChipSeverity.Success, "", $"Worktree {x.Branch} is ready",
-                x.Path + (x.Shared.Count > 0 ? "\n" + SharedFolders.Describe(x.SharedMode) + ": " + string.Join(", ", x.Shared) : "")),
+        var made = await _branchForm.Run(input, submitted => Reports.Run(Overview.Report, Pane, "new branch " + submitted.Name,
+            () => CheckoutTransfer.NewWorktree(root, submitted.Name, root.Checkout(submitted.Checkout), submitted.Edits,
+                submitted.Without, submitted.Minimal, submitted.Shared),
+            (card, made) => ShowNewWorktree(card, submitted.Checkout, made),
             worktree: new(submitted.Checkout, submitted.Name, root.WorktreePathFor(submitted.Name))));
+        var r = made?.Branch;
         if (r == null && ReferenceEquals(root, Session.Root))
             Overview.Report.Show(ChipSeverity.Caution, "", "Worktree creation did not finish",
                 "Your options are kept. Review Tasks for completed steps before trying again.", rows:
@@ -1241,6 +1242,34 @@ public sealed partial class MainWindow : Window
             if (r.Shared.Count > 0) Pane.Append(SharedFolders.Describe(r.SharedMode) + ": " + string.Join(", ", r.Shared));
         }
         await RefreshAsync();
+    }
+
+    /// <summary>
+    /// How a new worktree went. When its checkout edits could not go with it, the report says why and offers
+    /// the transfer page, where each file and each overlap can be read.
+    /// </summary>
+    void ShowNewWorktree(ReportCard card, string checkout, NewWorktreeResult made)
+    {
+        var x = made.Branch;
+        var detail = x.Path + (x.Shared.Count > 0 ? "\n" + SharedFolders.Describe(x.SharedMode) + ": " + string.Join(", ", x.Shared) : "");
+        if (made.Carried is { } carried)
+        {
+            LocalEdits.Remove(checkout);
+            detail += $"\n{carried.Files} checkout edit{(carried.Files == 1 ? "" : "s")} {(carried.Moved ? "moved" : "copied")} into it. Recovery shelves keep the earlier versions."
+                + (carried.LeftBehind.Count > 0 ? $" {carried.LeftBehind.Count} stayed in the checkout." : "");
+        }
+        if (made.Stayed == null) { card.Show(ChipSeverity.Success, "\uE8F4", $"Worktree {x.Branch} is ready", detail); return; }
+        var root = Session.Root;
+        card.Show(ChipSeverity.Caution, "\uE8F4", $"Worktree {x.Branch} is ready. The checkout's edits stayed where they were", detail, rows:
+            [new ReportRow(ChipSeverity.Caution, "", "Checkout edits", made.Stayed, "", "")
+            {
+                ActionText = "Review the transfer", Action = () =>
+                {
+                    if (root != null && ReferenceEquals(root, Session.Root))
+                        Host.Go(() => new CheckoutTransferPage(root.Checkout(checkout), into: x.Branch), "transfer:" + checkout);
+                    return Task.CompletedTask;
+                },
+            }]);
     }
 
     async Task ServerCheckoutAsync(CheckoutConfig? preselect)

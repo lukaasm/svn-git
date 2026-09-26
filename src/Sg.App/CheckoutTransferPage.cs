@@ -30,9 +30,11 @@ public sealed class CheckoutTransferPage : WorkflowPage
         if (state is not ViewState view) return;
         _kind.SelectedIndex = view.Kind; _name.Text = view.Name; _wanted = view.Existing; _move.IsChecked = view.Move;
     }
-    public CheckoutTransferPage(CheckoutConfig co, string[]? paths = null) : base("Transfer checkout changes", keepContentInteractive: true)
+    /// <param name="into">An existing worktree to preselect, for a new worktree whose edits could not go in one step.</param>
+    public CheckoutTransferPage(CheckoutConfig co, string[]? paths = null, string? into = null) : base("Transfer checkout changes", keepContentInteractive: true)
     {
         _co = co; _paths = paths; Checkout = co.Name; Subtitle = co.Path;
+        if (into != null) { _kind.SelectedIndex = 1; _wanted = into; }
         Text("Copy checkout edits into a worktree, or move them there to continue on a branch.");
         if (paths != null) Text($"Using {paths.Length} selected path(s) from Changes in the checkout.");
         Body.Children.Add(_kind); Body.Children.Add(_name); Body.Children.Add(_existing);

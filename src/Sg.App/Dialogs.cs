@@ -6,7 +6,8 @@ using Sg.Core;
 
 namespace Sg.App;
 
-public sealed record NewBranchInput(string Name, string Checkout, bool Minimal, System.Collections.Immutable.ImmutableArray<string> Without, SharedMode Shared);
+public sealed record NewBranchInput(string Name, string Checkout, bool Minimal, System.Collections.Immutable.ImmutableArray<string> Without, SharedMode Shared,
+    CheckoutEdits Edits = CheckoutEdits.Stay);
 public sealed record ServerCheckoutInput(string Target, CheckoutConfig Near, string? Name);
 
 /// <summary>Small modal dialogs built in code, so every window can use them.</summary>
@@ -106,7 +107,8 @@ public static class Dialogs
         await d.ShowAsync();
     }
 
-    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null, Action<TaskFollowUp>? navigate = null, Action<CheckoutConfig>? transfer = null)
+    /// <param name="editsOf">How many files are edited directly in a checkout, or null while nobody has counted.</param>
+    public static async Task<NewBranchInput?> NewBranch(object owner, SgRoot root, CheckoutConfig? preselect, NewBranchInput? draft = null, Action<TaskFollowUp>? navigate = null, Func<string, int?>? editsOf = null)
     {
         var name = new TextBox { Header = "Branch name", PlaceholderText = "feature-x", Text = draft?.Name ?? "" };
         var from = new ComboBox { Header = "From checkout", ItemsSource = root.Config.Checkouts.Select(c => c.Name).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -115,6 +117,16 @@ public static class Dialogs
         var minimal = new CheckBox { IsChecked = draft?.Minimal ?? false };
         var without = new TextBox { Header = "Also leave out (folders, one per line)", AcceptsReturn = true, Height = 70, Text = draft == null ? "" : string.Join("\n", draft.Without) };
         var shared = new SharedModeBox();
+        // The checkout's own edits go with the new worktree in the same step: this used to be a link out of
+        // the dialog to a page of its own, for the one question of whether to copy them, move them, or not.
+        var edits = new ComboBox
+        {
+            ItemsSource = new[] { "Stay in the checkout", "Copy into the new worktree", "Move into the new worktree" },
+            SelectedIndex = (int)(draft?.Edits ?? CheckoutEdits.Stay), HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        AutomationProperties.SetAutomationId(edits, "NewWorktreeEdits");
+        ToolTipService.SetToolTip(edits, "Copy leaves the checkout as it is. Move takes the edits out of it once the worktree has them. "
+            + "Recovery shelves keep the earlier versions either way; edits that cannot go stay in the checkout, and the report says why.");
         var worktreeRoot = root.Config.WorktreeRoot ?? root.RootPath;
         // The optional and the shared folders belong to the checkout in the box, so they follow it.
         void Follow(CheckoutConfig? co)
@@ -125,6 +137,10 @@ public static class Dialogs
             shared.Header = "Shared folders (" + string.Join(", ", folders) + ") come as";
             shared.Mode = co?.Shared ?? SharedMode.Junction;
             if (co != null) _ = shared.DetectAsync(co.Path, worktreeRoot);
+            var count = co == null ? 0 : editsOf?.Invoke(co.Name);
+            edits.Visibility = count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            edits.Header = count is { } n ? $"The checkout's {n} edited file{(n == 1 ? "" : "s")}" : "Edits made directly in the checkout";
+            if (count == 0) edits.SelectedIndex = 0;
         }
         Follow(first);
         if (draft != null) shared.Mode = draft.Shared;
@@ -135,6 +151,7 @@ public static class Dialogs
         panel.Children.Add(minimal);
         panel.Children.Add(without);
         panel.Children.Add(shared);
+        panel.Children.Add(edits);
         var d = new ContentDialog
         {
             XamlRoot = RootOf(owner),
@@ -145,13 +162,6 @@ public static class Dialogs
             DefaultButton = ContentDialogButton.Primary,
         };
         var validation = new BranchTargetValidation();
-        CheckoutConfig? transferFrom = null;
-        if (transfer != null)
-        {
-            var link = new HyperlinkButton { Content = "Copy or move checkout edits into a worktree…" };
-            link.Click += (_, _) => { if (from.SelectedItem is string n) { transferFrom = root.Checkout(n); d.Hide(); } };
-            panel.Children.Add(link);
-        }
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 420 };
         AutomationProperties.SetAutomationId(summary, "NewWorktreeSummary");
         panel.Children.Add(summary);
@@ -173,19 +183,28 @@ public static class Dialogs
             if (check == null) return;
             existing.Update(root, check.Existing);
             var checkout = from.SelectedItem as string;
-            d.IsPrimaryButtonEnabled = branch.Length > 0 && checkout != null && !check.Taken && check.Error == null;
+            var carry = edits.Visibility == Visibility.Visible ? (CheckoutEdits)edits.SelectedIndex : CheckoutEdits.Stay;
+            // A worktree that leaves folders out is sparse, and a sparse worktree could hide the edits it was given.
+            var partial = carry != CheckoutEdits.Stay && (minimal.IsChecked == true || without.Text.Trim().Length > 0);
+            d.IsPrimaryButtonEnabled = branch.Length > 0 && checkout != null && !check.Taken && check.Error == null && !partial;
             Explain(branch.Length == 0 ? "Give the branch a name."
                 : checkout == null ? "Pick the checkout to build it on."
                 : check.Error ?? (check.Taken ? $"{branch} is already a branch here. Give it another name."
-                    : $"{branch} will be made on {checkout}, and its worktree with it."));
+                    : partial ? "A worktree that leaves folders out cannot take the checkout's edits. Clear Minimal and Also leave out, or let the edits stay in the checkout."
+                    : $"{branch} will be made on {checkout}, and its worktree with it."
+                        + (carry == CheckoutEdits.Copy ? " The checkout's edits are copied into it."
+                            : carry == CheckoutEdits.Move ? " The checkout's edits move into it." : "")));
         }
         name.TextChanged += (_, _) => SyncCreate();
         from.SelectionChanged += (_, _) => SyncCreate();
+        edits.SelectionChanged += (_, _) => SyncCreate();
+        minimal.Checked += (_, _) => SyncCreate();
+        minimal.Unchecked += (_, _) => SyncCreate();
+        without.TextChanged += (_, _) => SyncCreate();
         SyncCreate();
         ContentDialogResult result;
         try { result = await d.ShowAsync(); }
         finally { validation.Invalidate(); }
-        if (transferFrom != null) { if (ReferenceEquals(root, Session.Root)) transfer?.Invoke(transferFrom); return null; }
         if (destination != null)
         {
             if (ReferenceEquals(root, Session.Root)) navigate?.Invoke(destination);
@@ -194,7 +213,8 @@ public static class Dialogs
         if (result != ContentDialogResult.Primary) return null;
         if (name.Text.Trim().Length == 0 || from.SelectedItem is not string coName) return null;
         var list = without.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
-        return new NewBranchInput(name.Text.Trim(), coName, minimal.IsChecked == true, [.. list], shared.Mode);
+        return new NewBranchInput(name.Text.Trim(), coName, minimal.IsChecked == true, [.. list], shared.Mode,
+            edits.Visibility == Visibility.Visible ? (CheckoutEdits)edits.SelectedIndex : CheckoutEdits.Stay);
     }
 
     public static async Task<ServerCheckoutInput?> ServerCheckout(object owner, SgRoot root, CheckoutConfig? preselect)

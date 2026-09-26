@@ -29,6 +29,7 @@ public static partial class Backup
 {
     public static IReadOnlyList<BackupWorktree> Worktrees(SgRoot root, BackupCatalog catalog)
     {
+        using var reading = root.Git.Reading();
         var bases = root.Git.BranchBases();
         var local = root.Git.WorktreeList().Where(w => !w.Bare && w.Branch != null && bases.ContainsKey(w.Branch))
             .GroupBy(w => w.Branch!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);

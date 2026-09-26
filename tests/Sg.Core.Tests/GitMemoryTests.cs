@@ -98,6 +98,54 @@ public sealed class GitMemoryTests : IDisposable
     }
 
     [Fact]
+    public void An_operation_moves_refs_on_one_writer_as_git_would()
+    {
+        var root = Ops.Init(_dir, _log, fsmonitor: false);
+        var head = root.Git.RefSha(SgRoot.RootRef)!;
+        var other = root.Git.CommitTree(root.Git.EmptyTree(), head, "second\n");
+        // What git's own update-ref leaves, for comparing.
+        root.Git.Ok(null, "update-ref", "refs/heads/by-git", head);
+        root.Git.Ok(null, "update-ref", "refs/heads/by-git", other);
+        _log.Clear();
+        using (root.Lock())
+        {
+            root.Git.UpdateRef("refs/heads/here", head);
+            root.Git.UpdateRef("refs/heads/here", other);
+            Assert.Equal(other, root.Git.RefSha("refs/heads/here"));
+            root.Git.UpdateRef("refs/heads/gone", head);
+            root.Git.DeleteRef("refs/heads/gone");
+            Assert.Null(root.Git.RefSha("refs/heads/gone"));
+            // A write git refuses fails in git's words, and the next one still goes.
+            Assert.Throws<SgException>(() => root.Git.UpdateRef("refs/heads/bad", new string('3', 40)));
+            root.Git.UpdateRef("refs/heads/after", head);
+        }
+        Assert.Equal(head, root.Git.RefSha("refs/heads/after"));
+        Assert.Equal(2, _log.Lines.Count(l => l.StartsWith("cmd: ") && l.EndsWith(" update-ref --stdin")));
+        Assert.Single(_log.Lines, l => l.StartsWith("cmd: ") && l.Contains(" update-ref refs/heads/bad "));
+        string Reflog(string name) => root.Git.Out(null, "reflog", "show", "--format=%H %gs", name);
+        Assert.Equal(Reflog("refs/heads/by-git"), Reflog("refs/heads/here"));
+    }
+
+    [Fact]
+    public void Every_sg_key_on_every_branch_comes_from_one_read()
+    {
+        var root = Ops.Init(_dir, _log, fsmonitor: false);
+        root.Git.Config("branch.release.1.2.sgBase", "mono");
+        root.Git.Config("branch.release.1.2.sgShared", "junction");
+        root.Git.Config("branch.Feature.sgBase", "other");
+        root.Git.Config("branch.feature.merge", "refs/heads/x");
+        _log.Clear();
+        using (root.Git.Reading())
+        {
+            Assert.Equal("mono", root.Git.BranchBases()["release.1.2"]);
+            Assert.Equal("other", root.Git.BranchBases()["Feature"]);
+            Assert.Equal("junction", root.Git.BranchConfig("sgShared")["release.1.2"]);
+            Assert.Empty(root.Git.BranchConfig("sgBackedUp"));
+        }
+        Assert.Single(_log.Lines, l => l.StartsWith("cmd: ") && l.Contains(" config "));
+    }
+
+    [Fact]
     public void Store_settings_go_in_one_write_and_no_key_is_there_twice()
     {
         var root = Ops.Init(_dir, _log, fsmonitor: false);

@@ -837,6 +837,7 @@ public static class Ops
     public static StatusResult Status(SgRoot root, bool checkSvn)
     {
         var git = root.Git;
+        using var reading = git.Reading();
         var res = new StatusResult { Root = root.RootPath };
         // Two git calls answer every ref and every branch base. Asking one ref at a time cost a process
         // each, and the overview asks again on every refresh and on every monitor tick.
@@ -1119,10 +1120,9 @@ public static class Ops
         if (name != null) return root.Checkout(name);
         var co = root.CheckoutContaining(cwd);
         if (co != null) return co;
-        var r = root.Git.Run(cwd, "symbolic-ref", "--short", "-q", "HEAD");
-        if (r.Ok)
+        if (root.Git.HeadBranch(cwd) is { } branch)
         {
-            var b = root.Git.ConfigGet($"branch.{r.StdOut.Trim()}.sgBase");
+            var b = root.Git.ConfigGet($"branch.{branch}.sgBase");
             if (b != null) return root.Checkout(b);
         }
         if (root.Config.Checkouts.Count == 1) return root.Config.Checkouts[0];

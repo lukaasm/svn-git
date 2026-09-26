@@ -36,6 +36,25 @@ public sealed class GitSetupTests : IDisposable
     }
 
     [Fact]
+    public void The_branch_read_from_head_is_the_one_git_names()
+    {
+        var log = new CollectingLog();
+        var root = Ops.Init(Path.Combine(_dir, "root"), log, fsmonitor: false);
+        var wt = Path.Combine(_dir, "root", "feature");
+        root.Git.Ok(null, "worktree", "add", "-q", "-b", "feat/x.y", wt, SgRoot.RootRef);
+        string? Git(string cwd) { var r = root.Git.Run(cwd, "symbolic-ref", "--short", "-q", "HEAD"); return r.Ok ? r.StdOut.Trim() : null; }
+
+        Assert.Equal("feat/x.y", Git(wt));
+        Assert.Equal(Git(wt), root.Git.HeadBranch(wt));
+        Directory.CreateDirectory(Path.Combine(wt, "sub"));
+        Assert.Equal(Git(Path.Combine(wt, "sub")), root.Git.HeadBranch(Path.Combine(wt, "sub")));
+        root.Git.Ok(wt, "checkout", "-q", "--detach");
+        Assert.Null(Git(wt));
+        Assert.Null(root.Git.HeadBranch(wt));
+        Assert.Throws<SgException>(() => root.Git.CurrentBranch(wt));
+    }
+
+    [Fact]
     public void A_new_store_is_sha1_with_files_for_refs_whatever_git_would_default_to()
     {
         var root = Ops.Init(_dir, new CollectingLog(), fsmonitor: false);

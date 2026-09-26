@@ -30,6 +30,7 @@ public static partial class Backup
 {
     public static BackupCatalog Browse(SgRoot root)
     {
+        using var reading = root.Git.Reading();
         var cfg = Require(root);
         var remote = root.Git.LsRemote(cfg.Url);
         var here = LocalNames(root);

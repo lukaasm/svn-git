@@ -117,6 +117,23 @@ public sealed class Git
     /// </summary>
     internal void BeginRemembering() { lock (_memoGate) _remembering++; }
 
+    /// <summary>
+    /// What a read that asks many questions - the overview, the Backup page - holds while it asks: the
+    /// same memory and reader an operation has, without the operation's lock. A write in between still
+    /// ends what was remembered; the reader stops when the last reader or operation lets go.
+    /// </summary>
+    public IDisposable Reading()
+    {
+        BeginRemembering();
+        return new ReadingScope(this);
+    }
+
+    sealed class ReadingScope(Git git) : IDisposable
+    {
+        int _done;
+        public void Dispose() { if (Interlocked.Exchange(ref _done, 1) == 0) git.EndRemembering(); }
+    }
+
     internal void EndRemembering()
     {
         lock (_memoGate)
@@ -142,11 +159,22 @@ public sealed class Git
         lock (_memoGate) return _remembering == 0 ? null : _reader ??= new GitReader(_exe, Store, _env, _log);
     }
 
+    GitRefWriter? _refWriter;
+
+    /// <summary>The operation's ref writer, started on the first write; none outside an operation.</summary>
+    GitRefWriter? RefWriter()
+    {
+        lock (_memoGate) return _remembering == 0 ? null : _refWriter ??= new GitRefWriter(_exe, Store, _env, _log);
+    }
+
+    /// <summary>The operation's reader and ref writer end with it, or before anything that collects objects.</summary>
     void StopReader()
     {
         GitReader? reader;
-        lock (_memoGate) { reader = _reader; _reader = null; }
+        GitRefWriter? writer;
+        lock (_memoGate) { reader = _reader; _reader = null; writer = _refWriter; _refWriter = null; }
         reader?.Dispose();
+        writer?.Dispose();
     }
 
     /// <summary>For a change made to git's files from outside this store's own commands, as a clone's push does: nothing read before it is trusted, in any store.</summary>
@@ -477,8 +505,38 @@ public sealed class Git
     public Dictionary<string, string> BranchBases() => BranchConfig("sgBase");
 
     /// <summary>Branch name to the value of branch.&lt;name&gt;.&lt;key&gt;, for every branch that has one, in one git call.</summary>
-    public Dictionary<string, string> BranchConfig(string key) =>
-        new(Remembered("branch config " + key, () => ReadBranchConfig(key)), StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> BranchConfig(string key)
+    {
+        if (!key.StartsWith("sg", StringComparison.OrdinalIgnoreCase))
+            return new(Remembered("branch config " + key, () => ReadBranchConfig(key)), StringComparer.OrdinalIgnoreCase);
+        // Every key sg keeps on a branch starts with sg, so one read serves them all: the overview asked
+        // for five of them one process each, on every refresh.
+        return Remembered("branch config sg", ReadSgBranchConfig).TryGetValue(key, out var values)
+            ? new(values, StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>branch.&lt;name&gt;.sg* for every branch: key (as git spells it, lower case) to branch to value.</summary>
+    Dictionary<string, Dictionary<string, string>> ReadSgBranchConfig()
+    {
+        var res = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        // git config exits 1 when nothing matches, which is not an error here.
+        var r = Run(null, "config", "--get-regexp", @"^branch\..*\.sg[^.]*$");
+        if (!r.Ok) return res;
+        foreach (var raw in r.StdOut.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            var sp = line.IndexOf(' ');
+            if (sp <= 0) continue;
+            var k = line[..sp];
+            var dot = k.LastIndexOf('.');
+            // git lowercases the section and the variable but keeps the branch name as it is.
+            if (!k.StartsWith("branch.", StringComparison.OrdinalIgnoreCase) || dot <= 7) continue;
+            var branch = k[7..dot];
+            if (!res.TryGetValue(k[(dot + 1)..], out var values)) res[k[(dot + 1)..]] = values = new(StringComparer.OrdinalIgnoreCase);
+            values[branch] = line[(sp + 1)..];
+        }
+        return res;
+    }
 
     Dictionary<string, string> ReadBranchConfig(string key)
     {
@@ -558,19 +616,67 @@ public sealed class Git
     /// <summary>The tree a commit holds. A name that has none fails the way git says it does.</summary>
     public string TreeOf(string commitish) =>
         ReadOid(commitish + "^{tree}", () => null) ?? Out(null, "rev-parse", commitish + "^{tree}");
-    public void UpdateRef(string refName, string sha) => Ok(null, "update-ref", refName, sha);
-    public void DeleteRef(string refName) => Run(null, "update-ref", "-d", refName);
+    public void UpdateRef(string refName, string sha)
+    {
+        if (RefWriter() is { } writer && writer.TryUpdate(refName, sha)) { Changed(); return; }
+        Ok(null, "update-ref", refName, sha);
+    }
+
+    public void DeleteRef(string refName)
+    {
+        if (RefWriter() is { } writer && writer.TryDelete(refName)) { Changed(); return; }
+        Run(null, "update-ref", "-d", refName);
+    }
     public void SetHeadDetached(string worktree, string sha) => Ok(worktree, "update-ref", "--no-deref", "HEAD", sha);
     public string HeadSha(string worktree) => Out(worktree, "rev-parse", "HEAD");
     public string Body(string sha) => Ok(null, "log", "-1", "--format=%B", sha).StdOut;
     /// <summary>The first line of a commit message. %s cuts at a \n and not at a lone \r, so Msg does the rest.</summary>
     public string Subject(string sha) => Msg.Subject(Out(null, "log", "-1", "--format=%s", sha));
 
-    public string CurrentBranch(string worktree)
+    public string CurrentBranch(string worktree) => HeadBranch(worktree) ?? throw new SgException("not on a branch: " + worktree);
+
+    /// <summary>
+    /// `git symbolic-ref --short -q HEAD` in a worktree: the branch it is on, or null when HEAD is
+    /// detached. Read from the worktree's HEAD file, which is where git reads it - the .git file says
+    /// which folder that is - and asked of git when the file says anything else than a branch, or when
+    /// the folder is a clone's, where the store's commands read another HEAD.
+    /// </summary>
+    public string? HeadBranch(string worktree)
     {
+        if (HeadFileBranch(worktree) is { } known) return known.Length == 0 ? null : known;
         var r = Run(worktree, "symbolic-ref", "--short", "-q", "HEAD");
-        if (!r.Ok) throw new SgException("not on a branch: " + worktree);
-        return r.StdOut.Trim();
+        return r.Ok ? r.StdOut.Trim() : null;
+    }
+
+    /// <summary>The branch in the HEAD file, "" when HEAD is detached, null when git has to be asked.</summary>
+    string? HeadFileBranch(string worktree)
+    {
+        try
+        {
+            if (TunnelOf(worktree) != null) return null;
+            var dotGit = Path.Combine(worktree, ".git");
+            string gitDir;
+            if (File.Exists(dotGit))
+            {
+                var line = File.ReadAllText(dotGit).Trim();
+                if (!line.StartsWith("gitdir: ", StringComparison.Ordinal)) return null;
+                gitDir = line[8..].Trim();
+                if (!Path.IsPathRooted(gitDir)) gitDir = Path.GetFullPath(Path.Combine(worktree, gitDir));
+            }
+            else if (Directory.Exists(dotGit)) gitDir = dotGit;
+            else return null;
+            var head = File.ReadAllText(Path.Combine(gitDir, "HEAD")).TrimEnd('\n', '\r');
+            if (head.Length == 40 && head.All(Uri.IsHexDigit)) return "";
+            const string heads = "ref: refs/heads/";
+            if (!head.StartsWith(heads, StringComparison.Ordinal)) return null;
+            var branch = head[heads.Length..];
+            // reftable keeps a placeholder here and the real HEAD elsewhere.
+            return branch.Length == 0 || branch == ".invalid" || branch.IndexOfAny(['\n', '\r', ' ']) >= 0 ? null : branch;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     public void CheckBranchName(string name)
@@ -1169,12 +1275,8 @@ public sealed class Git
     }
 
     /// <summary>The branch, also in the middle of a rebase.</summary>
-    public string BranchOrRebaseHead(string worktree)
-    {
-        var r = Run(worktree, "symbolic-ref", "--short", "-q", "HEAD");
-        if (r.Ok) return r.StdOut.Trim();
-        return RebaseHeadName(worktree) ?? throw new SgException("not on a branch: " + worktree);
-    }
+    public string BranchOrRebaseHead(string worktree) =>
+        HeadBranch(worktree) ?? RebaseHeadName(worktree) ?? throw new SgException("not on a branch: " + worktree);
 
     // ---- conflicts ----
 

@@ -38,7 +38,8 @@ public sealed class GitMemoryTests : IDisposable
     {
         var root = Ops.Init(_dir, _log, fsmonitor: false);
         var head = root.Git.RefSha(SgRoot.RootRef)!;
-        int Asked() => _log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains("rev-parse --verify --quiet refs/heads/memo"));
+        // Asked of git, whether by a process of its own or by the operation's reader.
+        int Asked() => _log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains("refs/heads/memo^{commit}"));
         using (root.Lock())
         {
             Assert.Null(root.Git.RefSha("refs/heads/memo"));
@@ -66,6 +67,34 @@ public sealed class GitMemoryTests : IDisposable
         Assert.Null(root.Git.RefSha("refs/heads/outside"));
         Proc.Run("git", ["-C", root.StorePath, "update-ref", "refs/heads/outside", head], null, _log).EnsureOk();
         Assert.Equal(head, root.Git.RefSha("refs/heads/outside"));
+    }
+
+    [Fact]
+    public void An_operation_asks_its_reader_and_the_reader_sees_what_was_written_since()
+    {
+        var root = Ops.Init(_dir, _log, fsmonitor: false);
+        var head = root.Git.RefSha(SgRoot.RootRef)!;
+        var starts = () => _log.Lines.Count(l => l.StartsWith("cmd: ") && l.EndsWith(" cat-file --batch-command"));
+        using (root.Lock())
+        {
+            Assert.Null(root.Git.RefSha("refs/heads/fresh"));
+            Assert.True(root.Git.HasCommit(head));
+            Assert.Equal(root.Git.TreeOf(head), root.Git.Out(null, "rev-parse", head + "^{tree}"));
+            Assert.Null(root.Git.ParentOf(head));
+            Assert.Equal(head, root.Git.ResolveCommit(null, SgRoot.RootRef));
+            // Another process writes; the reader, told to forget, reads the ref as it is now.
+            Proc.Run("git", ["-C", root.StorePath, "update-ref", "refs/heads/fresh", head], null, _log).EnsureOk();
+            root.Git.Changed();
+            Assert.Equal(head, root.Git.RefSha("refs/heads/fresh"));
+            Assert.Throws<SgException>(() => root.Git.TreeOf("refs/heads/none"));
+        }
+        Assert.Equal(1, starts());
+        Assert.DoesNotContain(_log.Lines, l => l.Contains("rev-parse --verify --quiet refs/heads/fresh"));
+        // The operation over, its reader is gone and holds nothing open in the store. Git's object files
+        // are read-only, which is not a lock, so that is taken off first.
+        foreach (var file in Directory.EnumerateFiles(root.StorePath, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(root.StorePath, recursive: true);
     }
 
     [Fact]

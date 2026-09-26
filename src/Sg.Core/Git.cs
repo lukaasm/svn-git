@@ -88,6 +88,7 @@ public sealed class Git
             if (extraEnv != null) foreach (var kv in extraEnv) d[kv.Key] = kv.Value;
             env = d;
         }
+        if (Changes(list, out var collects) && collects) StopReader();
         var result = Proc.Run(_exe, list, cwd, _log, stdin, env, stdoutToFile);
         Wrote(list);
         return result;
@@ -118,7 +119,36 @@ public sealed class Git
 
     internal void EndRemembering()
     {
-        lock (_memoGate) if (--_remembering == 0) _memo.Clear();
+        lock (_memoGate)
+        {
+            if (--_remembering > 0) return;
+            _memo.Clear();
+        }
+        StopReader();
+    }
+
+    GitReader? _reader;
+
+    /// <summary>
+    /// The object a revision names in the store, or null when it names nothing. Inside an operation it
+    /// is asked of the operation's reader; outside one, or when the reader cannot answer, of git.
+    /// </summary>
+    string? ReadOid(string rev, Func<string?> ask)
+    {
+        GitReader? reader;
+        lock (_memoGate)
+        {
+            if (_remembering == 0) return ask();
+            reader = _reader ??= new GitReader(_exe, Store, _env, _log);
+        }
+        return reader.TryInfo(rev, out var oid) ? oid : ask();
+    }
+
+    void StopReader()
+    {
+        GitReader? reader;
+        lock (_memoGate) { reader = _reader; _reader = null; }
+        reader?.Dispose();
     }
 
     /// <summary>For a change made to git's files from outside this store's own commands, as a clone's push does: nothing read before it is trusted, in any store.</summary>
@@ -161,6 +191,7 @@ public sealed class Git
             if (a.StartsWith('-')) continue;
             if (Harmless.Contains(a)
                 || a == "worktree" && e.MoveNext() && e.Current == "list"
+                || a == "reflog" && e.MoveNext() && e.Current == "show"
                 || a == "config" && e.MoveNext() && e.Current is "--get" or "--get-all" or "--get-regexp" or "--list" or "-l")
                 return false;
             collects = Collects.Contains(a);
@@ -410,11 +441,11 @@ public sealed class Git
 
     public string? RefSha(string refName)
     {
-        var sha = Remembered("ref " + refName, () =>
+        var sha = Remembered("ref " + refName, () => ReadOid(refName + "^{commit}", () =>
         {
             var r = Run(null, "rev-parse", "--verify", "--quiet", refName + "^{commit}");
-            return r.Ok ? r.StdOut.Trim() : "";
-        });
+            return r.Ok ? r.StdOut.Trim() : null;
+        }) ?? "");
         return sha.Length == 0 ? null : sha;
     }
 
@@ -513,11 +544,18 @@ public sealed class Git
     /// <summary>The sha a revision names, or null when it names nothing. Runs where the branch is.</summary>
     public string? ResolveCommit(string? cwd, string rev)
     {
-        var r = Run(cwd, "rev-parse", "--verify", "--quiet", rev + "^{commit}");
-        return r.Ok ? r.StdOut.Trim() : null;
+        string? Ask()
+        {
+            var r = Run(cwd, "rev-parse", "--verify", "--quiet", rev + "^{commit}");
+            return r.Ok ? r.StdOut.Trim() : null;
+        }
+        // HEAD and the like mean something else in a worktree: only the store's own questions go to the reader.
+        return cwd == null || Path.GetFullPath(cwd).TrimEnd('/', Path.DirectorySeparatorChar).Equals(Path.GetFullPath(Store).TrimEnd('/', Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ? ReadOid(rev + "^{commit}", Ask) : Ask();
     }
 
-    public string TreeOf(string commitish) => Out(null, "rev-parse", commitish + "^{tree}");
+    /// <summary>The tree a commit holds. A name that has none fails the way git says it does.</summary>
+    public string TreeOf(string commitish) =>
+        ReadOid(commitish + "^{tree}", () => null) ?? Out(null, "rev-parse", commitish + "^{tree}");
     public void UpdateRef(string refName, string sha) => Ok(null, "update-ref", refName, sha);
     public void DeleteRef(string refName) => Run(null, "update-ref", "-d", refName);
     public void SetHeadDetached(string worktree, string sha) => Ok(worktree, "update-ref", "--no-deref", "HEAD", sha);
@@ -748,11 +786,11 @@ public sealed class Git
     /// <summary>The commit under this one, or null when it is a root commit.</summary>
     public string? ParentOf(string sha)
     {
-        var parent = OfCommit("parent ", sha, () =>
+        var parent = OfCommit("parent ", sha, () => ReadOid(sha + "^", () =>
         {
             var r = Run(null, "rev-parse", "--verify", "--quiet", sha + "^");
-            return r.Ok ? r.StdOut.Trim() : "";
-        });
+            return r.Ok ? r.StdOut.Trim() : null;
+        }) ?? "");
         return parent.Length == 0 ? null : parent;
     }
 
@@ -1784,7 +1822,7 @@ public sealed class Git
     public bool HasCommit(string sha)
     {
         if (FullSha(sha) && _commits.ContainsKey("has " + sha)) return true;
-        if (!Run(null, "cat-file", "-e", sha + "^{commit}").Ok) return false;
+        if (ReadOid(sha + "^{commit}", () => Run(null, "cat-file", "-e", sha + "^{commit}").Ok ? sha : null) == null) return false;
         if (FullSha(sha)) _commits["has " + sha] = sha;
         return true;
     }

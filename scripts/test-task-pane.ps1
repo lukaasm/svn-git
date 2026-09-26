@@ -352,8 +352,18 @@ try {
     Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     Invoke-Element (Wait-For 'backup page action' { By-Id 'BackupButton' })
     $null = Wait-For 'same schedule status on Backup' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' }
+    # The schedule sits under the worktree cards: with enough of them, and the task pane open, it is
+    # below the fold. Visible means the page shows it where it is, so the page is scrolled to it.
     $lastSuccess = Wait-For 'same success history visible on Backup' {
         $t = By-Id 'BackupLastSuccess'
+        if ($t -and $t.Current.IsOffscreen) {
+            $parent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($t)
+            $scroll = $null
+            while ($parent -and !($parent.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable)) {
+                $parent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
+            }
+            if ($parent -and $scroll) { $scroll.SetScrollPercent(-1, 100) }
+        }
         if ($t.Current.HelpText -and !$t.Current.IsOffscreen -and $t.Current.BoundingRectangle.Width -gt 0) { $t }
     }
     if ([DateTimeOffset]::Parse($lastSuccess.Current.HelpText) -ne $successTime) { throw 'Backup and Settings show different success times.' }

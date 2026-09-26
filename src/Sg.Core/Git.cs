@@ -218,12 +218,25 @@ public sealed class Git
             if (Harmless.Contains(a)
                 || a == "worktree" && e.MoveNext() && e.Current == "list"
                 || a == "reflog" && e.MoveNext() && e.Current == "show"
-                || a == "config" && e.MoveNext() && e.Current is "--get" or "--get-all" or "--get-regexp" or "--list" or "-l")
+                || a == "config" && ReadsConfig(e))
                 return false;
             collects = Collects.Contains(a);
             return true;
         }
         return true;
+    }
+
+    /// <summary>
+    /// A config command that only reads: one of its options asks for a value or the list. Options like
+    /// -z or --local may come first, and a read that was taken for a write threw away what was remembered
+    /// every time it ran.
+    /// </summary>
+    static bool ReadsConfig(IEnumerator<string> rest)
+    {
+        while (rest.MoveNext())
+            if (rest.Current is "--get" or "--get-all" or "--get-regexp" or "--list" or "-l" or "--get-urlmatch" or "--get-color" or "--get-colorbool")
+                return true;
+        return false;
     }
 
     /// <summary>Read once per operation: the first answer while nothing was written since, else a fresh one.</summary>
@@ -511,32 +524,42 @@ public sealed class Git
             return new(Remembered("branch config " + key, () => ReadBranchConfig(key)), StringComparer.OrdinalIgnoreCase);
         // Every key sg keeps on a branch starts with sg, so one read serves them all: the overview asked
         // for five of them one process each, on every refresh.
-        return Remembered("branch config sg", ReadSgBranchConfig).TryGetValue(key, out var values)
+        return Settings().Branches.TryGetValue(key, out var values)
             ? new(values, StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>branch.&lt;name&gt;.sg* for every branch: key (as git spells it, lower case) to branch to value.</summary>
-    Dictionary<string, Dictionary<string, string>> ReadSgBranchConfig()
+    /// <summary>
+    /// What sg reads of git's config in an operation, in one read: branch.&lt;name&gt;.sg* for every branch
+    /// (key as git spells it, lower case, to branch to value), and the few settings that decide whether git
+    /// has to answer a question itself - the commit encoding, a mailmap, submodules left out of diffs. Each
+    /// was a process of its own in every operation that asked.
+    /// </summary>
+    sealed record ConfigRead(Dictionary<string, Dictionary<string, string>> Branches, Dictionary<string, string> Values);
+
+    ConfigRead Settings() => Remembered("config", () =>
     {
-        var res = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-        // git config exits 1 when nothing matches, which is not an error here.
-        var r = Run(null, "config", "--get-regexp", @"^branch\..*\.sg[^.]*$");
-        if (!r.Ok) return res;
-        foreach (var raw in r.StdOut.Split('\n'))
+        var branches = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // git config exits 1 when nothing matches, which is not an error here. -z keeps a value whole.
+        var r = Run(null, "config", "-z", "--get-regexp", @"^(branch\..*\.sg[^.]*|i18n\.commitencoding|mailmap\..*|diff\.ignoresubmodules)$");
+        if (!r.Ok) return new ConfigRead(branches, values);
+        foreach (var entry in r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
-            var line = raw.TrimEnd('\r');
-            var sp = line.IndexOf(' ');
-            if (sp <= 0) continue;
-            var k = line[..sp];
-            var dot = k.LastIndexOf('.');
-            // git lowercases the section and the variable but keeps the branch name as it is.
-            if (!k.StartsWith("branch.", StringComparison.OrdinalIgnoreCase) || dot <= 7) continue;
-            var branch = k[7..dot];
-            if (!res.TryGetValue(k[(dot + 1)..], out var values)) res[k[(dot + 1)..]] = values = new(StringComparer.OrdinalIgnoreCase);
-            values[branch] = line[(sp + 1)..];
+            var nl = entry.IndexOf('\n');
+            var k = nl < 0 ? entry : entry[..nl];
+            var v = nl < 0 ? "true" : entry[(nl + 1)..];
+            if (k.StartsWith("branch.", StringComparison.OrdinalIgnoreCase))
+            {
+                var dot = k.LastIndexOf('.');
+                if (dot <= 7) continue;
+                // git lowercases the section and the variable but keeps the branch name as it is.
+                if (!branches.TryGetValue(k[(dot + 1)..], out var byBranch)) branches[k[(dot + 1)..]] = byBranch = new(StringComparer.OrdinalIgnoreCase);
+                byBranch[k[7..dot]] = v;
+            }
+            else values[k] = v;
         }
-        return res;
-    }
+        return new ConfigRead(branches, values);
+    });
 
     Dictionary<string, string> ReadBranchConfig(string key)
     {
@@ -1175,7 +1198,7 @@ public sealed class Git
         // Without renames, between two trees of the store, inside an operation: both trees walked on
         // the reader. diff.ignoreSubmodules would have git leave submodules out, so then git answers.
         if (!renames && (worktree == null || worktree == Store) && Reader() is { } reader
-            && Remembered("diff submodules", () => Run(null, "config", "--get", "diff.ignoreSubmodules").StdOut.Trim()).Length == 0)
+            && !Settings().Values.ContainsKey("diff.ignoresubmodules"))
         {
             (string, byte[])? Read(string rev) =>
                 reader.TryContents(rev, out var header, out var data) && header is { Type: "tree" } h && data != null ? (h.Oid, data) : null;
@@ -2018,8 +2041,8 @@ public sealed class Git
     {
         if (System.Environment.GetEnvironmentVariable("GIT_AUTHOR_DATE") != null || System.Environment.GetEnvironmentVariable("GIT_COMMITTER_DATE") != null)
             return false;
-        var said = Remembered("commit encoding", () => Run(null, "config", "--get", "i18n.commitEncoding").StdOut.Trim());
-        return said.Length == 0 || said.Equals("utf-8", StringComparison.OrdinalIgnoreCase) || said.Equals("utf8", StringComparison.OrdinalIgnoreCase);
+        return !Settings().Values.TryGetValue("i18n.commitencoding", out var said)
+            || said.Equals("utf-8", StringComparison.OrdinalIgnoreCase) || said.Equals("utf8", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Who wrote a commit and who committed it, both dates in the form git reads back, and its whole message.</summary>
@@ -2036,7 +2059,7 @@ public sealed class Git
     }
 
     /// <summary>No mailmap in git's config: git log would print the names it maps to, not the commit's own.</summary>
-    bool NoMailmap() => Remembered("mailmap", () => Run(null, "config", "--get-regexp", @"^mailmap\.").StdOut.Trim()).Length == 0;
+    bool NoMailmap() => !Settings().Values.Keys.Any(k => k.StartsWith("mailmap.", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// A commit with every field taken from the caller: author, committer and both dates. The same

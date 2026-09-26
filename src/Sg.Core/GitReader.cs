@@ -39,8 +39,8 @@ sealed class GitReader : IDisposable
         _log = log;
     }
 
-    /// <summary>What an object's header says: its id and its type.</summary>
-    public readonly record struct Header(string Oid, string Type);
+    /// <summary>What an object's header says: its id, its type and its size in bytes.</summary>
+    public readonly record struct Header(string Oid, string Type, long Size);
 
     /// <summary>
     /// What a revision names: its object id, or null when it names nothing. False when this reader
@@ -100,7 +100,7 @@ sealed class GitReader : IDisposable
                 if (line.EndsWith(" ambiguous", StringComparison.Ordinal)) return false;
                 var fields = line.Split(' ');
                 if (fields.Length != 3 || !long.TryParse(fields[2], out var size)) { Stop(); return false; }
-                header = new Header(fields[0], fields[1]);
+                header = new Header(fields[0], fields[1], size);
                 if (!read) return true;
                 // The object's bytes, then the newline git puts after them.
                 try

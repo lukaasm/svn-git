@@ -132,7 +132,9 @@ static class ObjectWriter
         /// </summary>
         public static (long Seconds, TimeSpan Zone)? Date(string text)
         {
-            if (DateTimeOffset.TryParseExact(text, "yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out var iso))
+            // %aI writes a zone of +0000 as Z.
+            if (DateTimeOffset.TryParseExact(text, ["yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss'Z'"], CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var iso))
                 return (iso.ToUnixTimeSeconds(), iso.Offset);
             var parts = text.Split(' ');
             if (parts.Length == 2 && long.TryParse(parts[0].TrimStart('@'), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)

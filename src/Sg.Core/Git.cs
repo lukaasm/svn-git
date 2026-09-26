@@ -1100,6 +1100,19 @@ public sealed class Git
         var res = new Dictionary<string, long>(StringComparer.Ordinal);
         var list = shas.Distinct(StringComparer.Ordinal).ToList();
         if (list.Count == 0) return res;
+        // Inside an operation the reader has every size already; a list it cannot finish goes to git whole.
+        if (Reader() is { } reader)
+        {
+            var answered = true;
+            foreach (var sha in list)
+            {
+                if (!reader.TryContents(sha, out var header, out _, headerOnly: true)) { answered = false; break; }
+                // Keyed by the id git names, as %(objectname) is; an object the store lacks has no size.
+                if (header is { } h) res[h.Oid] = h.Size;
+            }
+            if (answered) return res;
+            res.Clear();
+        }
         var r = Run(Store, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], Encoding.UTF8.GetBytes(string.Join("\n", list) + "\n"));
         foreach (var line in r.StdOut.Split('\n'))
         {
@@ -1159,6 +1172,15 @@ public sealed class Git
 
     public List<DiffEntry> DiffNameStatus(string worktree, string from, string to, bool renames = true)
     {
+        // Without renames, between two trees of the store, inside an operation: both trees walked on
+        // the reader. diff.ignoreSubmodules would have git leave submodules out, so then git answers.
+        if (!renames && (worktree == null || worktree == Store) && Reader() is { } reader
+            && Remembered("diff submodules", () => Run(null, "config", "--get", "diff.ignoreSubmodules").StdOut.Trim()).Length == 0)
+        {
+            (string, byte[])? Read(string rev) =>
+                reader.TryContents(rev, out var header, out var data) && header is { Type: "tree" } h && data != null ? (h.Oid, data) : null;
+            if (TreeDiff.NameStatus(Read, from, to) is { } diff) return diff;
+        }
         // A patch that is going to be applied again must not carry rename headers: git apply takes such
         // a file only as a whole, and a shelf is written back file by file.
         var r = Ok(worktree, "diff", "--name-status", "-z", renames ? "-M" : "--no-renames", "--no-color", from, to);
@@ -2002,11 +2024,19 @@ public sealed class Git
 
     /// <summary>Who wrote a commit and who committed it, both dates in the form git reads back, and its whole message.</summary>
     public CommitIdentity IdentityOf(string sha) => OfCommit("identity ", sha, () =>
+        Reader() is { } reader && NoMailmap() && reader.TryContents(sha + "^{commit}", out var header, out var raw) && header is { Type: "commit" }
+            && raw != null && CommitText.Identity(raw) is { } read
+            ? read : IdentityByGit(sha));
+
+    internal CommitIdentity IdentityByGit(string sha)
     {
         var p = Ok(null, "log", "-1", "--format=%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%B", sha).StdOut.Split('\x1f', 7);
         if (p.Length < 7) throw new SgException("cannot read commit " + sha);
         return new CommitIdentity(p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
-    });
+    }
+
+    /// <summary>No mailmap in git's config: git log would print the names it maps to, not the commit's own.</summary>
+    bool NoMailmap() => Remembered("mailmap", () => Run(null, "config", "--get-regexp", @"^mailmap\.").StdOut.Trim()).Length == 0;
 
     /// <summary>
     /// A commit with every field taken from the caller: author, committer and both dates. The same

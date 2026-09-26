@@ -119,15 +119,23 @@ public sealed class Git
     {
         lock (_memoGate) _remembering++;
         Interlocked.Increment(ref s_scopes);
+        s_flow.Value++;
     }
 
-    /// <summary>Operations and reads remembering, in every store of the process: while there are any, clones remember too.</summary>
+    /// <summary>Operations and reads remembering, in every store of the process: the last to end forgets what clones said.</summary>
     static int s_scopes;
+
+    /// <summary>
+    /// The operations and reads the code running now is inside of: it and what it starts, its Fan and its
+    /// tasks. A clone's answers are kept only there. Kept for the whole process, one operation's scope made
+    /// every other caller's clone reads stale too - a remote added in between went unseen.
+    /// </summary>
+    static readonly AsyncLocal<int> s_flow = new();
 
     /// <summary>Every write anywhere - a store's command, a clone's, a file written into .git - moves this on.</summary>
     static long s_anyWrites;
 
-    internal static bool AnyRemembering => Volatile.Read(ref s_scopes) > 0;
+    internal static bool AnyRemembering => s_flow.Value > 0;
     internal static long AnyWrites => Interlocked.Read(ref s_anyWrites);
 
     /// <summary>
@@ -149,6 +157,7 @@ public sealed class Git
 
     internal void EndRemembering()
     {
+        if (s_flow.Value > 0) s_flow.Value--;
         if (Interlocked.Decrement(ref s_scopes) == 0) GitRepo.ForgetAll();
         lock (_memoGate)
         {
@@ -265,13 +274,15 @@ public sealed class Git
     T Remembered<T>(string key, Func<T> read) where T : class
     {
         long writes;
+        // Only for the flow that holds the operation: another caller reading at the same time is not its reader.
+        var inside = AnyRemembering;
         lock (_memoGate)
         {
             writes = Writes;
-            if (_remembering > 0 && _memo.TryGetValue(key, out var known) && known.Writes == writes) return (T)known.Value;
+            if (inside && _remembering > 0 && _memo.TryGetValue(key, out var known) && known.Writes == writes) return (T)known.Value;
         }
         var value = read();
-        lock (_memoGate) if (_remembering > 0 && Writes == writes) _memo[key] = (writes, value);
+        lock (_memoGate) if (inside && _remembering > 0 && Writes == writes) _memo[key] = (writes, value);
         return value;
     }
 

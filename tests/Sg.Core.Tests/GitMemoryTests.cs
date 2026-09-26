@@ -62,6 +62,46 @@ public sealed class GitMemoryTests : IDisposable
         Assert.Equal(4, Asked());
     }
 
+    /// <summary>
+    /// A clone's answers are kept inside the operation that asks, and only there: another operation
+    /// running on another thread made this one's reads stale, and a remote added between two of them went unseen.
+    /// </summary>
+    [Fact]
+    public async Task A_clone_remembers_only_inside_the_operation_that_asks()
+    {
+        var root = Ops.Init(_dir, _log, fsmonitor: false);
+        var clone = Path.Combine(_dir, "clone");
+        Proc.Run("git", ["init", "-q", clone], null, _log).EnsureOk();
+        var repo = new GitRepo("git", clone, _log);
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var other = Task.Run(() =>
+        {
+            using (root.Git.Reading()) { held.Set(); release.Wait(); }
+        });
+        held.Wait();
+        try
+        {
+            Assert.Empty(repo.Remotes());
+            Proc.Run("git", ["-C", clone, "remote", "add", "origin", "https://example.com/x.git"], null, _log).EnsureOk();
+            Assert.Equal(["origin"], repo.Remotes());
+
+            int Asked() => _log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains(clone) && l.Contains(" --get-regexp "));
+            using (root.Git.Reading())
+            {
+                _log.Clear();
+                repo.Remotes();
+                repo.Remotes();
+                Assert.Equal(1, Asked());
+            }
+        }
+        finally
+        {
+            release.Set();
+            await other;
+        }
+    }
+
     [Fact]
     public void Nothing_is_remembered_outside_an_operation()
     {

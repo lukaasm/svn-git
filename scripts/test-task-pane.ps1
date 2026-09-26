@@ -129,7 +129,7 @@ try {
         Save-Window 'recovery'
         Invoke-Element $button
         $null = Wait-For 'saved recovery details' { By-Name 'Saved edits need review after interruption.' }
-        Invoke-Element (By-Id 'NavigationViewBackButton')
+        Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
         $null = Wait-For 'overview after recovery' { By-Id 'SyncButton' }
         Remove-Item -LiteralPath $recoveryFile
         $recoveryFile = $null
@@ -190,7 +190,7 @@ try {
     $cancelledValue = $cancelledOutput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current
     if (!$cancelledValue.IsReadOnly -or $cancelledValue.Value -notlike '*waiting for*') { throw 'Cancelled task lost its repository wait output.' }
     if ((By-Id 'TaskOutputRepository').Current.Name -ne $rootPath) { throw 'Task output lost its original repository.' }
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     $null = Wait-For 'back to settings after reading task output' { By-Id 'MinLength' }
     Invoke-Element (By-Id 'TaskQueueToggle')
     Invoke-Element $cancelled
@@ -200,7 +200,7 @@ try {
 
     # A normal completion must replace its ghost, keep its receipt, and leave navigation alone.
     Start-UiScenario 'Retry and successful worktree creation'
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     $null = Wait-For 'back on overview' { By-Id 'SyncButton' }
     # WinUI's navigation entrance animation temporarily rejects InvokePattern.
     Start-Sleep -Milliseconds 400
@@ -228,7 +228,7 @@ try {
     $selected = $output.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).GetSelection()[0].GetText(-1)
     if ($selected -ine $query) { throw 'Task log search did not select the match.' }
     if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'task-output.png') }
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     $null = Wait-For 'back from task output' { By-Id 'SyncButton' }
     Invoke-Element (By-Id 'TaskQueueToggle')
     Select-TaskFilter 1
@@ -266,7 +266,7 @@ try {
     $null = Wait-For 'dialog closes and recovery opens' { By-Name 'Saved edits for destination navigation.' }
     Remove-Item -LiteralPath $recoveryFile
     $recoveryFile = $null
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     $null = Wait-For 'back on overview after destination recovery' { By-Id 'SyncButton' }
     Save-Window 'completed'
     Start-UiScenario 'Clear task history'
@@ -306,7 +306,7 @@ try {
     if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'advanced-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
     Invoke-Element $review
     $null = Wait-For 'review page opens from advanced menu' { By-Name 'Run local checks' }
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     $null = Wait-For 'overview returns after advanced navigation' { By-Id 'SyncButton' }
     if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'worktree-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
     Start-UiScenario 'Only the backup interval triggers automatic backups'
@@ -319,7 +319,7 @@ try {
     $nextRun = Wait-For 'next backup time updates without leaving Settings' { $t = By-Id 'BackupNextRun'; if ($t.Current.HelpText) { $t } }
     $firstDue = [DateTimeOffset]::Parse($nextRun.Current.HelpText)
     if ([Math]::Abs(($firstDue.UtcDateTime - $intervalStarted.AddMinutes(1)).TotalSeconds) -gt 5) { throw 'Displayed backup time is not the configured interval.' }
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     $null = Wait-For 'overview after setting interval' { By-Id 'SyncButton' }
     while ([DateTime]::UtcNow -lt $intervalStarted.AddSeconds(15)) {
         if (Task-Buttons | Where-Object { $_.Current.Name -like '*Scheduled backup*' }) { throw 'Navigation triggered a backup before the interval.' }
@@ -349,7 +349,7 @@ try {
     (Wait-For 'backup interval setting again' { By-Id 'BackupMinutes' }).GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(0)
     $null = Wait-For 'automatic backups disabled' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 0 }
     $null = Wait-For 'disabled status updates immediately' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' -and !(By-Id 'BackupNextRun').Current.HelpText }
-    Invoke-Element (By-Id 'NavigationViewBackButton')
+    Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
     Invoke-Element (Wait-For 'backup page action' { By-Id 'BackupButton' })
     $null = Wait-For 'same schedule status on Backup' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' }
     $lastSuccess = Wait-For 'same success history visible on Backup' {

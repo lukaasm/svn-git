@@ -615,6 +615,35 @@ public sealed class Git
     }
 
     /// <summary>
+    /// CountBoth of one commit against many refs, in one process: for-each-ref counts every ref against the
+    /// same commit in one walk, where rev-list took a process a ref. Keyed by the ref's full name; a ref
+    /// git gave no answer for is missing, for the caller to ask CountBoth.
+    /// </summary>
+    public Dictionary<string, (int Left, int Right)> CountBothEach(string leftSha, IReadOnlyCollection<string> rights)
+    {
+        var res = new Dictionary<string, (int Left, int Right)>(StringComparer.Ordinal);
+        // The format takes the commit between parentheses, which only a sha is sure never to hold.
+        if (!FullSha(leftSha) || rights.Count == 0) return res;
+        var wanted = rights.ToHashSet(StringComparer.Ordinal);
+        foreach (var chunk in wanted.Chunk(200))
+        {
+            // A pattern also matches the refs below it, refs/heads/a matching refs/heads/a/b: only the asked are kept.
+            var r = Run(null, ["for-each-ref", "--format=%(refname)%1f%(ahead-behind:" + leftSha + ")", .. chunk]);
+            if (!r.Ok) return res;
+            foreach (var line in r.StdOut.Split('\n'))
+            {
+                var sep = line.IndexOf('\x1f');
+                if (sep <= 0 || !wanted.Contains(line[..sep])) continue;
+                // ahead-behind is what the ref has that the commit has not, then the other way round.
+                var p = line[(sep + 1)..].Trim().Split(' ');
+                if (p.Length == 2 && int.TryParse(p[0], out var ahead) && int.TryParse(p[1], out var behind))
+                    res[line[..sep]] = (behind, ahead);
+            }
+        }
+        return res;
+    }
+
+    /// <summary>
     /// The git folder of a worktree, read from its .git file. A linked worktree points at
     /// &lt;store&gt;/worktrees/&lt;name&gt;, which is what "rev-parse --git-path" would answer, without the process.
     /// </summary>
@@ -1666,7 +1695,51 @@ public sealed class Git
     /// </summary>
     public StatusSnapshot Status(string worktree, bool untracked = true)
     {
-        var r = Ok(worktree, "status", "--porcelain=v1", "-b", "-z", untracked ? "--untracked-files=all" : "--untracked-files=no");
+        // Untracked files the way git's untracked cache holds them, a new folder as the folder: git keeps
+        // that cache for the mode the config names, normal unless set, and -uall walked every folder of the
+        // checkout on every call. The folders are opened afterwards, into the files -uall would list.
+        var status = Status(worktree, untracked ? "normal" : "no", out var folders);
+        if (folders.Count == 0) return status;
+        if (folders.Count > FoldersOpened) return Status(worktree, "all", out _);
+        var inside = FilesIn(folders, a => Run(worktree, a));
+        var opened = new List<StatusEntry>();
+        foreach (var e in status.Entries)
+        {
+            if (!e.Untracked || !folders.Contains(e.Path + "/")) opened.Add(e);
+            else if (inside.TryGetValue(e.Path + "/", out var files)) opened.AddRange(files.Select(f => new StatusEntry("?", "?", PathUtil.Rel(f), null)));
+        }
+        return new StatusSnapshot(status.Branch, opened);
+    }
+
+    /// <summary>Past this many new folders, a status asks -uall itself rather than name them all on one command line.</summary>
+    internal const int FoldersOpened = 200;
+
+    /// <summary>
+    /// The files in the untracked folders a normal-mode status named - "dir/", with the slash - keyed by the
+    /// folder, as -uall lists them: one ls-files over those folders only, with the same ignore rules.
+    /// </summary>
+    internal static Dictionary<string, List<string>> FilesIn(IReadOnlySet<string> folders, Func<IEnumerable<string>, ProcResult> run)
+    {
+        var inside = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var r = run(["ls-files", "-z", "--others", "--exclude-standard", "--full-name", "--", .. folders.Select(f => ":(top,literal)" + f)]).EnsureOk();
+        foreach (var file in r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // The folders never hold one another, so the one a file is in is the first of its parents named.
+            for (var slash = file.IndexOf('/'); slash >= 0; slash = file.IndexOf('/', slash + 1))
+                if (folders.Contains(file[..(slash + 1)]))
+                {
+                    (inside.TryGetValue(file[..(slash + 1)], out var list) ? list : inside[file[..(slash + 1)]] = []).Add(file);
+                    break;
+                }
+        }
+        return inside;
+    }
+
+    /// <summary>One git status in the given untracked mode, and the untracked folders it named as folders.</summary>
+    StatusSnapshot Status(string worktree, string untrackedMode, out HashSet<string> folders)
+    {
+        folders = new HashSet<string>(StringComparer.Ordinal);
+        var r = Ok(worktree, "status", "--porcelain=v1", "-b", "-z", "--untracked-files=" + untrackedMode);
         var tok = r.StdOut.Split('\0');
         var res = new List<StatusEntry>();
         string? branch = null;
@@ -1691,6 +1764,8 @@ public sealed class Git
             var path = PathUtil.Rel(s[3..]);
             string? old = null;
             if (x is "R" or "C") old = PathUtil.Rel(tok[i++]);
+            // A repository inside the checkout is named as a folder by -uall too, and opens into itself.
+            if (x == "?" && s.EndsWith('/') && untrackedMode == "normal") folders.Add(path + "/");
             res.Add(new StatusEntry(x, y, path, old));
         }
         return new StatusSnapshot(branch, res);

@@ -886,8 +886,12 @@ public static class Ops
         }
 
         // git status walks the whole worktree, and a worktree here holds tens of thousands of files.
-        // One worktree at a time made the overview wait for the sum of them.
-        res.Worktrees.AddRange(Fan.Map(found, w => WorktreeStatusOf(git, refs, bases, shared, backedUp, w)));
+        // One worktree at a time made the overview wait for the sum of them. How far each branch is from
+        // its base is counted meanwhile, one git call per base where it was one per worktree.
+        var (worktrees, counts) = Fan.Two(
+            () => Fan.Map(found, w => WorktreeStatusOf(git, refs, bases, shared, w)),
+            () => CountFromBases(git, refs, bases, found.Select(f => f.Branch)));
+        res.Worktrees.AddRange(Fan.Map(worktrees, ws => Counted(git, refs, backedUp, counts, ws)));
         var backupFailed = git.BranchConfig(Backup.FailedKey);
         var backupRemote = git.BranchConfig(Backup.RemoteKey);
         foreach (var ws in res.Worktrees)
@@ -902,30 +906,14 @@ public static class Ops
     }
 
     static WorktreeStatus WorktreeStatusOf(Git git, Dictionary<string, RefInfo> refs, Dictionary<string, string> bases,
-        Dictionary<string, string> shared, Dictionary<string, string> backedUp, (WorktreeInfo Wt, string Branch, Replay Stopped, bool Missing) w)
+        Dictionary<string, string> shared, (WorktreeInfo Wt, string Branch, Replay Stopped, bool Missing) w)
     {
         var (info, branch, stopped, missing) = w;
         var ws = new WorktreeStatus { Branch = branch, Path = info.Path, Missing = missing, Stopped = stopped };
         ws.BackupFinalizing = !missing && stopped == Replay.None && Backup.ReplayName(git, info.Path) != null;
         var rebasing = ws.RebaseInProgress;
         if (shared.TryGetValue(branch, out var how)) ws.Shared = how;
-        var branchRef = "refs/heads/" + branch;
-        var hasBranch = refs.TryGetValue(branchRef, out var head);
-        if (bases.TryGetValue(branch, out var baseName))
-        {
-            ws.Base = baseName;
-            var snapRef = SgRoot.SnapshotRefPrefix + baseName;
-            if (refs.ContainsKey(snapRef) && hasBranch)
-            {
-                // One rev-list answers both directions.
-                var (behind, ahead) = git.CountBoth(snapRef, branchRef);
-                ws.Ahead = ahead;
-                ws.Behind = behind;
-                ws.NeedsRebase = ws.Behind > 0 && !rebasing;
-                ws.BackedUp = Backup.BackedUpAt(backedUp.GetValueOrDefault(branch));
-                ws.NotBackedUp = Backup.NotBackedUp(git, branch, head!.Sha, ws.Ahead, refs.GetValueOrDefault(Backup.PushedRef("branch", branch)));
-            }
-        }
+        if (bases.TryGetValue(branch, out var baseName)) ws.Base = baseName;
         if (!missing)
         {
             var dirty = rebasing ? 0 : git.DirtyCount(info.Path);
@@ -933,7 +921,39 @@ public static class Ops
             ws.DirtyFiles = dirty;
             if (rebasing) ws.Conflicts = git.ConflictedFiles(info.Path).Count;
         }
-        if (hasBranch) ws.Pending = head!.Subject.StartsWith("not pushed yet", StringComparison.OrdinalIgnoreCase);
+        if (refs.TryGetValue("refs/heads/" + branch, out var head)) ws.Pending = head.Subject.StartsWith("not pushed yet", StringComparison.OrdinalIgnoreCase);
+        return ws;
+    }
+
+    /// <summary>Each branch against the snapshot of its base, in one git call per snapshot.</summary>
+    static Dictionary<string, (int Left, int Right)> CountFromBases(Git git, Dictionary<string, RefInfo> refs,
+        Dictionary<string, string> bases, IEnumerable<string> branches)
+    {
+        var bySnapshot = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var branch in branches)
+            if (bases.TryGetValue(branch, out var baseName) && refs.TryGetValue(SgRoot.SnapshotRefPrefix + baseName, out var snap)
+                && refs.ContainsKey("refs/heads/" + branch))
+                (bySnapshot.TryGetValue(snap.Sha, out var list) ? list : bySnapshot[snap.Sha] = []).Add("refs/heads/" + branch);
+        var res = new Dictionary<string, (int Left, int Right)>(StringComparer.Ordinal);
+        foreach (var counted in Fan.Map(bySnapshot.ToList(), kv => git.CountBothEach(kv.Key, kv.Value)))
+            foreach (var (branchRef, both) in counted) res[branchRef] = both;
+        return res;
+    }
+
+    /// <summary>How far a worktree's branch is from its base, and how much of it a backup has not got.</summary>
+    static WorktreeStatus Counted(Git git, Dictionary<string, RefInfo> refs, Dictionary<string, string> backedUp,
+        Dictionary<string, (int Left, int Right)> counts, WorktreeStatus ws)
+    {
+        var branchRef = "refs/heads/" + ws.Branch;
+        var snapRef = SgRoot.SnapshotRefPrefix + ws.Base;
+        if (ws.Base.Length == 0 || !refs.TryGetValue(branchRef, out var head) || !refs.ContainsKey(snapRef)) return ws;
+        // A branch the batch had no answer for - a git older than 2.41 has no ahead-behind - is counted alone.
+        var (behind, ahead) = counts.TryGetValue(branchRef, out var both) ? both : git.CountBoth(snapRef, branchRef);
+        ws.Ahead = ahead;
+        ws.Behind = behind;
+        ws.NeedsRebase = ws.Behind > 0 && !ws.RebaseInProgress;
+        ws.BackedUp = Backup.BackedUpAt(backedUp.GetValueOrDefault(ws.Branch));
+        ws.NotBackedUp = Backup.NotBackedUp(git, ws.Branch, head.Sha, ws.Ahead, refs.GetValueOrDefault(Backup.PushedRef("branch", ws.Branch)));
         return ws;
     }
 

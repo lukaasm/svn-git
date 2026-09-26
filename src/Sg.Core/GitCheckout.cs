@@ -1009,15 +1009,23 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
 
     static List<CheckoutChange> StatusOf(GitUnit unit)
     {
-        var r = unit.Repo.Run("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=all");
-        r.EnsureOk();
+        // Untracked files as normal mode lists them, a new folder as the folder, each such folder opened into
+        // its files after, as Git.Status does: git's untracked cache serves normal, and -uall walked every folder.
+        var (parts, folders) = StatusParts(unit, "normal");
+        if (folders.Count > Git.FoldersOpened) (parts, folders) = StatusParts(unit, "all");
+        var inside = folders.Count == 0 ? new Dictionary<string, List<string>>() : Git.FilesIn(folders, a => unit.Repo.Run(a));
         var res = new List<CheckoutChange>();
-        var parts = r.StdOut.Split('\0');
         for (var i = 0; i < parts.Length; i++)
         {
             var e = parts[i];
             if (e.Length < 4) continue;
             char x = e[0], y = e[1];
+            if (x == '?' && folders.Contains(e[3..]))
+            {
+                foreach (var file in inside.GetValueOrDefault(e[3..]) ?? [])
+                    res.Add(new CheckoutChange { Path = unit.Full(PathUtil.Rel(file)), Item = "unversioned", Props = "none", Wc = unit.Wc });
+                continue;
+            }
             var path = PathUtil.Rel(e[3..]);
             if (x is 'R' or 'C') i++;   // the old path follows; --no-renames keeps this from happening
             var item = (x, y) switch
@@ -1035,6 +1043,17 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
             res.Add(new CheckoutChange { Path = unit.Full(path), Item = item, Props = "none", Wc = unit.Wc });
         }
         return res;
+    }
+
+    /// <summary>One status of a repository, and in normal mode the untracked folders it named as folders.</summary>
+    static (string[] Parts, HashSet<string> Folders) StatusParts(GitUnit unit, string untracked)
+    {
+        var parts = unit.Repo.Run("status", "--porcelain=v1", "-z", "--untracked-files=" + untracked, "--no-renames", "--ignore-submodules=all")
+            .EnsureOk().StdOut.Split('\0');
+        var folders = untracked == "normal"
+            ? parts.Where(p => p.Length > 4 && p.StartsWith("?? ", StringComparison.Ordinal) && p.EndsWith('/')).Select(p => p[3..]).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        return (parts, folders);
     }
 
     public int LocalEditCount(SgRoot root, CheckoutConfig co) => Changes(root, co).Count;

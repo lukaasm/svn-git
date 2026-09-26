@@ -385,6 +385,27 @@ public sealed class GitCheckoutTests : IDisposable
     }
 
     [Fact]
+    public void Untracked_files_in_new_folders_are_listed_one_by_one_as_uall_lists_them()
+    {
+        f.Setup();
+        GitFixture.Put(f.Checkout, ".gitignore", "*.log\n");
+        GitFixture.Put(f.Checkout, "top.txt", "t\n");
+        GitFixture.Put(f.Checkout, "new dir/x.txt", "x\n");
+        GitFixture.Put(f.Checkout, "new dir/deep/y.txt", "y\n");
+        GitFixture.Put(f.Checkout, "new dir/skip.log", "noise\n");
+        GitFixture.Put(f.Checkout, "only-ignored/z.log", "noise\n");
+        GitFixture.Put(f.Checkout, "mixed[1]/f.txt", "f\n");
+        GitFixture.Put(f.Checkout, "docs/new/n.txt", "n\n");
+        var byGit = GitFixture.Git(f.Checkout, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries).Where(e => e.StartsWith("?? ", StringComparison.Ordinal)).Select(e => e[3..])
+            .Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var here = Ops.CheckoutChanges(f.Root, f.Co).Where(c => c.Item == "unversioned").Select(c => c.Path).ToList();
+        Assert.Equal(byGit, here);
+        Assert.Contains("new dir/deep/y.txt", here);
+        Assert.DoesNotContain(here, p => p.EndsWith(".log", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void A_folder_ignored_from_the_changes_window_lands_in_its_gitignore()
     {
         f.Setup();

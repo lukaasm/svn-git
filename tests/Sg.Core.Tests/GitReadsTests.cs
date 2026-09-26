@@ -112,4 +112,114 @@ public sealed class GitReadsTests : IDisposable
         Assert.Equal(byGit.OrderBy(kv => kv.Key), here.OrderBy(kv => kv.Key));
         Assert.Equal(4, here.Count);
     }
+
+    [Fact]
+    public void Counts_against_one_commit_are_rev_list_s()
+    {
+        var root = Ops.Init(_dir, _log, fsmonitor: false);
+        var git = root.Git;
+        var tree = git.EmptyTree();
+        string Commit(string? parent, string message) => git.CommitTree(tree, parent, message);
+        var b1 = Commit(null, "b1");
+        var b2 = Commit(b1, "b2");
+        var b3 = Commit(b2, "b3");
+        var ahead = Commit(Commit(b3, "a1"), "a2");
+        var diverged = Commit(Commit(b2, "d1"), "d2");
+        var refs = new Dictionary<string, string>
+        {
+            ["refs/heads/ahead"] = ahead,
+            ["refs/heads/behind"] = b1,
+            ["refs/heads/diverged"] = diverged,
+            ["refs/heads/team/merged"] = git.Out(null, "commit-tree", tree, "-p", diverged, "-p", ahead, "-m", "merge"),
+            ["refs/heads/equal"] = b3,
+            ["refs/heads/unrelated"] = Commit(Commit(null, "u1"), "u2"),
+            ["refs/heads/other/deep"] = ahead,
+        };
+        foreach (var (name, sha) in refs) git.UpdateRef(name, sha);
+        // refs/heads/other is no ref, yet as a pattern it matches the one below it, which was not asked for.
+        var asked = refs.Keys.Where(k => k != "refs/heads/other/deep").Concat(["refs/heads/other", "refs/heads/missing"]).ToList();
+        _log.Clear();
+        var here = git.CountBothEach(b3, asked);
+        Assert.Single(_log.Lines, l => l.StartsWith("cmd: ") && l.Contains(" for-each-ref "));
+        Assert.Equal(asked.Count - 2, here.Count);
+        foreach (var name in asked.SkipLast(2))
+            Assert.Equal(git.CountBoth(b3, name), here[name]);
+        // A name in place of the commit is refused rather than read into the format.
+        Assert.Empty(git.CountBothEach("refs/heads/equal", asked));
+    }
+
+    [Fact]
+    public void Status_lists_untracked_files_as_uall_does()
+    {
+        var root = Ops.Init(Path.Combine(_dir, "root"), _log, fsmonitor: false);
+        var repo = Path.Combine(_dir, "repo");
+        void Write(string rel, string text = "x")
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(repo, rel))!);
+            File.WriteAllText(Path.Combine(repo, rel), text);
+        }
+        string Git(string cwd, params string[] args) =>
+            Proc.Run("git", ["-C", cwd, "-c", "user.name=T", "-c", "user.email=t@x", .. args], null, new CollectingLog()).EnsureOk().StdOut;
+        Directory.CreateDirectory(repo);
+        Git(repo, "init", "-q", "-b", "main");
+        Write(".gitignore", "*.log\n");
+        foreach (var f in new[] { "a.txt", "d.txt", "keep/k.txt", "r.txt" }) Write(f);
+        Git(repo, "add", "-A");
+        Git(repo, "commit", "-q", "-m", "one");
+        // Tracked changes: changed, deleted, staged, renamed.
+        Write("a.txt", "changed");
+        File.Delete(Path.Combine(repo, "d.txt"));
+        Write("s.txt");
+        Git(repo, "add", "s.txt");
+        Git(repo, "mv", "r.txt", "renamed.txt");
+        List<StatusEntry> ByGit()
+        {
+            var tok = Git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all").Split('\0');
+            var res = new List<StatusEntry>();
+            for (var i = 0; i < tok.Length && tok[i].Length >= 4;)
+            {
+                var s = tok[i++];
+                res.Add(new StatusEntry(s[..1], s[1..2], PathUtil.Rel(s[3..]), s[0] is 'R' or 'C' ? PathUtil.Rel(tok[i++]) : null));
+            }
+            return res;
+        }
+        void Same(int processes)
+        {
+            _log.Clear();
+            var here = root.Git.Status(repo).Entries;
+            var byGit = ByGit();
+            Assert.True(byGit.SequenceEqual(here), $"git:\n{string.Join("\n", byGit)}\nhere:\n{string.Join("\n", here)}");
+            Assert.Equal(processes, _log.Lines.Count(l => l.StartsWith("cmd: ")));
+        }
+
+        // Untracked files in tracked folders only: one status.
+        Write("top.txt");
+        Write("keep/untracked.txt");
+        Same(1);
+
+        // New folders: a deep one, one with an ignored file, one holding only ignored files, an empty one,
+        // names git would read as patterns, names around the folder's in sort order, a repository inside
+        // the checkout and one inside a new folder.
+        Write("new dir/x.txt");
+        Write("new dir/deep/y.txt");
+        Write("new dir/skip.log");
+        Write("only-ignored/z.log");
+        Directory.CreateDirectory(Path.Combine(repo, "empty"));
+        Write("mixed[1]/f.txt");
+        Write("żółć/ü.txt");
+        Write("keep/newsub/n.txt");
+        Write("a/x.txt");
+        Write("a-b.txt");
+        Write("a0.txt");
+        Write("nested/n.txt");
+        Git(Path.Combine(repo, "nested"), "init", "-q");
+        Write("wrap/inner/i.txt");
+        Git(Path.Combine(repo, "wrap", "inner"), "init", "-q");
+        Write("wrap/w.txt");
+        Same(2);
+
+        // More new folders than a command line is kept for: -uall itself.
+        for (var i = 0; i < 201; i++) Write($"m{i:D3}/f.txt");
+        Same(2);
+    }
 }

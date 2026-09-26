@@ -284,10 +284,25 @@ public sealed class Git
 
     // ---- store ----
 
+    /// <summary>
+    /// A new repository in the format sg reads and GitHub hosts: SHA-1 objects and files for refs. Git 3.0
+    /// makes SHA-256 and reftable the default for a new repository, and sg's commit IDs are 40 characters.
+    /// As variables rather than --object-format and --ref-format, which a git older than 2.45 refuses: an
+    /// older git does not know them and makes this format anyway. They also win over a user's own
+    /// GIT_DEFAULT_HASH and init.default* settings, which are for the user's repositories, not sg's.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> InitFormat = new Dictionary<string, string>
+    {
+        ["GIT_DEFAULT_HASH"] = "sha1",
+        ["GIT_DEFAULT_REF_FORMAT"] = "files",
+    };
+
     public void InitBare()
     {
         Directory.CreateDirectory(Store);
-        Proc.Run(_exe, ["init", "--bare", "-q", PathUtil.Git(Store)], Path.GetDirectoryName(Store), _log, null, _env).EnsureOk();
+        var env = new Dictionary<string, string>(_env);
+        foreach (var kv in InitFormat) env[kv.Key] = kv.Value;
+        Proc.Run(_exe, ["init", "--bare", "-q", PathUtil.Git(Store)], Path.GetDirectoryName(Store), _log, null, env).EnsureOk();
         Changed();
     }
 

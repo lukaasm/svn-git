@@ -34,4 +34,12 @@ public sealed class GitSetupTests : IDisposable
         Assert.Equal(other, git.Exe);
         Assert.Empty(git.Env);
     }
+
+    [Fact]
+    public void A_new_store_is_sha1_with_files_for_refs_whatever_git_would_default_to()
+    {
+        var root = Ops.Init(_dir, new CollectingLog(), fsmonitor: false);
+        Assert.Equal("sha1", root.Git.Out(null, "rev-parse", "--show-object-format"));
+        Assert.Equal("files", root.Git.Out(null, "rev-parse", "--show-ref-format"));
+    }
 }

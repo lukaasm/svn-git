@@ -77,7 +77,7 @@ public sealed class GitUrlHistory(string gitExe, string cacheDir, ILog log) : IS
     {
         if (File.Exists(Path.Combine(cacheDir, "HEAD"))) return;
         Directory.CreateDirectory(cacheDir);
-        _cache.Ok("init", "--bare", "-q", ".");
+        _cache.Run(["init", "--bare", "-q", "."], env: Git.InitFormat).EnsureOk();
     }
 
     /// <summary>The branch the URL names, fetched fresh; the default branch when it names none.</summary>

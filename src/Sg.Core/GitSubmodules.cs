@@ -132,8 +132,30 @@ public static class GitSubmodules
     /// </summary>
     public static List<GitSubmoduleEntry> Declared(Func<string[], ProcResult> run, string commit)
     {
+        // What a commit declares never changes, whichever repository holds it: two processes each time the
+        // checkout's submodules were listed, and every operation lists them, some of them twice.
+        if (commit.Length == 40 && commit.All(Uri.IsHexDigit))
+        {
+            if (DeclaredBy.TryGetValue(commit, out var known)) return [.. known];
+            var read = Read(run, commit);
+            if (read != null)
+            {
+                if (DeclaredBy.Count > 10_000) DeclaredBy.Clear();
+                DeclaredBy[commit] = read;
+            }
+            return read == null ? new() : [.. read];
+        }
+        return Read(run, commit) ?? new();
+    }
+
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<GitSubmoduleEntry>> DeclaredBy = new(StringComparer.Ordinal);
+
+    /// <summary>The .gitmodules and the pins of one commit; null when git could not read them, which is not kept.</summary>
+    static List<GitSubmoduleEntry>? Read(Func<string[], ProcResult> run, string commit)
+    {
         var cfg = run(["config", "--blob", commit + ":.gitmodules", "-z", "--get-regexp", @"^submodule\."]);
-        if (!cfg.Ok) return new();
+        // No .gitmodules in the commit is an answer (none); anything else git could not read is not.
+        if (!cfg.Ok) return cfg.ExitCode == 1 ? new() : null;
         var fields = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         foreach (var rec in cfg.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -152,14 +174,14 @@ public static class GitSubmodules
 
         var pins = new Dictionary<string, string>(StringComparer.Ordinal);
         var ls = run(new[] { "ls-tree", "-z", commit, "--" }.Concat(byPath.Keys).ToArray());
-        if (ls.Ok)
-            foreach (var line in ls.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var tab = line.IndexOf('\t');
-                if (tab < 0) continue;
-                var meta = line[..tab].Split(' ');
-                if (meta.Length >= 3 && meta[0] == "160000") pins[line[(tab + 1)..]] = meta[2];
-            }
+        if (!ls.Ok) return null;
+        foreach (var line in ls.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = line.IndexOf('\t');
+            if (tab < 0) continue;
+            var meta = line[..tab].Split(' ');
+            if (meta.Length >= 3 && meta[0] == "160000") pins[line[(tab + 1)..]] = meta[2];
+        }
         return byPath.Where(kv => pins.ContainsKey(kv.Key))
             .Select(kv => new GitSubmoduleEntry(kv.Value.Name, kv.Key, kv.Value.Fields.GetValueOrDefault("url", ""),
                 kv.Value.Fields.GetValueOrDefault("branch"), pins[kv.Key]))
@@ -185,7 +207,7 @@ public static class GitSubmodules
         {
             var u = res[i];
             if (!File.Exists(Path.Combine(u.Repo.Path, ".gitmodules"))) continue;
-            foreach (var e in Declared(a => u.Repo.Run(a), "HEAD"))
+            foreach (var e in Declared(a => u.Repo.Run(a), u.Repo.HeadCommit()))
             {
                 var wc = u.Full(e.Path);
                 if (Skipped(co, wc)) continue;

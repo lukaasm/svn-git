@@ -133,6 +133,44 @@ public sealed class GitRepo
         return r.Ok ? r.StdOut.Trim() : null;
     }
 
+    /// <summary>
+    /// The commit HEAD is at, read from the repository's files as git reads them: the .git folder, or
+    /// the folder a submodule's .git file names; HEAD, then the branch it names, loose or in
+    /// packed-refs, in the common folder a linked worktree names. "HEAD" - for git to resolve - when
+    /// the files say anything else, so the answer is never a guess.
+    /// </summary>
+    public string HeadCommit()
+    {
+        try
+        {
+            var dotGit = System.IO.Path.Combine(Path, ".git");
+            string gitDir;
+            if (Directory.Exists(dotGit)) gitDir = dotGit;
+            else if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is var line && line.StartsWith("gitdir: ", StringComparison.Ordinal))
+                gitDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, line[8..].Trim()));
+            else return "HEAD";
+            var common = File.Exists(System.IO.Path.Combine(gitDir, "commondir"))
+                ? System.IO.Path.GetFullPath(System.IO.Path.Combine(gitDir, File.ReadAllText(System.IO.Path.Combine(gitDir, "commondir")).Trim()))
+                : gitDir;
+            var head = File.ReadAllText(System.IO.Path.Combine(gitDir, "HEAD")).Trim();
+            if (IsSha(head)) return head;
+            if (!head.StartsWith("ref: refs/heads/", StringComparison.Ordinal)) return "HEAD";
+            var name = head[5..];
+            var loose = System.IO.Path.Combine(common, name.Replace('/', System.IO.Path.DirectorySeparatorChar));
+            if (File.Exists(loose)) return File.ReadAllText(loose).Trim() is var sha && IsSha(sha) ? sha : "HEAD";
+            var packed = System.IO.Path.Combine(common, "packed-refs");
+            if (!File.Exists(packed)) return "HEAD";
+            foreach (var entry in File.ReadLines(packed))
+                if (entry.Length > 41 && entry[40] == ' ' && entry[41..] == name && IsSha(entry[..40])) return entry[..40];
+            return "HEAD";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return "HEAD";
+        }
+        static bool IsSha(string s) => s.Length == 40 && s.All(Uri.IsHexDigit);
+    }
+
     public string? ConfigGet(string key)
     {
         var r = Run("config", "--get", key);
@@ -521,7 +559,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         {
             var parent = queue[i];
             if (!File.Exists(Path.Combine(parent.Repo.Path, ".gitmodules"))) continue;
-            foreach (var e in GitSubmodules.Declared(a => parent.Repo.Run(a), "HEAD"))
+            foreach (var e in GitSubmodules.Declared(a => parent.Repo.Run(a), parent.Repo.HeadCommit()))
             {
                 var wc = parent.Full(e.Path);
                 if (GitSubmodules.Skipped(co, wc)) continue;

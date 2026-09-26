@@ -69,6 +69,11 @@ public abstract class StatusRow : INotifyPropertyChanged
     public virtual string Group => "";
     /// <summary>What the filter box searches. The windows set it.</summary>
     public string Display { get; set; } = "";
+    /// <summary>
+    /// A few words about this one file, shown on its right where a folder shows its count: how a file in
+    /// conflict came to be in it, in git's words. Empty for most lists.
+    /// </summary>
+    public string Note { get; set; } = "";
     public Brush CodeBrush => StatusColors.BrushFor(Code);
     public Brush CodeBackground => StatusColors.BackgroundFor(Code);
     public string CodeTip => StatusColors.Describe(Code);

@@ -112,22 +112,33 @@ public sealed partial class MainWindow : Window
 
     IReadOnlyList<RecoveryItem> _recovery = [];
     string? _recoveryRoot;
+    /// <summary>
+    /// The banner is for work nothing else on screen shows. A stopped pull in a worktree already has
+    /// its card saying so, with the button that finishes it, and Activity counts it; a banner on top
+    /// was the same fact a third time. What is left is work with no card to show it: a worktree that is
+    /// gone, or an operation that stopped before it made one.
+    /// </summary>
+    List<RecoveryItem> Unshown() => _recovery.Where(r => _status?.Worktrees.Any(w => !w.Missing
+        && Path.GetFullPath(w.Path).TrimEnd('\\', '/').Equals(Path.GetFullPath(r.Path).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) != true).ToList();
+
     void ShowRecovery()
     {
-        var visible = _recoveryRoot == Session.Root?.RootPath && _recovery.Count > 0
+        var unshown = Unshown();
+        var visible = _recoveryRoot == Session.Root?.RootPath && unshown.Count > 0
             && Session.Root != null && Session.Tasks.Blocking(Session.Root.RootPath) == null;
         RecoveryNotice.IsOpen = visible;
         if (!visible) return;
-        RecoveryNotice.Title = _recovery.Count == 1 ? _recovery[0].Title : $"{_recovery.Count} unfinished operations";
-        RecoveryNotice.Message = _recovery.Count == 1 ? _recovery[0].Detail : "Saved work needs attention. Review each operation in Activity before continuing.";
-        RecoveryButton.Content = _recovery.Count == 1 ? _recovery[0].Action : "Review recovery";
+        RecoveryNotice.Title = unshown.Count == 1 ? unshown[0].Title : $"{unshown.Count} unfinished operations";
+        RecoveryNotice.Message = unshown.Count == 1 ? unshown[0].Detail : "Saved work needs attention. Review each operation in Activity before continuing.";
+        RecoveryButton.Content = unshown.Count == 1 ? unshown[0].Action : "Review recovery";
     }
     void Recovery_Click(object sender, RoutedEventArgs e)
     {
         if (_recoveryRoot != Session.Root?.RootPath) return;
-        if (_recovery.Count == 1 && Directory.Exists(_recovery[0].Path))
+        var unshown = Unshown();
+        if (unshown.Count == 1 && Directory.Exists(unshown[0].Path))
         {
-            var item = _recovery[0];
+            var item = unshown[0];
             if (item.Replay) Host.Go(() => new ConflictPage(item.Path), "resolve:" + item.Path);
             else Host.Go(() => new UpdateBranchPage(item.Path), "update-branch:" + item.Path);
         }

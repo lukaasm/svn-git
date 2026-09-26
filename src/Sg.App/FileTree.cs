@@ -143,10 +143,10 @@ public sealed class TreeNode : INotifyPropertyChanged
     internal (int Added, int Removed, bool Has) Stats => (_added, _removed, _hasStats);
 
     public Visibility GlyphVisibility => Glyph.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-    public string CountText => IsFolder ? FileCount.ToString() : "";
+    public string CountText => IsFolder ? FileCount.ToString() : Row?.Note ?? "";
 
-    /// <summary>The whole path, which the line itself only shows the tail of.</summary>
-    public string Tip => FullPath.Length == 0 ? Name : FullPath;
+    /// <summary>The whole path, which the line itself only shows the tail of, and the file's note after it.</summary>
+    public string Tip => (FullPath.Length == 0 ? Name : FullPath) + (!IsFolder && Row?.Note is { Length: > 0 } note ? "\n" + note : "");
 
     TreeBadge? _badge;
     public string AnnotationText => _badge?.Text ?? "";

@@ -324,7 +324,7 @@ public static partial class Backup
             if (res.Ok)
             {
                 git.ConfigUnset(KeyRemote(name));
-                Operations.Receipt(root, "Get changes from backup", worktree, ["Incoming branch: " + name, "Applied commits: " + res.Applied, res.WipWhy ?? "Review local edits and saved shelves."]);
+                Operations.Receipt(root, ReplayTitle(pull: true), worktree, ["Incoming branch: " + name, "Applied commits: " + res.Applied, res.WipWhy ?? "Review local edits and saved shelves."]);
             }
             if (reviews != null) res.ReviewThreads = CodeReview.Import(root, worktree, reviews).Threads.Count;
             RestoreAppearance(root, co, appearance, res);

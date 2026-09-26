@@ -460,10 +460,23 @@ public sealed partial class BackupPage : SgPage
     /// right is the reader's call, and the row is where the reason is.
     /// </summary>
     RowActions? ActFor(BackupItem item) =>
-        item.Behind ? new RowActions("Get changes", () => PullAsync(item))
+        // A pull already paused here is finished, not started again: the row sends it where it waits.
+        item.Behind && PausedIn(item.Name) is { } paused ? new RowActions("Resolve", () =>
+        {
+            Go(() => new ConflictPage(paused), "resolve:" + paused);
+            return Task.CompletedTask;
+        })
+        : item.Behind ? new RowActions("Pull", () => PullAsync(item))
         : item.Rejected && item.Kind is "branch" or "wip" ? new RowActions("Restore separately", () => RestoreSeparatelyAsync(item), "Keep this machine's", () => KeepAsync(item))
         : item.Rejected ? new RowActions("Keep this machine's", () => KeepAsync(item))
         : null;
+
+    /// <summary>The worktree of that name, when a replay is paused in it.</summary>
+    string? PausedIn(string name)
+    {
+        var path = _worktrees.FirstOrDefault(w => w.Name == name)?.Path;
+        return path != null && Directory.Exists(path) && Session.Root?.Git.ReplayInProgress(path) is { } replay and not Replay.None ? path : null;
+    }
 
     /// <summary>What a report row can do: one thing, or a first and a second.</summary>
     public sealed record RowActions(string Text, Func<Task> Run, string OtherText = "", Func<Task>? Other = null);
@@ -483,7 +496,7 @@ public sealed partial class BackupPage : SgPage
     {
         ResultBar.ActionButton = null;
         if (!result.Waiting) return;
-        var button = new Button { Content = "Resume operation" };
+        var button = new Button { Content = "Resolve" };
         button.Click += (_, _) => Go(() => new ConflictPage(result.Path) { Checkout = result.Checkout, Branch = result.Branch }, "resolve:" + result.Path);
         ResultBar.ActionButton = button;
     }

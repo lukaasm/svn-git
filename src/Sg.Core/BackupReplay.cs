@@ -27,6 +27,16 @@ public static partial class Backup
 
     public static string? ReplayName(Git git, string path) => Pending(git, path)?.Name;
 
+    /// <summary>Whether a replay in this worktree pulls into work that was already here, rather than restoring it anew.</summary>
+    public static bool ReplayIsPull(Git git, string path) => Pending(git, path)?.Pull == true;
+
+    /// <summary>
+    /// What a replay from the backup is called wherever it shows: the button that starts it, the task,
+    /// the page it stops on. Two names for two things - bringing commits into a worktree that is here,
+    /// and making one that is not - and no third.
+    /// </summary>
+    public static string ReplayTitle(bool pull) => pull ? "Pull from backup" : "Restore from backup";
+
     internal static void ClearReplay(Git git, string path)
     {
         if (Pending(git, path) is { } pending && Guid.TryParseExact(pending.Token, "N", out _))
@@ -42,7 +52,7 @@ public static partial class Backup
     {
         var git = root.Git;
         if (git.StatusEntries(result.Path, untracked: true).Count != 0)
-            throw new SgException("The incoming backup needs conflict resolution. Commit or shelve local changes, then get changes from backup again. Nothing was applied.");
+            throw new SgException("The incoming backup needs conflict resolution. Commit or shelve local changes, then try again. Nothing was applied.");
         var temp = root.NewStoreTempDir();
         var start = git.HeadSha(result.Path);
         try
@@ -64,7 +74,7 @@ public static partial class Backup
             // Keep the original objects even if a background fetch replaces the fetched backup refs.
             git.UpdateRef("refs/sg/replay/" + pending.Token + "/branch", changes[^1].Sha);
             if (wip != null) git.UpdateRef("refs/sg/replay/" + pending.Token + "/wip", wip);
-            Operations.TrackReplay(root, "Get changes from backup", result.Path, "Incoming backup: " + result.Name);
+            Operations.TrackReplay(root, ReplayTitle(pull), result.Path, "Incoming backup: " + result.Name);
             var run = git.ApplyMailbox(result.Path, patches);
             result.Applied = git.CountCommits(start, git.HeadSha(result.Path));
             result.Waiting = git.ReplayInProgress(result.Path) != Replay.None;

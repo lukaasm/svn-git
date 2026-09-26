@@ -1,24 +1,26 @@
 using System.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Sg.Core;
 
 namespace Sg.App;
 
 /// <summary>
-/// Work that stopped on conflicts, whatever stopped it: a rebase onto a newer snapshot, or an import
-/// replaying a branch that came in a file. Both leave the same thing behind, so this is one page with
-/// one set of buttons; only the words change, because "keep the SVN version" means nothing during an
-/// import and "keep the imported version" means nothing during a rebase.
+/// Work that stopped on conflicts, whatever stopped it: a pull onto a newer snapshot, an import
+/// replaying a branch that came in a file, or a pull or restore from the backup. All of them leave the
+/// same thing behind, so this is one page with one set of buttons, in the words VS Code and the git
+/// tools use: accept current or incoming for each file, or edit it and mark it as resolved, then
+/// Continue - or Skip the commit it stopped on, or Abort and put it all back.
 ///
-/// Pick a side per file, or edit and mark resolved, then continue. Skip drops the one commit it
-/// stopped on and goes on with the rest. Abort puts it back, and says first what that costs.
+/// It says each fact once. The banner says what stopped, where and on which commit; each file's row
+/// says how it conflicts; the diff shows what differs. Everything only ever looked at - the commit
+/// being replayed, what is staged for it so far - waits in More.
 /// </summary>
 public sealed partial class ConflictPage : SgPage
 {
     readonly string _worktree;
     readonly ListFilter _filter;
+    readonly ReviewLayout _layout;
 
     /// <summary>What the last read found. The buttons word themselves from it.</summary>
     ConflictState _state = new();
@@ -29,7 +31,7 @@ public sealed partial class ConflictPage : SgPage
         _worktree = worktree;
         Title = "Resolve conflicts";
         Subtitle = worktree;
-        ColumnSplitter.Attach(Splitter);
+        _layout = new ReviewLayout(this, Body, FilesPane, DiffPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
         FileActions.Attach(Files, n => PathUtil.Join(_worktree, n.FullPath));
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display);
@@ -59,156 +61,167 @@ public sealed partial class ConflictPage : SgPage
         FilesSkeleton.Hide();
         if (state == null || gen != _generation) return;
         _state = state;
-        ReviewResultButton.Visibility = state.ResolutionReviewFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        Explanation.Text = string.Join("\n", state.Explanations);
-        if (state.ResolutionReviewFiles.Count > 0) Explanation.Text += "\nStaged results to review (including any manual, remembered, or agent edits): " + string.Join(", ", state.ResolutionReviewFiles) + ". No conflict markers does not prove correctness.";
         Checkout ??= state.Checkout;
         Branch ??= state.Branch;
-        Subtitle = state.BackupName != null ? $"{state.BackupName} from backup → {state.Branch}   {_worktree}" : state.Kind == Replay.Import
-            ? $"{state.Branch}  -  imported commits   {_worktree}"
-            : $"{state.Branch}  onto  svn/{state.Checkout}   {_worktree}";
+        Title = Operation(state);
         NameButtons(state);
-        InspectButton.Visibility = state.InProgress ? Visibility.Visible : Visibility.Collapsed;
-        InspectButton.Text = "View current patch";
-        PatchPreview.Visibility = Visibility.Collapsed;
-        ContinueButton.Visibility = state.InProgress && !state.Stuck ? Visibility.Visible : Visibility.Collapsed;
-        SkipButton.Visibility = AbortButton.Visibility = state.InProgress ? Visibility.Visible : Visibility.Collapsed;
-        SkipButton.Style = state.Stuck ? (Style)Application.Current.Resources["AccentButtonStyle"] : null;
-        AutoAllButton.Visibility = state.Conflicted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        LeaveButton.Content = state.InProgress ? "Finish later" : "Close";
-        Title = state.BackupName != null ? "Get changes from backup" : state.Kind == Replay.Import ? "Import branch" : "Rebase branch";
+        ShowPreview(null);
+
         // Three shapes, and only the first is a conflict. A stuck step has no sides to pick between,
         // so what it lists is whatever a forced apply left in the worktree for a hand to finish.
         var rows = state.Conflicted.Count > 0
-            ? state.Conflicted.Select(p => new FileRow { Status = 'C', Path = p, Display = "C  " + p }).ToList()
+            ? state.Conflicted.Select(p => new FileRow
+            {
+                Status = 'C', Path = p, Display = "C  " + p,
+                Note = Conflicts.Describe(state.Codes.GetValueOrDefault(p, "")),
+            }).ToList()
             : state.ByHand.Select(p => new FileRow { Status = Mark(p), Path = p, Display = Mark(p) + "  " + p }).ToList();
-        _filter.SetItems(rows, state.Conflicted.Count > 0 ? "Files in conflict" : "Files to finish by hand");
+        _filter.SetItems(rows, state.Conflicted.Count > 0 ? "Conflicts" : "Files to finish by hand");
         ShowEmpty(rows.Count == 0);
+
+        var staged = state.ResolutionReviewFiles.Count;
+        ReviewResultButton.Visibility = staged > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ReviewResultButton.Text = $"Review staged changes ({staged})";
+        InspectButton.Visibility = state.InProgress && !state.Finalizing ? Visibility.Visible : Visibility.Collapsed;
+        ContinueButton.Visibility = state.InProgress && !state.Stuck ? Visibility.Visible : Visibility.Collapsed;
+        SkipButton.Visibility = AbortButton.Visibility = state.InProgress && !state.Finalizing ? Visibility.Visible : Visibility.Collapsed;
+        SkipButton.Style = state.Stuck ? (Style)Application.Current.Resources["AccentButtonStyle"] : null;
         ForceButton.Visibility = state.Stuck && state.Kind == Replay.Import ? Visibility.Visible : Visibility.Collapsed;
         // The resolver settles files at three stages and nothing else. Going on from here it can also
         // continue and skip, so it is offered whenever something is stopped, except an import stuck
         // on a patch that will not go in: forcing what fits of one is a choice for a hand.
         AutoButton.IsEnabled = state.Conflicted.Count > 0;
+        AutoAllButton.Visibility = state.Conflicted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         AutoAllButton.IsEnabled = state.InProgress && !(state.Stuck && state.Kind == Replay.Import);
 
+        var at = At(state);
         if (!state.InProgress)
         {
-            StateBar.Severity = InfoBarSeverity.Success;
-            StateBar.Message = "Nothing is stopped here. The branch is in a normal state.";
-            NoConflicts.Title = "Nothing is stopped here";
+            Say(InfoBarSeverity.Success, "Nothing is paused here", "The branch is in a normal state. There is nothing to resolve.");
+            NoConflicts.Title = "Nothing is paused here";
             NoConflicts.Text = "The branch is in a normal state. There is nothing to resolve.";
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = false;
         }
         else if (state.Finalizing)
         {
-            StateBar.Severity = InfoBarSeverity.Informational;
-            StateBar.Message = "The commits are applied. Finish recovering the saved local edits.";
+            Say(InfoBarSeverity.Informational, "The commits are applied", "Recover the saved local edits to finish.");
             NoConflicts.Title = "Recover local edits";
-            NoConflicts.Text = StateBar.Message;
+            NoConflicts.Text = "The commits are applied. Recover the saved local edits to finish.";
             ContinueButton.Text = "Recover local edits";
             ContinueButton.IsEnabled = true;
-            SkipButton.Visibility = AbortButton.Visibility = InspectButton.Visibility = Visibility.Collapsed;
         }
         else if (state.Stuck)
         {
-            // Never "every file is resolved" here. Continue can only fail, so it is off, and the two
-            // things that do work are the ones on screen.
+            // Never "every file is resolved" here. Continue can only fail, so it is not offered, and the
+            // two things that do work are the ones on screen.
             var out_ = state.Kind == Replay.Import
-                ? "Skip it and the rest of the series still lands. Or force what fits of it into the worktree: "
+                ? "Skip it and the rest of the series still lands. Or, in More, apply what fits of it by hand: "
                   + "the hunks that land are written, the ones that do not are left beside their file as .rej, "
-                  + "and you finish them by hand and mark them resolved."
+                  + "and you finish them and mark them as resolved."
                 : "Skip it, and the ones after it still replay.";
-            StateBar.Severity = InfoBarSeverity.Warning;
-            StateBar.Message = Headline(state) + " " + Conflicts.StuckNote(state.Kind) + " " + out_;
-            NoConflicts.Title = state.Kind == Replay.Import ? "Patch needs attention" : "Review empty commit";
-            NoConflicts.Text = Headline(state) + " " + Conflicts.StuckNote(state.Kind) + " " + out_;
-            ContinueButton.IsEnabled = false;
+            Say(InfoBarSeverity.Warning, Headline(state), Stopped(state) + Conflicts.StuckNote(state.Kind) + " " + out_);
+            NoConflicts.Title = state.Kind == Replay.Import ? "Patch needs attention" : "Empty commit";
+            NoConflicts.Text = Conflicts.StuckNote(state.Kind) + " " + out_;
             SkipButton.IsEnabled = AbortButton.IsEnabled = true;
         }
         else if (rows.Count == 0)
         {
-            StateBar.Severity = InfoBarSeverity.Informational;
-            StateBar.Message = $"Every file is resolved. Continue the {state.Verb}.";
-            NoConflicts.Title = "Every file is resolved";
-            NoConflicts.Text = Headline(state) + $" Continue the {state.Verb}. The next commit may stop again.";
+            Say(InfoBarSeverity.Informational, "All conflicts resolved", Stopped(state) + $"Continue to commit it{at}. The next commit may stop again.");
+            NoConflicts.Title = "All conflicts resolved";
+            NoConflicts.Text = $"Continue to commit it{at}. The next commit may stop again.";
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = true;
         }
         else if (state.Conflicted.Count > 0)
         {
-            StateBar.Severity = InfoBarSeverity.Warning;
-            StateBar.Message = Headline(state) + $" {state.Conflicted.Count} file(s) are changed on both sides. "
-                               + $"Pick a version for each - left is the {state.OursLabel}, right is the {state.TheirsLabel} - "
-                               + "or edit the file and mark it resolved. Then continue.";
+            // The buttons over the list say how; the banner only says what is left before Continue.
+            Say(InfoBarSeverity.Warning, Headline(state), Stopped(state)
+                + (state.Conflicted.Count == 1 ? "Resolve the file in conflict, then Continue." : $"Resolve the {state.Conflicted.Count} files in conflict, then Continue."));
             ContinueButton.IsEnabled = false;
             SkipButton.IsEnabled = AbortButton.IsEnabled = true;
         }
         else
         {
-            StateBar.Severity = InfoBarSeverity.Warning;
-            StateBar.Message = Headline(state) + $" {rows.Count} file(s) are waiting for a hand. Every .rej file holds the "
-                               + "hunks that would not go in: put them in, delete the .rej, then mark the file resolved and continue.";
+            Say(InfoBarSeverity.Warning, Headline(state), Stopped(state) + $"{rows.Count} file(s) need finishing by hand. Every .rej file holds the "
+                + "hunks that would not go in: put them in, delete the .rej, then mark the file as resolved and Continue.");
             ContinueButton.IsEnabled = SkipButton.IsEnabled = AbortButton.IsEnabled = true;
         }
+        TaskGate.SetHelp(ContinueButton, ContinueButton.IsEnabled
+            ? $"Commit this step and go on with the rest of the {Verb(state)}. The next commit may stop again. The resolutions are yours to read first: Review staged changes, in More."
+            : state.Conflicted.Count > 0 ? $"Resolve every file first: {state.Conflicted.Count} left." : "Nothing is paused here.");
 
-        if (reopen != null && rows.Any(r => r.Path.Equals(reopen, StringComparison.OrdinalIgnoreCase)))
-            _filter.Select(r => r is FileRow f && f.Path.Equals(reopen, StringComparison.OrdinalIgnoreCase));
+        // Opening the page is opening the first conflict: with one file, there is nothing else to pick.
+        var reopened = reopen != null && _filter.Select(r => r is FileRow f && f.Path.Equals(reopen, StringComparison.OrdinalIgnoreCase));
+        if (!reopened && rows.Count > 0) _filter.SelectFirstFile();
         if (Files.SelectedItem == null)
         {
             _shownPath = null;
-            Diff.ShowText(rows.Count == 0 ? ""
-                    : state.Conflicted.Count > 0 ? $"Pick a file to see the {state.OursLabel} on the left and the {state.TheirsLabel} on the right."
-                    : "Pick a file to see what the branch holds on the left and what is on disk now on the right.",
-                rows.Count == 0 ? "nothing in conflict" : $"{rows.Count} file(s)");
+            Diff.ShowText("", rows.Count == 0 ? "nothing in conflict" : "");
         }
+    }
+
+    void Say(InfoBarSeverity severity, string title, string message)
+    {
+        StateBar.Severity = severity;
+        StateBar.Title = title;
+        StateBar.Message = message;
     }
 
     /// <summary>The letter a by-hand row carries: R for what a forced apply could not put in, M for the rest.</summary>
     static char Mark(string path) => path.EndsWith(".rej", StringComparison.OrdinalIgnoreCase) ? 'R' : 'M';
 
-    /// <summary>The first sentence: what stopped, where it got to, and on which commit.</summary>
+    /// <summary>
+    /// What the stopped work is called: the same name as the button that started it. A pull onto a new
+    /// snapshot is the worktree card's Pull, a pull or restore from the backup is the backup's, and an
+    /// import is an import.
+    /// </summary>
+    static string Operation(ConflictState s) => s.BackupName != null ? Backup.ReplayTitle(s.BackupPull)
+        : s.Kind == Replay.Import ? "Import branch"
+        : "Pull from " + s.Server;
+
+    static string Verb(ConflictState s) => s.BackupName != null ? (s.BackupPull ? "pull" : "restore") : s.Kind == Replay.Import ? "import" : "pull";
+
+    /// <summary>The banner's title: what stopped, and where it got to.</summary>
     static string Headline(ConflictState s)
     {
-        var where = s.BackupName != null ? $"The backup replay onto {s.Branch}" : s.Kind == Replay.Import
-            ? $"The import of {s.Branch}"
-            : $"The rebase of {s.Branch} onto svn/{s.Checkout}";
-        var at = s.Of > 0 ? $" at {s.At} of {s.Of}" : "";
-        var on = s.Stopped.Length > 0 ? $", on \"{s.Stopped}\"" : "";
-        return where + " stopped" + at + on + ".";
+        var what = s.Kind == Replay.Import && s.BackupName == null ? "patch" : "commit";
+        return Operation(s) + " stopped" + (s.Of > 0 ? $" at {what} {s.At} of {s.Of}" : "");
     }
 
+    /// <summary>The commit it stopped on, as the banner's message starts. Empty when git does not say.</summary>
+    static string Stopped(ConflictState s) => s.Stopped.Length > 0 ? $"\"{s.Stopped}\". " : "";
+
+    static string At(ConflictState s) => s.Of > 0 ? $" ({s.At} of {s.Of})" : "";
+
     /// <summary>
-    /// The two sides have no fixed names: a rebase replays the branch over what SVN said, an import
-    /// replays what came in the file over the branch. A button that says the wrong one of those is
-    /// worse than a button that says nothing, so the words come from the state on every read.
+    /// The two sides are called current and incoming everywhere, as VS Code calls them for a merge and
+    /// a rebase alike. What each one is depends on what stopped, and the tooltips say that.
     /// </summary>
     void NameButtons(ConflictState s)
     {
-        var verb = s.InProgress ? " " + s.Verb : "";
-        ContinueButton.Text = "Continue" + verb;
-        AbortButton.Text = "Cancel operation";
-        SkipButton.Text = s.Kind == Replay.Import ? "Skip this patch" : s.Stuck ? "Skip empty commit" : "Skip this commit";
-        TakeOurs.Text = "Keep " + Article(s.OursLabel);
-        TakeTheirs.Text = "Keep " + Article(s.TheirsLabel);
-        TakeOurs.SetValue(ToolTipService.ToolTipProperty,
-            $"For the ticked files: keep the {s.OursLabel}, the one on the left, and drop the other side of the change.");
-        TakeTheirs.SetValue(ToolTipService.ToolTipProperty,
-            $"For the ticked files: keep the {s.TheirsLabel}, the one on the right, and drop the other side of the change.");
-        SkipButton.SetValue(ToolTipService.ToolTipProperty, s.Kind == Replay.Import
-            ? "Drop the patch this stopped on and go on with the ones after it. Asks first."
-            : "Drop the commit this stopped on and go on with the ones after it. Asks first.");
-        AbortButton.SetValue(ToolTipService.ToolTipProperty, AbortCost(s));
-        // The pairs to compare are named from the same labels, and keep their place across reloads.
-        // Refilling the box fires its change event with nothing new to show, so that is told apart
-        // from a person picking a pair.
+        var what = s.Kind == Replay.Import && s.BackupName == null ? "patch" : "commit";
+        ContinueButton.Text = "Continue";
+        SkipButton.Text = s.Stuck ? $"Skip empty {what}" : $"Skip {what}";
+        InspectButton.Text = $"View {what}";
+        ToolTipService.SetToolTip(TakeOurs, $"Keep the current version - the {s.OursLabel}, on the left in the diff - for the ticked files, or the one selected. "
+                                            + "Where the current side deleted the file, accepting it deletes the file.");
+        ToolTipService.SetToolTip(TakeTheirs, $"Keep the incoming version - the {s.TheirsLabel}, on the right in the diff - for the ticked files, or the one selected. "
+                                              + "Where the incoming side deleted the file, accepting it deletes the file.");
+        ToolTipService.SetToolTip(SkipButton, $"Drop the {what} this stopped on and go on with the ones after it. Asks first.");
+        ToolTipService.SetToolTip(AbortButton, AbortCost(s));
+        ToolTipService.SetToolTip(LeaveButton, s.InProgress
+            ? $"The {Verb(s)} stays paused, with every resolution made so far. The worktree's card offers Resolve to come back."
+            : "Back to where you came from.");
+        // The pairs to compare keep their place across reloads. Refilling the box fires its change event
+        // with nothing new to show, so that is told apart from a person picking a pair.
         var keep = Compare.SelectedIndex < 0 ? 0 : Compare.SelectedIndex;
         _naming = true;
         try
         {
             Compare.ItemsSource = new[]
             {
-                $"{s.OursLabel}  ↔  {s.TheirsLabel}",
-                $"base  →  {s.OursLabel}   (what that side changed)",
-                $"base  →  {s.TheirsLabel}   (what that side changed)",
+                "Current  ↔  Incoming",
+                "Base  →  Current   (what the current side changed)",
+                "Base  →  Incoming   (what the incoming side changed)",
             };
             Compare.SelectedIndex = keep;
         }
@@ -231,20 +244,17 @@ public sealed partial class ConflictPage : SgPage
         if (!_naming && _shownNode != null && _state.Conflicted.Count > 0) OnPicked(_shownNode);
     }
 
-    /// <summary>"SVN version" reads as a name on a button; "the SVN version" reads as a sentence in a tooltip.</summary>
-    static string Article(string label) => "the " + label;
-
     /// <summary>
-    /// What abort costs, which is not the same for the two. A rebase gives the branch back exactly as
-    /// it was. An import is one series to git, so undoing it takes off every commit that went in, not
+    /// What abort costs, which is not the same for each. A pull gives the branch back exactly as it
+    /// was. An import is one series to git, so undoing it takes off every commit that went in, not
     /// only the one that stopped - and the file it came from is what still holds them.
     /// </summary>
     static string AbortCost(ConflictState s) => s.BackupName != null
-        ? "Undo all commits applied by this backup operation. The backup remains available, including its uncommitted edits."
+        ? $"Stop the {Verb(s)} and undo every commit it applied. The backup stays as it is, with its uncommitted edits. Asks first."
         : s.Kind == Replay.Import
         ? "Take the whole import back off the branch, the commits that already went in included. "
-          + "git undoes a patch series as one thing. The export file still holds every commit, so this can be run again."
-        : "Restore the branch to where this rebase began. Resolutions made during this operation are discarded.";
+          + "git undoes a patch series as one thing. The export file still holds every commit, so this can be run again. Asks first."
+        : "Put the branch back where this pull began. Resolutions made during it are dropped. Asks first.";
 
     /// <summary>
     /// The files an action works on: whatever is ticked, or the one line you are reading when
@@ -266,11 +276,12 @@ public sealed partial class ConflictPage : SgPage
             // A conflict is two versions of one file; a folder has none to show, only a count to act on.
             _shownPath = null;
             _shownNode = null;
-            Diff.ShowText($"{node.FileCount} file(s) in conflict under {node.FullPath}.\n\nTick the folder to pick a side for all of them, or pick one file to see its two versions.", node.FullPath);
+            Diff.ShowText($"{node.FileCount} file(s) in conflict under {node.FullPath}.\n\nTick the folder to accept one side for all of them, or select one file to see its two versions.", node.FullPath);
             return;
         }
         _shownPath = row.Path;
         _shownNode = node;
+        _layout.ShowDetails();
         var git = Session.Require().Git;
         // A file at three stages has two versions to compare, and a third both started from. One a
         // forced apply left behind has only itself, so it is read against what the branch holds -
@@ -280,12 +291,15 @@ public sealed partial class ConflictPage : SgPage
         var reads = conflict
             ? new DiffView.Reads(() => git.ShowStage(_worktree, left, row.Path), () => git.ShowStage(_worktree, right, row.Path))
             : new DiffView.Reads(() => git.ShowTextIn(_worktree, "HEAD", row.Path), () => OnDisk(row.Path));
-        var name = (int stage) => stage == 1 ? "base" : stage == 2 ? _state.OursLabel : _state.TheirsLabel;
+        var name = (int stage) => stage == 1 ? "base" : stage == 2 ? "current" : "incoming";
+        // Short, because the header shares its line with the diff's own toggles: the order of the two
+        // names is the order of the two sides, and the row's note says the rest.
+        var note = conflict && row.Note.Length > 0 ? " · " + row.Note : "";
         var title = conflict
-            ? $"{row.Path}   {name(left)} (left)  →  {name(right)} (right)"
-            : $"{row.Path}   branch (left)  →  on disk now (right)";
+            ? $"{row.Path}   {name(left)} → {name(right)}{note}"
+            : $"{row.Path}   branch → on disk now";
         await Diff.ShowFileAsync(row.Path, title, reads, () => _filter.IsCurrent(node),
-            binaryNote: conflict ? "binary file, pick a version: " : "binary file: ");
+            binaryNote: conflict ? "binary file, accept one side: " : "binary file: ");
     }
 
     /// <summary>What the file holds right now. A .rej file is not in git at all, so nothing else can read it.</summary>
@@ -299,17 +313,17 @@ public sealed partial class ConflictPage : SgPage
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return ""; }
     }
 
-    async Task TakeAsync(bool ours, string label)
+    async Task TakeAsync(bool ours)
     {
         var paths = Picked();
-        if (paths.Count == 0) { await Dialogs.Info(this, "Nothing picked", "Tick one or more files first, or select one."); return; }
+        if (paths.Count == 0) { await Dialogs.Info(this, "Nothing selected", "Select a file, or tick several, first."); return; }
         var root = Session.Require();
-        await Runner.Run(Pane, $"{label} for {paths.Count} file(s)", () => root.Git.TakeSide(_worktree, paths, ours));
+        await Runner.Run(Pane, $"accept {(ours ? "current" : "incoming")} for {paths.Count} file(s)", () => root.Git.TakeSide(_worktree, paths, ours));
         await LoadAsync();
     }
 
-    async void TakeOurs_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => TakeAsync(ours: true, "keep the " + _state.OursLabel));
-    async void TakeTheirs_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => TakeAsync(ours: false, "keep the " + _state.TheirsLabel));
+    async void TakeOurs_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => TakeAsync(ours: true));
+    async void TakeTheirs_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => TakeAsync(ours: false));
 
     void OpenFile_Click(object sender, RoutedEventArgs e)
     {
@@ -324,9 +338,9 @@ public sealed partial class ConflictPage : SgPage
     async void MarkResolved_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, async () =>
     {
         var paths = Picked();
-        if (paths.Count == 0) { await Dialogs.Info(this, "Nothing picked", "Tick one or more files first, or select one."); return; }
+        if (paths.Count == 0) { await Dialogs.Info(this, "Nothing selected", "Select a file, or tick several, first."); return; }
         var root = Session.Require();
-        await Runner.Run(Pane, "mark resolved", () => root.Git.MarkResolved(_worktree, paths));
+        await Runner.Run(Pane, "mark as resolved", () => root.Git.MarkResolved(_worktree, paths));
         await LoadAsync();
     });
 
@@ -340,8 +354,8 @@ public sealed partial class ConflictPage : SgPage
         var root = Session.Require();
         var what = ticked.Count > 0 ? $"{ticked.Count} ticked file(s)" : $"{_state.Conflicted.Count} file(s)";
         var r = await Runner.Run(Pane, "auto-resolve " + what, () => Conflicts.AutoResolve(root, _worktree, ticked));
-        if (r != null) ShowStep(r);
         await LoadAsync();
+        if (r != null) ShowStep(r);
     }, restoreEnabled: false);
 
     /// <summary>What one run of the resolver did, where the reader is looking.</summary>
@@ -349,11 +363,12 @@ public sealed partial class ConflictPage : SgPage
     {
         foreach (var p in r.Resolved) Pane.Append("settled: " + p);
         foreach (var l in r.Left) Pane.Append("left: " + l.Path + "  (" + l.Why + ")");
-        StateBar.Severity = r.AllResolved ? InfoBarSeverity.Informational : InfoBarSeverity.Warning;
-        StateBar.Message = r.AllResolved
-            ? $"The resolver settled {r.Resolved.Count} file(s). They are marked resolved: read them in the diff if you like, then continue."
-            : $"The resolver settled {r.Resolved.Count} file(s) and left {r.Left.Count}: "
-              + string.Join("; ", r.Left.Select(l => l.Path + " - " + l.Why)) + ". Pick a version for those, or edit them and mark them resolved.";
+        if (r.AllResolved)
+            Say(InfoBarSeverity.Informational, $"The resolver settled {r.Resolved.Count} file(s)",
+                "They are marked as resolved. Read them in the diff, then Continue.");
+        else
+            Say(InfoBarSeverity.Warning, $"The resolver settled {r.Resolved.Count} file(s) and left {r.Left.Count}",
+                string.Join("; ", r.Left.Select(l => l.Path + " - " + l.Why)) + ". Accept a side for those, or edit them and mark them as resolved.");
     }
 
     /// <summary>
@@ -364,20 +379,20 @@ public sealed partial class ConflictPage : SgPage
     async void AutoAll_Click(object sender, RoutedEventArgs e)
     {
         var s = _state;
-        var what = s.Kind == Replay.Import ? "patch" : "commit";
+        var what = s.Kind == Replay.Import && s.BackupName == null ? "patch" : "commit";
         var left = s.Of > 0 ? $" {s.Of - s.At + 1} {what}(s) are left to replay, this one included." : "";
-        if (!await Dialogs.Confirm(this, "Auto-resolve and continue",
+        if (!await Dialogs.Confirm(this, "Resolve remaining commits with AI",
                 $"Let the resolver settle every stop from here on?{left}\n\n"
-                + $"It settles the files, the {s.Verb} continues, and the next {what} that stops is handed over too, until it is through "
+                + $"It settles the files, the {Verb(s)} continues, and the next {what} that stops is handed over too, until it is through "
                 + $"or a file comes back that it could not settle. A {what} left with nothing to commit is skipped. "
                 + "Each stop it goes through becomes a commit on the branch; the log below says what it did at every one, "
                 + "and the log of the branch shows the result.",
                 "Go"))
             return;
-        await Busy.During(sender, async () =>
+        await Busy.During(MoreButton, async () =>
         {
             var root = Session.Require();
-            var verb = s.Verb;
+            var verb = Verb(s);
             var run = await Runner.Run(Pane, "auto-resolve and continue", () => Conflicts.AutoResolveAll(root, _worktree));
             if (run == null) { await LoadAsync(); return; }
             foreach (var step in run.Steps)
@@ -398,70 +413,71 @@ public sealed partial class ConflictPage : SgPage
             await LoadAsync();
             var last = run.Steps.LastOrDefault();
             if (last != null && !last.AllResolved) ShowStep(last);
-            else
-            {
-                StateBar.Severity = InfoBarSeverity.Warning;
-                StateBar.Message = "The resolver stopped short. " + run.Why;
-            }
+            else Say(InfoBarSeverity.Warning, "The resolver stopped short", run.Why);
         }, restoreEnabled: false);
     }
 
-    // sender, not ContinueButton: two buttons run this, and the empty state's one is the only one on
-    // screen once every file is resolved. The ring used to spin inside a collapsed panel.
+    // sender, not ContinueButton: the empty state has no button of its own, but the ring must spin on
+    // whichever was pressed.
     async void Continue_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, async () =>
     {
         var root = Session.Require();
-        var verb = _state.Verb;
+        var verb = Verb(_state);
         var r = await Runner.Run(Pane, "continue the " + verb, () => Conflicts.Continue(root, _worktree));
         await AfterStep(r, verb);
     }, restoreEnabled: false);
 
+    /// <summary>What is staged for the commit so far, resolutions included: the thing to read before Continue.</summary>
     async void ReviewResult_Click(object sender, RoutedEventArgs e)
     {
         var root = Session.Require();
         var generation = _generation;
         var diff = await Runner.Quiet(Pane, () => root.Git.Out(_worktree, "diff", "--cached", "--no-ext-diff"));
         if (diff == null || generation != _generation) return;
-        NoConflicts.Visibility = Filled.Visibility = Visibility.Collapsed;
-        PatchPreview.Visibility = Visibility.Visible;
-        PatchPreview.ShowText(diff, "Staged result — review before continuing");
-        InspectButton.Text = "Back to resolution";
+        ShowPreview(diff, "staged changes, as Continue would commit them");
     }
 
+    /// <summary>The commit, or the patch, this stopped on, as it came.</summary>
     async void Inspect_Click(object sender, RoutedEventArgs e)
     {
-        if (PatchPreview.Visibility == Visibility.Visible)
-        {
-            PatchPreview.Visibility = Visibility.Collapsed;
-            InspectButton.Text = "View current patch";
-            ShowEmpty(_filter.Count == 0);
-            return;
-        }
         var generation = _generation;
         var patch = await Runner.Quiet(Pane, () => _state.Kind == Replay.Import
             ? Session.Require().Git.Ok(_worktree, "am", "--show-current-patch=diff").StdOut
             : Session.Require().Git.Ok(_worktree, "show", "--format=fuller", "--no-ext-diff", "REBASE_HEAD").StdOut);
         if (patch == null || generation != _generation) return;
-        NoConflicts.Visibility = Filled.Visibility = Visibility.Collapsed;
-        PatchPreview.Visibility = Visibility.Visible;
-        PatchPreview.ShowText(patch, "current patch");
-        InspectButton.Text = "Back to resolution";
+        ShowPreview(patch, InspectButton.Text.ToLowerInvariant());
     }
+
+    /// <summary>A read-only patch over the files and the diff, or back to them when text is null.</summary>
+    void ShowPreview(string? text, string title = "")
+    {
+        var showing = text != null;
+        PatchPreview.Visibility = showing ? Visibility.Visible : Visibility.Collapsed;
+        BackToConflicts.Visibility = showing ? Visibility.Visible : Visibility.Collapsed;
+        if (showing)
+        {
+            NoConflicts.Visibility = Filled.Visibility = Visibility.Collapsed;
+            PatchPreview.ShowText(text!, title);
+        }
+        else ShowEmpty(_filter.Count == 0);
+    }
+
+    void BackToConflicts_Click(object sender, RoutedEventArgs e) => ShowPreview(null);
 
     async void Skip_Click(object sender, RoutedEventArgs e)
     {
         var s = _state;
-        var what = s.Kind == Replay.Import ? "patch" : "commit";
+        var what = s.Kind == Replay.Import && s.BackupName == null ? "patch" : "commit";
         var named = s.Stopped.Length > 0 ? $"\"{s.Stopped}\"" : "the one it stopped on";
         if (!await Dialogs.Confirm(this, $"Skip this {what}",
                 $"Drop {named} and go on with the remaining commits?\n\n"
-                + $"This drops the current step and any resolution made for it. The remaining commits will still be replayed.",
-                "Skip it"))
+                + "This drops the current step and any resolution made for it. The remaining commits will still be replayed.",
+                $"Skip {what}"))
             return;
         await Busy.During(sender, async () =>
         {
             var root = Session.Require();
-            var verb = s.Verb;
+            var verb = Verb(s);
             var r = await Runner.Run(Pane, $"skip the {what}", () => Conflicts.Skip(root, _worktree));
             await AfterStep(r, verb);
         }, restoreEnabled: false);
@@ -475,25 +491,24 @@ public sealed partial class ConflictPage : SgPage
     async void Force_Click(object sender, RoutedEventArgs e)
     {
         var named = _state.Stopped.Length > 0 ? $"\"{_state.Stopped}\"" : "the patch it stopped on";
-        if (!await Dialogs.Confirm(this, "Force what fits",
+        if (!await Dialogs.Confirm(this, "Apply patch manually",
                 $"Write as much of {named} into the worktree as still fits?\n\n"
                 + "Every hunk that does not fit is written beside its own file as a .rej file, to put in by hand. "
-                + "Nothing is committed, and nothing is staged until you mark it resolved.",
-                "Force it"))
+                + "Nothing is committed, and nothing is staged until you mark it as resolved.",
+                "Apply what fits"))
             return;
-        await Busy.During(sender, async () =>
+        await Busy.During(MoreButton, async () =>
         {
             var root = Session.Require();
             var r = await Runner.Run(Pane, "force what fits", () => Conflicts.ApplyWhatFits(root, _worktree));
-            if (r != null)
-            {
-                StateBar.Severity = r.Rejected.Count == 0 ? InfoBarSeverity.Informational : InfoBarSeverity.Warning;
-                StateBar.Message = r.Rejected.Count == 0
-                    ? $"All of it fitted after all: {r.Applied.Count} file(s) are changed in the worktree. Mark them resolved, then continue."
-                    : $"{r.Applied.Count} file(s) took the whole patch, {r.Rejected.Count} did not: {string.Join(", ", r.Rejected)}. "
-                      + "Each of those has a .rej file beside it holding the hunks that were refused. Put them in, delete the .rej, then mark the file resolved.";
-            }
             await LoadAsync();
+            if (r != null)
+                Say(r.Rejected.Count == 0 ? InfoBarSeverity.Informational : InfoBarSeverity.Warning,
+                    r.Rejected.Count == 0 ? "All of it fitted" : $"{r.Rejected.Count} file(s) did not take the whole patch",
+                    r.Rejected.Count == 0
+                        ? $"{r.Applied.Count} file(s) are changed in the worktree. Mark them as resolved, then Continue."
+                        : $"{r.Applied.Count} file(s) took it; {string.Join(", ", r.Rejected)} did not. "
+                          + "Each of those has a .rej file beside it holding the refused hunks. Put them in, delete the .rej, then mark the file as resolved.");
         });
     }
 
@@ -511,27 +526,27 @@ public sealed partial class ConflictPage : SgPage
         }
         if (r.Ok)
         {
-            StateBar.Severity = InfoBarSeverity.Success;
-            StateBar.Message = $"The {verb} is through. {r.Branch} is on svn/{r.Checkout}, {r.Ahead} commit(s) ahead.";
-            _filter.Clear("Files in conflict");
-            NoConflicts.Title = $"The {verb} is through";
-            NoConflicts.Text = $"{r.Branch} is on svn/{r.Checkout}, {r.Ahead} commit(s) ahead.";
-            ContinueButton.Visibility = SkipButton.Visibility = AbortButton.Visibility = ForceButton.Visibility = AutoAllButton.Visibility = Visibility.Collapsed;
-            LeaveButton.Content = "Close";
-            InspectButton.Visibility = PatchPreview.Visibility = Visibility.Collapsed;
+            var title = $"The {verb} is done";
+            var detail = $"{r.Branch} is on svn/{r.Checkout}, {r.Ahead} commit(s) ahead.";
+            var severity = InfoBarSeverity.Success;
             if (r.Backup != null)
             {
                 var outcome = TaskResults.Describe(r.Backup);
-                StateBar.Severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-                StateBar.Message = outcome.Detail;
-                NoConflicts.Title = "Backup commits applied";
-                NoConflicts.Text = $"The queued commits for {r.Branch} are finished. " + TaskResults.Describe(r.Backup).Detail;
+                severity = outcome.State == TaskState.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+                detail = outcome.Detail;
                 if (r.Backup.WipShelf != null && !r.Backup.WipWritten)
                 {
-                    NoConflicts.Title = "Backup commits applied; local edits need attention";
+                    title = $"The {verb} is done; local edits need attention";
                     ReviewEditsButton.Visibility = Visibility.Visible;
                 }
             }
+            Say(severity, title, detail);
+            _filter.Clear("Conflicts");
+            NoConflicts.Title = title;
+            NoConflicts.Text = detail;
+            ContinueButton.Visibility = SkipButton.Visibility = AbortButton.Visibility = MoreButton.Visibility = Visibility.Collapsed;
+            ToolTipService.SetToolTip(LeaveButton, "Back to where you came from.");
+            PatchPreview.Visibility = BackToConflicts.Visibility = Visibility.Collapsed;
             ShowEmpty(true);
             Diff.ShowText("", verb + " done");
             return;
@@ -547,11 +562,11 @@ public sealed partial class ConflictPage : SgPage
     async void Abort_Click(object sender, RoutedEventArgs e)
     {
         var s = _state;
-        if (!await Dialogs.Confirm(this, "Cancel operation", AbortCost(s), "Cancel operation")) return;
+        if (!await Dialogs.Confirm(this, $"Abort the {Verb(s)}", AbortCost(s).Replace(" Asks first.", ""), "Abort")) return;
         await Busy.During(sender, async () =>
         {
             var root = Session.Require();
-            await Runner.Run(Pane, "abort the " + s.Verb, () => Conflicts.Abort(root, _worktree));
+            await Runner.Run(Pane, "abort the " + Verb(s), () => Conflicts.Abort(root, _worktree));
             await LoadAsync();
         });
     }
@@ -563,7 +578,7 @@ public sealed partial class ConflictPage : SgPage
         Filled.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    async void Refresh_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => LoadAsync());
+    async void Refresh_Click(object sender, RoutedEventArgs e) => await Busy.During(MoreButton, () => LoadAsync());
 
     void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

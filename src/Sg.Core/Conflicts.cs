@@ -12,7 +12,12 @@ public sealed class ConflictState
     /// <summary>What the checkout's server is called: SVN, or git. It names the base a rebase replays over.</summary>
     public string Server = "SVN";
     public string? BackupName;
-    public List<string> Explanations = new();
+    /// <summary>A replay from the backup into work that was already here, not a restore of it.</summary>
+    public bool BackupPull;
+    /// <summary>git's two-letter status of each file in conflict, like UU or UD. <see cref="Conflicts.Describe"/> words it.</summary>
+    public Dictionary<string, string> Codes = new(StringComparer.Ordinal);
+
+    /// <summary>What the commit being finished holds so far: its staged files, resolutions included.</summary>
     public List<string> ResolutionReviewFiles = new();
 
     /// <summary>What stopped. None means the worktree is in a normal state and there is nothing to finish.</summary>
@@ -113,6 +118,26 @@ public static class Conflicts
     /// <summary>Includes pending backup finalization when Git has already finished its queue.</summary>
     public static bool HasPending(Git git, string path) => git.ReplayInProgress(path) != Replay.None || Backup.ReplayName(git, path) != null;
 
+    /// <summary>A file's two-letter git status, like UU for both modified. Empty when it is not in conflict.</summary>
+    public static string StatusCode(Git git, string worktree, string path) =>
+        git.StatusEntries(worktree, untracked: false).FirstOrDefault(e => e.Path == path) is { } e ? e.X + e.Y : "";
+
+    /// <summary>
+    /// How a file came to be in conflict, in the words git status itself uses, which are also what VS
+    /// Code and the other git tools show. "Us" is the version here now, "them" the one coming in.
+    /// </summary>
+    public static string Describe(string code) => code switch
+    {
+        "UU" => "both modified",
+        "AA" => "both added",
+        "DD" => "both deleted",
+        "UD" => "deleted by them",
+        "DU" => "deleted by us",
+        "AU" => "added by us",
+        "UA" => "added by them",
+        _ => "conflict",
+    };
+
     public static string Verb(Replay kind) => kind switch
     {
         Replay.Rebase => "rebase",
@@ -150,17 +175,14 @@ public static class Conflicts
             Server = root.Vcs(co).ServerName,
             Kind = git.ReplayInProgress(worktree),
             BackupName = Backup.ReplayName(git, worktree),
+            BackupPull = Backup.ReplayIsPull(git, worktree),
             Conflicted = git.ConflictedFiles(worktree),
             At = at.At,
             Of = at.Of,
             Stopped = at.Subject,
         };
         foreach (var entry in git.StatusEntries(worktree, untracked: true).Where(x => state.Conflicted.Contains(x.Path)))
-        {
-            var code = entry.X + entry.Y;
-            var reason = code switch { "DU" => "deleted on the current base; changed by the replayed commit", "UD" => "changed on the current base; deleted by the replayed commit", "AA" => "added independently on both sides", "UU" => "both sides changed this file", _ => "Git could not combine the two versions (" + code + ")" };
-            state.Explanations.Add(entry.Path + ": " + reason);
-        }
+            state.Codes[entry.Path] = entry.X + entry.Y;
         if (state.InProgress)
             state.ResolutionReviewFiles = git.Out(worktree, "diff", "--cached", "--name-only").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
         state.Stuck = state.Kind != Replay.None && state.Conflicted.Count == 0 && git.NothingStaged(worktree);

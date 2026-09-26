@@ -153,7 +153,7 @@ public sealed class WorkflowTests : IDisposable
         var reopened = SgRoot.Open(f.RootDir, f.Log);
         var state = Conflicts.State(reopened, path);
         Assert.Single(state.Conflicted);
-        Assert.NotEmpty(state.Explanations);
+        Assert.Equal("both modified", Conflicts.Describe(state.Codes[state.Conflicted[0]]));
         reopened.Git.TakeSide(path, state.Conflicted, ours: false);
         var result = Conflicts.Continue(reopened, path);
         Assert.True(result.Ok);

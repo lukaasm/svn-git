@@ -967,17 +967,53 @@ public sealed class Git
     }
 
     /// <summary>Resolves conflicts by taking one whole side of them. ShowStage says which side is which.</summary>
+    /// <summary>
+    /// Settles files in conflict with one side's version. A side that deleted the file has no version
+    /// to check out - git's checkout --ours/--theirs refuses it - and taking that side means deleting
+    /// the file too, so those go through git rm instead.
+    /// </summary>
     public void TakeSide(string worktree, IEnumerable<string> relPaths, bool ours)
     {
         var list = relPaths.ToList();
         if (list.Count == 0) return;
-        var f = WritePathspecFile(list.Select(p => ":(literal)" + p));
-        try
+        var stages = UnmergedStages(worktree);
+        var wanted = ours ? 2 : 3;
+        var gone = list.Where(p => stages.TryGetValue(p, out var s) && !s.Contains(wanted)).ToList();
+        var take = list.Except(gone, StringComparer.Ordinal).ToList();
+        if (take.Count > 0)
         {
-            Run(worktree, ["checkout", ours ? "--ours" : "--theirs", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk();
-            Run(worktree, ["add", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk();
+            var f = WritePathspecFile(take.Select(p => ":(literal)" + p));
+            try
+            {
+                Run(worktree, ["checkout", ours ? "--ours" : "--theirs", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk();
+                Run(worktree, ["add", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk();
+            }
+            finally { File.Delete(f); }
         }
-        finally { File.Delete(f); }
+        if (gone.Count > 0)
+        {
+            var f = WritePathspecFile(gone.Select(p => ":(literal)" + p));
+            try { Run(worktree, ["rm", "-q", "-f", "--pathspec-from-file=" + f, "--pathspec-file-nul"]).EnsureOk(); }
+            finally { File.Delete(f); }
+        }
+    }
+
+    /// <summary>The stages git holds for each file in conflict: 1 the base, 2 ours, 3 theirs.</summary>
+    public Dictionary<string, HashSet<int>> UnmergedStages(string worktree)
+    {
+        var res = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        foreach (var line in Out(worktree, "ls-files", "-u", "-z").Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // "<mode> <sha> <stage>\t<path>"
+            var tab = line.IndexOf('\t');
+            if (tab < 0) continue;
+            var meta = line[..tab].Split(' ');
+            if (meta.Length < 3 || !int.TryParse(meta[2], out var stage)) continue;
+            var path = line[(tab + 1)..];
+            if (!res.TryGetValue(path, out var set)) res[path] = set = new HashSet<int>();
+            set.Add(stage);
+        }
+        return res;
     }
 
     public void MarkResolved(string worktree, IEnumerable<string> relPaths) => AddPaths(worktree, relPaths);

@@ -290,7 +290,7 @@ public static class Ops
             root.Log.Warn($"{name} was not registered: the first snapshot did not finish");
             throw;
         }
-        root.RefreshExcludes();
+        root.RefreshExcludes(co.Name);
         return new CheckoutResult(co, snap);
     }
 
@@ -382,7 +382,7 @@ public static class Ops
             if (!co.Skip.Contains(j, StringComparer.OrdinalIgnoreCase)) co.Skip.Add(j);
 
         root.Save();
-        if (edit.Skip != null || edit.Junctions != null || edit.Name != null) root.RefreshExcludes();
+        if (edit.Skip != null || edit.Junctions != null || edit.Name != null) root.RefreshExcludes(co.Name);
     }
 
     // ---- externals ----

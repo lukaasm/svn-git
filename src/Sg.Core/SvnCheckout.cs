@@ -106,12 +106,14 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
         }
         catch (SgException ex) { root.Log.Warn("svn status failed for " + co.Name + ": " + ex.Message); }
         // Two svn processes per working copy, each walking that copy's whole database. They run side
-        // by side, because a checkout with twenty externals waited for forty of them in a row. The
-        // lines still go in working copy order, so the generated file does not move between runs.
+        // by side, the two of one copy as well as the copies, because a checkout with twenty externals
+        // waited for forty of them in a row. The lines still go in working copy order, so the generated
+        // file does not move between runs.
         var read = Fan.Map(wcs, wc =>
         {
             var cwd = PathUtil.Join(co.Path, wc);
-            return (Ignore: root.Svn.PropGetRecursive(cwd, "svn:ignore"), Global: root.Svn.PropGetRecursive(cwd, "svn:global-ignores"));
+            var (ignore, global) = Fan.Two(() => root.Svn.PropGetRecursive(cwd, "svn:ignore"), () => root.Svn.PropGetRecursive(cwd, "svn:global-ignores"));
+            return (Ignore: ignore, Global: global);
         });
         for (var i = 0; i < wcs.Count; i++)
         {

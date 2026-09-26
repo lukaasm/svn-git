@@ -398,6 +398,28 @@ public sealed class BridgeTests : IDisposable
         Assert.Contains("/src/generated", File.ReadAllLines(Path.Combine(wt, ".gitignore")));
     }
 
+    /// <summary>
+    /// Adding or editing one checkout reads that one's svn ignore properties, not every checkout's: each is a
+    /// walk of every svn database in it. A checkout whose rules were never cached is read either way.
+    /// </summary>
+    [Fact]
+    public void RefreshExcludes_ForOneCheckout_ReadsOnlyThatOne()
+    {
+        f.Setup();
+        int PropGets() => f.Log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains("svn") && l.Contains(" propget "));
+        f.Log.Clear();
+        f.Root.RefreshExcludes("another");
+        Assert.Equal(0, PropGets());
+        f.Root.RefreshExcludes(f.Co.Name);
+        var one = PropGets();
+        Assert.True(one >= 2, one.ToString());
+        f.Log.Clear();
+        File.Delete(f.Root.IgnoreFileFor(f.Co));
+        f.Root.RefreshExcludes("another");
+        Assert.Equal(one, PropGets());
+        Assert.Contains("/build/win_vc17", File.ReadAllLines(f.Root.IgnoreFileFor(f.Co)));
+    }
+
     [Fact]
     public void SvnCommit_FromCheckout_CommitsPerRepository_AddsNewFiles_ThenSyncs()
     {

@@ -545,7 +545,7 @@ public sealed partial class MainWindow : Window
         ArmMonitor();
         if (Session.Root == null || _checking) return;
         var before = Remote.ToDictionary(kv => kv.Key, kv => kv.Value.Commits, StringComparer.OrdinalIgnoreCase);
-        await CheckRemotesAsync(Session.Root, _generation);
+        await CheckRemotesAsync(Session.Root, _generation, ask: true);
         foreach (var (name, result) in Remote)
             if (result.Behind && before.GetValueOrDefault(name) != result.Commits)
             {
@@ -569,12 +569,24 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>When each answer in Remote was asked for, and against which snapshot of the checkout.</summary>
+    readonly Dictionary<string, (DateTime At, string? Snapshot)> _remoteAsked = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How long a refresh takes the server's last answer as it is. Every operation and every page left
+    /// refreshes, and each asked the server about every checkout again - most of half a second on the
+    /// network each - while the monitor tick is the one that watches the server.
+    /// </summary>
+    static readonly TimeSpan RemoteKept = TimeSpan.FromMinutes(1);
+
     /// <summary>
     /// Asks the server about every checkout at once and paints each badge as its answer arrives.
     /// The svn calls wait on the network and on the checkout's own database, so running them one
     /// after another only added the waits up: three checkouts took three times as long to settle.
+    /// An answer under a minute old, taken against the snapshot the checkout still has, is painted
+    /// again rather than asked for; ask says to ask anyway, and sync and Refresh forget answers.
     /// </summary>
-    async Task CheckRemotesAsync(SgRoot root, int generation)
+    async Task CheckRemotesAsync(SgRoot root, int generation, bool ask = false)
     {
         if (_checking) { _recheckWanted = true; return; }
         _checking = true;
@@ -583,24 +595,42 @@ public sealed partial class MainWindow : Window
         var gate = new SemaphoreSlim(4);
         try
         {
-            var jobs = root.Config.Checkouts.ToList().Select(co => (
-                Name: co.Name,
-                Remote: Gated(gate, () =>
-                {
-                    try { return (Result: (RemoteCheckResult?)Ops.RemoteCheck(root, co), Error: (string?)null); }
-                    catch (SgException ex) { return (null, ex.Message); }
-                }),
-                Edits: Gated(gate, () =>
-                {
-                    try { return (int?)_editCounts.Count(co.Path, () => Ops.LocalEditCount(root, co)); }
-                    catch (SgException) { return null; }
-                }))).ToList();
+            var snapshots = (_status?.Checkouts ?? []).ToDictionary(c => c.Name, c => (string?)c.Snapshot, StringComparer.OrdinalIgnoreCase);
+            var jobs = root.Config.Checkouts.ToList().Select(co =>
+            {
+                var snapshot = snapshots.GetValueOrDefault(co.Name);
+                var kept = !ask && Remote.TryGetValue(co.Name, out var known) && !RemoteErrors.ContainsKey(co.Name)
+                           && _remoteAsked.TryGetValue(co.Name, out var asked) && DateTime.UtcNow - asked.At < RemoteKept
+                           && snapshot != null && asked.Snapshot == snapshot
+                    ? known : null;
+                return (
+                    Name: co.Name,
+                    Snapshot: snapshot,
+                    Kept: kept != null,
+                    Remote: kept != null
+                        ? Task.FromResult((Result: (RemoteCheckResult?)kept, Error: (string?)null))
+                        : Gated(gate, () =>
+                        {
+                            try { return (Result: (RemoteCheckResult?)Ops.RemoteCheck(root, co), Error: (string?)null); }
+                            catch (SgException ex) { return (null, ex.Message); }
+                        }),
+                    Edits: Gated(gate, () =>
+                    {
+                        try { return (int?)_editCounts.Count(co.Path, () => Ops.LocalEditCount(root, co)); }
+                        catch (SgException) { return null; }
+                    }));
+            }).ToList();
 
             foreach (var job in jobs)
             {
                 var (result, error) = await job.Remote;
                 if (generation != _generation) return;
-                if (result != null) { Remote[job.Name] = result; RemoteErrors.Remove(job.Name); }
+                if (result != null)
+                {
+                    Remote[job.Name] = result;
+                    RemoteErrors.Remove(job.Name);
+                    if (!job.Kept) _remoteAsked[job.Name] = (DateTime.UtcNow, job.Snapshot);
+                }
                 else if (error != null) RemoteErrors[job.Name] = error;
                 var row = Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as CheckoutRow).FirstOrDefault(r => r?.Name == job.Name);
                 if (row != null) ApplyRemoteBadge(row, result);

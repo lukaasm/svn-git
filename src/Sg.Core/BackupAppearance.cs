@@ -50,8 +50,8 @@ public static partial class Backup
                 {
                     item.Thin = have!; item.State = "up to date"; continue;
                 }
-                var blob = root.Git.Run(null, ["hash-object", "-w", "--stdin"], payload).EnsureOk().StdOut.Trim();
-                var tree = root.Git.Run(null, ["mktree"], Encoding.UTF8.GetBytes("100644 blob " + blob + "\tappearance.json\n")).EnsureOk().StdOut.Trim();
+                var blob = root.Git.HashBlob(payload);
+                var tree = root.Git.MakeTree([new("100644", "blob", blob, "appearance.json")]);
                 item.Thin = root.Git.CommitTree(tree, have, "sg checkout appearance: " + name + "\n");
                 if (check) { item.State = "would push"; continue; }
                 var answers = root.Git.PushRefs(cfg.Url, [new PushRef(item.Thin, item.RemoteRef, have)], force: false);

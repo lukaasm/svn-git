@@ -55,7 +55,8 @@ sealed class GitReader : IDisposable
     }
 
     /// <summary>An object's type and bytes, or null for both when the revision names nothing. False as for <see cref="TryInfo"/>.</summary>
-    public bool TryContents(string rev, out Header? header, out byte[]? data) => Ask("contents", rev, read: true, out header, out data);
+    public bool TryContents(string rev, out Header? header, out byte[]? data, bool headerOnly = false) =>
+        headerOnly ? Ask("info", rev, read: false, out header, out data) : Ask("contents", rev, read: true, out header, out data);
 
     bool Ask(string command, string rev, bool read, out Header? header, out byte[]? data)
     {

@@ -412,7 +412,13 @@ public sealed class Git
                 sb.Append(line).Append('\0');
             }
             if (!found) throw new SgException($"{path} is not in the tree {tree}");
-            return Run(null, ["mktree", "-z", "--missing"], Encoding.UTF8.GetBytes(sb.ToString())).EnsureOk().StdOut.Trim();
+            var entries = sb.ToString().Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(l =>
+            {
+                var tab = l.IndexOf('\t');
+                var meta = l[..tab].Split(' ');
+                return new TreeEntry(meta[0], meta[1], meta[2], l[(tab + 1)..]);
+            }).ToList();
+            return MakeTree(entries, missing: true);
         }
         return Rebuild(tree, 0);
     }
@@ -428,8 +434,7 @@ public sealed class Git
     {
         var sha = RefSha(SgRoot.RootRef);
         if (sha != null) return sha;
-        var tree = Run(null, ["mktree"], Array.Empty<byte>()).EnsureOk().StdOut.Trim();
-        var commit = CommitTree(tree, null, "sg root\n");
+        var commit = CommitTree(EmptyTree(), null, "sg root\n");
         UpdateRef(SgRoot.RootRef, commit);
         return commit;
     }
@@ -721,6 +726,18 @@ public sealed class Git
         Run(worktree, ["read-tree", treeish], null, IndexEnv(indexFile)).EnsureOk();
 
     public string CommitTree(string tree, string? parent, string message)
+    {
+        if (!_env.ContainsKey("GIT_AUTHOR_DATE") && !_env.ContainsKey("GIT_COMMITTER_DATE")
+            && _env.TryGetValue("GIT_AUTHOR_NAME", out var an) && _env.TryGetValue("GIT_AUTHOR_EMAIL", out var ae)
+            && _env.TryGetValue("GIT_COMMITTER_NAME", out var cn) && _env.TryGetValue("GIT_COMMITTER_EMAIL", out var ce))
+        {
+            var (seconds, zone) = ObjectWriter.Ident.Now();
+            if (WriteCommit(tree, parent, message, new(an, ae, seconds, zone), new(cn, ce, seconds, zone)) is { } made) return made;
+        }
+        return CommitTreeByGit(tree, parent, message);
+    }
+
+    internal string CommitTreeByGit(string tree, string? parent, string message)
     {
         var args = new List<string> { "commit-tree", tree };
         if (parent != null) { args.Add("-p"); args.Add(parent); }
@@ -1805,7 +1822,56 @@ public sealed class Git
     // ---- backups: thin histories and the repository they go to ----
 
     /// <summary>The tree with nothing in it, written into the store so a commit can point at it.</summary>
-    public string EmptyTree() => Run(null, ["mktree"], Array.Empty<byte>()).EnsureOk().StdOut.Trim();
+    public string EmptyTree() => ObjectWriter.Write(Store, "tree", []);
+
+    // ---- objects written in-process ----
+
+    /// <summary>`git hash-object -w --stdin`: bytes as a blob, with no filters, which is what stdin gets.</summary>
+    public string HashBlob(byte[] content) => ObjectWriter.Blob(Store, content);
+
+    /// <summary>
+    /// `git mktree`: a tree of these entries. Without missing, every object has to be in the store and
+    /// be what its mode says, as mktree checks; inside an operation the reader checks it, outside one git does.
+    /// </summary>
+    public string MakeTree(IReadOnlyList<TreeEntry> entries, bool missing = false)
+    {
+        if (ObjectWriter.TreeBytes(entries) is { } bytes && (missing || ObjectsAre(entries.Where(e => e.Type != "commit").Select(e => (e.Sha, e.Type)))))
+            return ObjectWriter.Write(Store, "tree", bytes);
+        var text = string.Concat(entries.Select(e => $"{e.Mode} {e.Type} {e.Sha}\t{e.Path}\0"));
+        return Run(null, missing ? ["mktree", "-z", "--missing"] : ["mktree", "-z"], Encoding.UTF8.GetBytes(text)).EnsureOk().StdOut.Trim();
+    }
+
+    /// <summary>Whether each object is in the store with that type, asked of the operation's reader. False outside an operation.</summary>
+    bool ObjectsAre(IEnumerable<(string Oid, string Type)> objects)
+    {
+        if (Reader() is not { } reader) return false;
+        foreach (var (oid, type) in objects)
+            if (!reader.TryContents(oid, out var header, out _, headerOnly: true) || header?.Type != type) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// commit-tree's commit, written here when git would write exactly this: inside an operation, with
+    /// the tree and the parent in the store, and no other encoding asked for in git's config. Signing is
+    /// not a reason: commit-tree signs only when told -S, whatever commit.gpgSign says. Null leaves it to git.
+    /// </summary>
+    string? WriteCommit(string tree, string? parent, string message, ObjectWriter.Ident author, ObjectWriter.Ident committer)
+    {
+        if (Reader() is null || !PlainCommits()) return null;
+        if (!ObjectsAre(parent == null ? [(tree, "tree")] : [(tree, "tree"), (parent, "commit")])) return null;
+        if (!FullSha(tree) || parent != null && !FullSha(parent)) return null;
+        return ObjectWriter.CommitBytes(tree, parent == null ? [] : [parent], author, committer, message) is { } bytes
+            ? ObjectWriter.Write(Store, "commit", bytes) : null;
+    }
+
+    /// <summary>No date for commits in the environment, and no i18n.commitEncoding other than UTF-8 in git's config, which commit-tree writes into the commit.</summary>
+    bool PlainCommits()
+    {
+        if (System.Environment.GetEnvironmentVariable("GIT_AUTHOR_DATE") != null || System.Environment.GetEnvironmentVariable("GIT_COMMITTER_DATE") != null)
+            return false;
+        var said = Remembered("commit encoding", () => Run(null, "config", "--get", "i18n.commitEncoding").StdOut.Trim());
+        return said.Length == 0 || said.Equals("utf-8", StringComparison.OrdinalIgnoreCase) || said.Equals("utf8", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Who wrote a commit and who committed it, both dates in the form git reads back, and its whole message.</summary>
     public CommitIdentity IdentityOf(string sha) => OfCommit("identity ", sha, () =>
@@ -1821,6 +1887,15 @@ public sealed class Git
     /// land on the very objects the remote already holds.
     /// </summary>
     public string CommitTreeExact(string tree, string? parent, string message, CommitIdentity who)
+    {
+        if (ObjectWriter.Ident.Date(who.AuthorDate) is { } a && ObjectWriter.Ident.Date(who.CommitterDate) is { } c
+            && WriteCommit(tree, parent, message, new(who.AuthorName, who.AuthorEmail, a.Seconds, a.Zone),
+                new(who.CommitterName, who.CommitterEmail, c.Seconds, c.Zone)) is { } made)
+            return made;
+        return CommitTreeExactByGit(tree, parent, message, who);
+    }
+
+    internal string CommitTreeExactByGit(string tree, string? parent, string message, CommitIdentity who)
     {
         var args = new List<string> { "commit-tree", tree };
         if (parent != null) { args.Add("-p"); args.Add(parent); }

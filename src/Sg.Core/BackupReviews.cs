@@ -47,8 +47,8 @@ public static partial class Backup
                     item.Thin = have!; item.State = "up to date"; continue;
                 }
                 // Independent metadata commit: never inject annotations or context into a source-code tree.
-                var blob = root.Git.Run(null, ["hash-object", "-w", "--stdin"], Encoding.UTF8.GetBytes(payload)).EnsureOk().StdOut.Trim();
-                var tree = root.Git.Run(null, ["mktree"], Encoding.UTF8.GetBytes("100644 blob " + blob + "\treview.json\n")).EnsureOk().StdOut.Trim();
+                var blob = root.Git.HashBlob(Encoding.UTF8.GetBytes(payload));
+                var tree = root.Git.MakeTree([new("100644", "blob", blob, "review.json")]);
                 item.Thin = root.Git.CommitTree(tree, have, "sg code review: " + branch.Name + "\n");
                 if (check) { item.State = "would push"; continue; }
                 var answers = root.Git.PushRefs(cfg.Url, [new PushRef(item.Thin, item.RemoteRef, have)], force: false);

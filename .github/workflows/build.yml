@@ -15,14 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Eight shards: each pays about fifty seconds to set up and build before its first test, and the
+  # tests themselves shrink with every shard added. The repository is public, so runners cost nothing.
   test:
-    name: test (${{ matrix.shard }}/4)
+    name: test (${{ matrix.shard }}/8)
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
 
     steps:
       - uses: actions/checkout@v4
@@ -38,24 +40,32 @@ jobs:
           restore-keys: nuget-tests-${{ runner.os }}-
 
       # The runner image ships git but no Subversion. The bridge tests build real repositories with svnadmin.
+      # SlikSvn is a folder of binaries that needs nothing else, so it is kept between runs: Chocolatey
+      # took twenty seconds of every shard to put the same folder there.
+      - name: Restore Subversion
+        id: svn
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files\SlikSvn
+          key: sliksvn-1.14.5-x64
+
       - name: Install Subversion
+        if: steps.svn.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           choco install sliksvn --version=1.14.5 --no-progress --yes
           if ($LASTEXITCODE -notin 0, 3010) { throw "Subversion installation failed ($LASTEXITCODE)" }
-          # Chocolatey only fixes PATH for its own shell. Find the bin folder and hand it to the later steps.
-          foreach ($dir in "${env:ProgramFiles(x86)}\Subversion\bin", "$env:ProgramFiles\Subversion\bin", "$env:ProgramFiles\SlikSvn\bin") {
-            if (Test-Path (Join-Path $dir 'svnadmin.exe')) { $env:PATH = "$dir;$env:PATH" }
-          }
-          $svnadmin = Get-Command svnadmin -ErrorAction SilentlyContinue
-          if (-not $svnadmin) { throw 'svnadmin is not on PATH after the install' }
-          $bin = Split-Path $svnadmin.Source
-          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: Put Subversion on PATH
+        shell: pwsh
+        run: |
+          $bin = "$env:ProgramFiles\SlikSvn\bin"
           foreach ($exe in 'svn', 'svnadmin', 'svnmucc') {
             if (-not (Test-Path (Join-Path $bin "$exe.exe"))) { throw "$exe.exe is missing from $bin" }
           }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
           Write-Host "subversion in $bin"
-          svn --version --quiet
+          & "$bin\svn.exe" --version --quiet
 
       # The tests start a few thousand git and svn processes and write tens of thousands of small
       # files, and Defender on the runner looks at every one of them. The runner is thrown away after
@@ -76,7 +86,7 @@ jobs:
 
       - name: Test shard
         shell: pwsh
-        run: ./scripts/run-test-shard.ps1 -Shard ${{ matrix.shard }} -ShardCount 4 -ResultsDirectory TestResults/CI
+        run: ./scripts/run-test-shard.ps1 -Shard ${{ matrix.shard }} -ShardCount 8 -ResultsDirectory TestResults/CI
 
       - name: Upload test results and timings
         if: always()

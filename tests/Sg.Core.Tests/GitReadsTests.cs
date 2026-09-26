@@ -149,6 +149,49 @@ public sealed class GitReadsTests : IDisposable
     }
 
     [Fact]
+    public void The_top_of_a_worktree_is_git_s_and_asked_once()
+    {
+        var root = Ops.Init(Path.Combine(_dir, "root"), _log, fsmonitor: false);
+        var git = root.Git;
+        var wt = Path.Combine(_dir, "wt");
+        git.Ok(null, "worktree", "add", "-q", "-b", "t", wt, git.RefSha(SgRoot.RootRef)!);
+        var sub = Path.Combine(wt, "a", "b");
+        Directory.CreateDirectory(sub);
+        string ByGit(string cwd) => Path.GetFullPath(Proc.Run("git", ["-C", cwd, "rev-parse", "--show-toplevel"], null, new CollectingLog()).EnsureOk().StdOut.Trim());
+        int Asked() => _log.Lines.Count(l => l.StartsWith("cmd: ") && l.Contains(" --show-toplevel"));
+
+        _log.Clear();
+        Assert.Equal(ByGit(sub), git.Toplevel(sub));
+        Assert.Equal(ByGit(wt), git.Toplevel(wt));
+        Assert.Equal(ByGit(sub), git.Toplevel(sub));
+        Assert.Equal(ByGit(wt), git.Toplevel(wt + "\\"));
+        Assert.Equal(2, Asked());
+        // Spelled in another case, the answer is the disk's spelling, which git gives.
+        Assert.Equal(ByGit(sub), git.Toplevel(sub.ToLowerInvariant()));
+
+        // A repository made inside the worktree is the top of what is under it, and then it is gone again.
+        var nested = Path.Combine(wt, "a");
+        Proc.Run("git", ["init", "-q", nested], null, new CollectingLog()).EnsureOk();
+        Assert.Equal(ByGit(nested), git.Toplevel(sub));
+        Directory.Delete(Path.Combine(nested, ".git"), true);
+        Assert.Equal(ByGit(sub), git.Toplevel(sub));
+
+        // A folder gone, and a worktree whose own folder in the store is gone, fail as git fails.
+        Directory.Delete(sub);
+        Assert.Throws<SgException>(() => git.Toplevel(sub));
+        foreach (var admin in Directory.GetDirectories(Path.Combine(git.Store, "worktrees"))) Directory.Delete(admin, true);
+        Assert.Throws<SgException>(() => git.Toplevel(wt));
+
+        // A repository of its own is asked every time: its config may name another top.
+        var plain = Path.Combine(_dir, "plain");
+        Proc.Run("git", ["init", "-q", plain], null, new CollectingLog()).EnsureOk();
+        _log.Clear();
+        Assert.Equal(ByGit(plain), git.Toplevel(plain));
+        Assert.Equal(ByGit(plain), git.Toplevel(plain));
+        Assert.Equal(2, Asked());
+    }
+
+    [Fact]
     public void Status_lists_untracked_files_as_uall_does()
     {
         var root = Ops.Init(Path.Combine(_dir, "root"), _log, fsmonitor: false);

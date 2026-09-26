@@ -165,31 +165,39 @@ public static class Conflicts
         var git = root.Git;
         worktree = git.Toplevel(worktree);
         var branch = git.BranchOrRebaseHead(worktree);
-        var co = Ops.BaseCheckout(root, branch);
         var at = git.Progress(worktree);
+        var kind = git.ReplayInProgress(worktree);
+        var backupName = Backup.ReplayName(git, worktree);
+        var inProgress = kind != Replay.None || backupName != null;
+        // The base in config, what is in conflict, the status and what is staged wait on none of each other:
+        // they go out together, where the page used to wait for the four one after another.
+        var ((co, conflicted), (entries, staged)) = Fan.Two(
+            () => Fan.Two(() => Ops.BaseCheckout(root, branch), () => git.ConflictedFiles(worktree)),
+            () => Fan.Two(() => git.StatusEntries(worktree, untracked: true),
+                () => inProgress ? git.Out(worktree, "diff", "--cached", "--name-only").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList() : null));
         var state = new ConflictState
         {
             Worktree = worktree,
             Branch = branch,
             Checkout = co.Name,
             Server = root.Vcs(co).ServerName,
-            Kind = git.ReplayInProgress(worktree),
-            BackupName = Backup.ReplayName(git, worktree),
+            Kind = kind,
+            BackupName = backupName,
             BackupPull = Backup.ReplayIsPull(git, worktree),
-            Conflicted = git.ConflictedFiles(worktree),
+            Conflicted = conflicted,
             At = at.At,
             Of = at.Of,
             Stopped = at.Subject,
         };
-        foreach (var entry in git.StatusEntries(worktree, untracked: true).Where(x => state.Conflicted.Contains(x.Path)))
+        foreach (var entry in entries.Where(x => state.Conflicted.Contains(x.Path)))
             state.Codes[entry.Path] = entry.X + entry.Y;
-        if (state.InProgress)
-            state.ResolutionReviewFiles = git.Out(worktree, "diff", "--cached", "--name-only").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
-        state.Stuck = state.Kind != Replay.None && state.Conflicted.Count == 0 && git.NothingStaged(worktree);
+        if (staged != null) state.ResolutionReviewFiles = staged;
+        // Nothing staged is an empty diff --cached, which was read above whenever a replay stopped.
+        state.Stuck = state.Kind != Replay.None && state.Conflicted.Count == 0 && staged is { Count: 0 };
         // Only then, and only because a stuck step is the one place the worktree's own changes are the
         // thing to look at: everywhere else they are noise, and a replay leaves the worktree clean.
         if (state.Stuck)
-            state.ByHand = git.StatusEntries(worktree, untracked: true).Select(e => e.Path).ToList();
+            state.ByHand = entries.Select(e => e.Path).ToList();
         return state;
     }
 

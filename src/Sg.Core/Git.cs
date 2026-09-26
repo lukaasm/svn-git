@@ -880,7 +880,63 @@ public sealed class Git
         return res;
     }
 
-    public string Toplevel(string cwd) => Path.GetFullPath(Out(cwd, "rev-parse", "--show-toplevel"));
+    /// <summary>
+    /// The top of the worktree a folder is in, as git names it: the folder on disk, in the case the disk
+    /// spells it. Every worktree command asked this first, a process each; git's answer is now kept per
+    /// folder for a linked worktree, and asked again when the .git it rests on is not the first one above
+    /// the folder any more, reads differently, or points at a folder git would no longer take.
+    /// </summary>
+    public string Toplevel(string cwd)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd));
+        var link = TunnelOf(full) == null && !DiscoveryRedirected() ? LinkedWorktreeAbove(full) : null;
+        if (link != null && s_toplevels.TryGetValue(full, out var known) && string.Equals(known.Link, link, StringComparison.OrdinalIgnoreCase)) return known.Top;
+        var top = Path.GetFullPath(Out(cwd, "rev-parse", "--show-toplevel"));
+        if (link != null)
+        {
+            if (s_toplevels.Count > 10_000) s_toplevels.Clear();
+            s_toplevels[full] = (link, top);
+        }
+        return top;
+    }
+
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Link, string Top)> s_toplevels = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>What git would be told to look elsewhere by, instead of walking up from the folder.</summary>
+    bool DiscoveryRedirected() =>
+        new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" }
+            .Any(v => _env.ContainsKey(v) || Environment.GetEnvironmentVariable(v) != null);
+
+    /// <summary>
+    /// The first .git above a folder when it is a linked worktree's - a file naming a folder that holds HEAD
+    /// and commondir - as its folder and what the file says; null for anything else. A linked worktree's top
+    /// is where its .git file is, whatever the config says: git reads core.worktree and core.bare only for a
+    /// repository of its own.
+    /// </summary>
+    static string? LinkedWorktreeAbove(string folder)
+    {
+        try
+        {
+            // git -C fails on a folder that is gone, whatever is above it.
+            if (!Directory.Exists(folder)) return null;
+            for (var d = folder; d != null; d = Path.GetDirectoryName(d))
+            {
+                var dotGit = Path.Combine(d, ".git");
+                if (Directory.Exists(dotGit)) return null;
+                if (!File.Exists(dotGit)) continue;
+                var line = File.ReadAllText(dotGit).Trim();
+                if (!line.StartsWith("gitdir: ", StringComparison.Ordinal)) return null;
+                var gitDir = Path.GetFullPath(Path.Combine(d, line[8..].Trim()));
+                if (!File.Exists(Path.Combine(gitDir, "HEAD")) || !File.Exists(Path.Combine(gitDir, "commondir"))) return null;
+                return d + "\n" + line;
+            }
+            return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
 
     // ---- index and trees ----
 

@@ -54,10 +54,11 @@ public sealed class Git
 
     public Git(string exe, string store, ILog log)
     {
-        _exe = exe;
+        var git = GitExecutable.Resolve(exe);
+        _exe = git.Exe;
         Store = store;
         _log = log;
-        _env = new Dictionary<string, string>
+        _env = new Dictionary<string, string>(git.Env)
         {
             ["GIT_TERMINAL_PROMPT"] = "0",
             ["GIT_OPTIONAL_LOCKS"] = "0",

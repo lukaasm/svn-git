@@ -76,22 +76,24 @@ public sealed class GitRepo
     static readonly UTF8Encoding Utf8 = new(false);
     readonly string _exe;
     readonly ILog _log;
-    static readonly Dictionary<string, string> Env = new()
-    {
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["LC_ALL"] = "C",
-        ["GIT_EDITOR"] = "true",
-        ["GIT_PAGER"] = "cat",
-        ["GIT_MERGE_AUTOEDIT"] = "no",
-    };
+    readonly Dictionary<string, string> Env;
 
     public string Path { get; }
 
     public GitRepo(string exe, string path, ILog log)
     {
-        _exe = exe;
+        var git = GitExecutable.Resolve(exe);
+        _exe = git.Exe;
         Path = path;
         _log = log;
+        Env = new Dictionary<string, string>(git.Env)
+        {
+            ["GIT_TERMINAL_PROMPT"] = "0",
+            ["LC_ALL"] = "C",
+            ["GIT_EDITOR"] = "true",
+            ["GIT_PAGER"] = "cat",
+            ["GIT_MERGE_AUTOEDIT"] = "no",
+        };
     }
 
     public ProcResult Run(IEnumerable<string> args, byte[]? stdin = null, IReadOnlyDictionary<string, string>? env = null)

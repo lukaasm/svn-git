@@ -87,7 +87,118 @@ public sealed class Git
             if (extraEnv != null) foreach (var kv in extraEnv) d[kv.Key] = kv.Value;
             env = d;
         }
-        return Proc.Run(_exe, list, cwd, _log, stdin, env, stdoutToFile);
+        var result = Proc.Run(_exe, list, cwd, _log, stdin, env, stdoutToFile);
+        Wrote(list);
+        return result;
+    }
+
+    // ---- what one operation has read already ----
+
+    /// <summary>
+    /// Bumped by every git command this store runs that could change a ref, the config, the worktrees or a
+    /// remote, and for everyone by what changes git behind a store's back: a clone's fetch or push, a file
+    /// written into .git. What was remembered before the last bump is not trusted after it.
+    /// </summary>
+    long _writes;
+    static long s_writes;
+
+    readonly object _memoGate = new();
+    readonly Dictionary<string, (long Writes, object Value)> _memo = new(StringComparer.Ordinal);
+    int _remembering;
+
+    long Writes => Interlocked.Read(ref _writes) + Interlocked.Read(ref s_writes);
+
+    /// <summary>
+    /// While an sg operation holds its root, the refs, the branch config, the worktree list and a remote's
+    /// refs are read once and asked again only after a git command that could change them. One backup asked
+    /// the same ls-remote ten times - ten round trips to a hosted remote - and listed the worktrees twelve.
+    /// </summary>
+    internal void BeginRemembering() { lock (_memoGate) _remembering++; }
+
+    internal void EndRemembering()
+    {
+        lock (_memoGate) if (--_remembering == 0) _memo.Clear();
+    }
+
+    /// <summary>For a change made to git's files from outside this store's own commands, as a clone's push does: nothing read before it is trusted, in any store.</summary>
+    public static void Forget() => Interlocked.Increment(ref s_writes);
+
+    /// <summary>For a file this store wrote into its own .git directly: nothing it read before is trusted.</summary>
+    public void Changed() => Interlocked.Increment(ref _writes);
+
+    /// <summary>Commands that change no ref, no config, no worktree and no remote: reads, and writes of objects and the index only.</summary>
+    static readonly HashSet<string> Harmless = new(StringComparer.Ordinal)
+    {
+        "rev-parse", "rev-list", "log", "show", "cat-file", "ls-tree", "ls-files", "ls-remote", "for-each-ref", "show-ref",
+        "merge-base", "diff", "diff-tree", "diff-index", "diff-files", "blame", "grep", "check-ref-format", "var", "name-rev",
+        "check-ignore", "check-attr", "status", "hash-object", "mktree", "commit-tree", "write-tree", "read-tree",
+        "update-index", "merge-file", "apply", "checkout-index", "count-objects", "archive", "format-patch",
+    };
+
+    /// <summary>What deletes objects: an object once seen may be gone after it.</summary>
+    static readonly HashSet<string> Collects = new(StringComparer.Ordinal) { "gc", "prune", "repack", "reflog" };
+
+    void Wrote(IEnumerable<string> args)
+    {
+        if (!Changes(args, out var collects)) return;
+        if (collects) _commits.Clear();
+        Changed();
+    }
+
+    /// <summary>
+    /// Whether a git command could change a ref, the config, the worktrees or a remote. Anything not known
+    /// to be harmless is taken to: a stale answer is a wrong one, a question asked twice only a slow one.
+    /// </summary>
+    public static bool Changes(IEnumerable<string> args, out bool collects)
+    {
+        collects = false;
+        using var e = args.GetEnumerator();
+        while (e.MoveNext())
+        {
+            var a = e.Current;
+            if (a is "-c" or "-C") { e.MoveNext(); continue; }
+            if (a.StartsWith('-')) continue;
+            if (Harmless.Contains(a)
+                || a == "worktree" && e.MoveNext() && e.Current == "list"
+                || a == "config" && e.MoveNext() && e.Current is "--get" or "--get-all" or "--get-regexp" or "--list" or "-l")
+                return false;
+            collects = Collects.Contains(a);
+            return true;
+        }
+        return true;
+    }
+
+    /// <summary>Read once per operation: the first answer while nothing was written since, else a fresh one.</summary>
+    T Remembered<T>(string key, Func<T> read) where T : class
+    {
+        long writes;
+        lock (_memoGate)
+        {
+            writes = Writes;
+            if (_remembering > 0 && _memo.TryGetValue(key, out var known) && known.Writes == writes) return (T)known.Value;
+        }
+        var value = read();
+        lock (_memoGate) if (_remembering > 0 && Writes == writes) _memo[key] = (writes, value);
+        return value;
+    }
+
+    /// <summary>
+    /// What is known of a commit by its full sha never changes: its parent, who wrote it, that it exists. They
+    /// are kept for as long as the process runs, until something collects objects.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> _commits = new(StringComparer.Ordinal);
+
+    static bool FullSha(string rev) => rev.Length == 40 && rev.All(Uri.IsHexDigit);
+
+    T OfCommit<T>(string kind, string sha, Func<T> read) where T : class
+    {
+        if (!FullSha(sha)) return read();
+        var key = kind + sha;
+        if (_commits.TryGetValue(key, out var known)) return (T)known;
+        var value = read();
+        if (_commits.Count > 50_000) _commits.Clear();
+        _commits[key] = value;
+        return value;
     }
 
     // ---- git checkouts, seen from the store ----
@@ -176,9 +287,42 @@ public sealed class Git
     {
         Directory.CreateDirectory(Store);
         Proc.Run(_exe, ["init", "--bare", "-q", PathUtil.Git(Store)], Path.GetDirectoryName(Store), _log, null, _env).EnsureOk();
+        Changed();
     }
 
     public void Config(string key, string value) => Ok(null, "config", key, value);
+
+    /// <summary>
+    /// Many store settings for one read and one write instead of a git process each. A key that already
+    /// holds the value is left alone and one that holds another is set as before, so no key is ever in
+    /// the file twice; the new ones are added in a section each after what is there. For plain
+    /// "section.key" names and values that need no quoting, which is what sg's own settings are.
+    /// </summary>
+    public void ConfigMany(IEnumerable<(string Key, string Value)> settings)
+    {
+        var have = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in Run(null, "config", "--local", "--list", "-z").StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var nl = entry.IndexOf('\n');
+            if (nl > 0) have[entry[..nl]] = entry[(nl + 1)..];
+        }
+        var text = new StringBuilder();
+        foreach (var (key, value) in settings)
+        {
+            if (have.TryGetValue(key, out var current))
+            {
+                if (current != value) Config(key, value);
+                continue;
+            }
+            var dot = key.IndexOf('.');
+            if (dot <= 0 || dot != key.LastIndexOf('.') || value.IndexOfAny(['"', '\\', ';', '#', '\n']) >= 0 || value.Trim() != value)
+                throw new ArgumentException("not a plain setting: " + key);
+            text.Append('[').Append(key[..dot]).Append("]\n\t").Append(key[(dot + 1)..]).Append(" = ").Append(value).Append('\n');
+        }
+        if (text.Length == 0) return;
+        File.AppendAllText(Path.Combine(Store, "config"), text.ToString());
+        Changed();
+    }
 
     public string? ConfigGet(string key)
     {
@@ -250,8 +394,12 @@ public sealed class Git
 
     public string? RefSha(string refName)
     {
-        var r = Run(null, "rev-parse", "--verify", "--quiet", refName + "^{commit}");
-        return r.Ok ? r.StdOut.Trim() : null;
+        var sha = Remembered("ref " + refName, () =>
+        {
+            var r = Run(null, "rev-parse", "--verify", "--quiet", refName + "^{commit}");
+            return r.Ok ? r.StdOut.Trim() : "";
+        });
+        return sha.Length == 0 ? null : sha;
     }
 
     /// <summary>
@@ -280,7 +428,10 @@ public sealed class Git
     public Dictionary<string, string> BranchBases() => BranchConfig("sgBase");
 
     /// <summary>Branch name to the value of branch.&lt;name&gt;.&lt;key&gt;, for every branch that has one, in one git call.</summary>
-    public Dictionary<string, string> BranchConfig(string key)
+    public Dictionary<string, string> BranchConfig(string key) =>
+        new(Remembered("branch config " + key, () => ReadBranchConfig(key)), StringComparer.OrdinalIgnoreCase);
+
+    Dictionary<string, string> ReadBranchConfig(string key)
     {
         var res = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // git config exits 1 when nothing matches, which is not an error here.
@@ -392,7 +543,9 @@ public sealed class Git
     public void WorktreePrune() => Run(null, "worktree", "prune");
     public void BranchDelete(string name) => Ok(null, "branch", "-D", name);
 
-    public List<WorktreeInfo> WorktreeList()
+    public List<WorktreeInfo> WorktreeList() => [.. Remembered("worktrees", ReadWorktreeList)];
+
+    List<WorktreeInfo> ReadWorktreeList()
     {
         var r = Ok(null, "worktree", "list", "--porcelain");
         var res = new List<WorktreeInfo>();
@@ -579,8 +732,12 @@ public sealed class Git
     /// <summary>The commit under this one, or null when it is a root commit.</summary>
     public string? ParentOf(string sha)
     {
-        var r = Run(null, "rev-parse", "--verify", "--quiet", sha + "^");
-        return r.Ok ? r.StdOut.Trim() : null;
+        var parent = OfCommit("parent ", sha, () =>
+        {
+            var r = Run(null, "rev-parse", "--verify", "--quiet", sha + "^");
+            return r.Ok ? r.StdOut.Trim() : "";
+        });
+        return parent.Length == 0 ? null : parent;
     }
 
     /// <summary>
@@ -1582,12 +1739,12 @@ public sealed class Git
     public string EmptyTree() => Run(null, ["mktree"], Array.Empty<byte>()).EnsureOk().StdOut.Trim();
 
     /// <summary>Who wrote a commit and who committed it, both dates in the form git reads back, and its whole message.</summary>
-    public CommitIdentity IdentityOf(string sha)
+    public CommitIdentity IdentityOf(string sha) => OfCommit("identity ", sha, () =>
     {
         var p = Ok(null, "log", "-1", "--format=%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%B", sha).StdOut.Split('\x1f', 7);
         if (p.Length < 7) throw new SgException("cannot read commit " + sha);
         return new CommitIdentity(p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
-    }
+    });
 
     /// <summary>
     /// A commit with every field taken from the caller: author, committer and both dates. The same
@@ -1607,7 +1764,14 @@ public sealed class Git
         return Run(null, args, Encoding.UTF8.GetBytes(message), env).EnsureOk().StdOut.Trim();
     }
 
-    public bool HasCommit(string sha) => Run(null, "cat-file", "-e", sha + "^{commit}").Ok;
+    /// <summary>Whether the store has the commit. A yes is kept; a no is asked again, since a fetch can bring it.</summary>
+    public bool HasCommit(string sha)
+    {
+        if (FullSha(sha) && _commits.ContainsKey("has " + sha)) return true;
+        if (!Run(null, "cat-file", "-e", sha + "^{commit}").Ok) return false;
+        if (FullSha(sha)) _commits["has " + sha] = sha;
+        return true;
+    }
 
     /// <summary>The commits of a range oldest first, along the first parent only: a merge counts as one commit whose change is its whole diff.</summary>
     public List<string> RevListFirstParent(string range) =>
@@ -1633,7 +1797,9 @@ public sealed class Git
     }
 
     /// <summary>Every ref the repository at a URL advertises, name to sha, in one round trip.</summary>
-    public Dictionary<string, string> LsRemote(string url)
+    public Dictionary<string, string> LsRemote(string url) => new(Remembered("remote " + url, () => ReadRemote(url)), StringComparer.Ordinal);
+
+    Dictionary<string, string> ReadRemote(string url)
     {
         var r = Run(null, "ls-remote", "--refs", url);
         if (!r.Ok) throw new SgException($"cannot reach {url}: {FirstLine(r.StdErr)}");

@@ -166,6 +166,7 @@ public sealed class SgRoot
                 {
                     _lock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                     _lockDepth = 1;
+                    Git.BeginRemembering();
                     return new Releaser(this);
                 }
                 catch (IOException)
@@ -184,6 +185,7 @@ public sealed class SgRoot
         try
         {
             if (--_lockDepth > 0) return;
+            Git.EndRemembering();
             _lock?.Dispose();
             _lock = null;
         }

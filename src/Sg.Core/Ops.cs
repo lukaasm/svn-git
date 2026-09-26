@@ -166,6 +166,11 @@ public static class Ops
     /// </summary>
     const int StoreConfigVersion = 3;
 
+    /// <summary>Every StoreConfig key, then the version they are, then fsmonitor when it is asked for.</summary>
+    static IEnumerable<(string Key, string Value)> StoreSettings(bool fsmonitor) =>
+        StoreConfig.Append(("sg.configVersion", StoreConfigVersion.ToString(CultureInfo.InvariantCulture)))
+            .Concat(fsmonitor ? [("core.fsmonitor", "true")] : []);
+
     /// <summary>Writes every StoreConfig key a store made by an older sg lacks. Nothing when it is current.</summary>
     public static void UpgradeStore(SgRoot root)
     {
@@ -174,8 +179,7 @@ public static class Ops
         try { text = File.Exists(file) ? File.ReadAllText(file) : ""; }
         catch (IOException) { return; }
         if (Regex.IsMatch(text, @"(?im)^\s*configVersion\s*=\s*" + StoreConfigVersion + @"\s*$")) return;
-        foreach (var (k, v) in StoreConfig) root.Git.Config(k, v);
-        root.Git.Config("sg.configVersion", StoreConfigVersion.ToString(CultureInfo.InvariantCulture));
+        root.Git.ConfigMany(StoreSettings(fsmonitor: false));
         root.Log.Info("store settings brought up to date: " + root.StorePath);
     }
 
@@ -189,9 +193,7 @@ public static class Ops
         var cfg = new SgConfig { Root = rootPath, GitExe = gitExe, SvnExe = svnExe };
         var root = SgRoot.Create(rootPath, cfg, log);
         root.Git.InitBare();
-        foreach (var (k, v) in StoreConfig) root.Git.Config(k, v);
-        root.Git.Config("sg.configVersion", StoreConfigVersion.ToString(CultureInfo.InvariantCulture));
-        if (fsmonitor) root.Git.Config("core.fsmonitor", "true");
+        root.Git.ConfigMany(StoreSettings(fsmonitor));
         root.Git.EnsureRootCommit();
         root.RefreshExcludes();
         log.Info("sg root ready: " + rootPath);

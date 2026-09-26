@@ -46,6 +46,7 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
         {
             root.Git.WorktreeAddDetachedNoCheckout(tmp, SgRoot.RootRef);
             File.Move(Path.Combine(tmp, ".git"), gitFile);
+            root.Git.Changed();
         }
         finally
         {

@@ -105,7 +105,10 @@ public sealed class GitRepo
             foreach (var kv in env) d[kv.Key] = kv.Value;
             e = d;
         }
-        return Proc.Run(_exe, list, Path, _log, stdin, e);
+        var result = Proc.Run(_exe, list, Path, _log, stdin, e);
+        // A clone's fetch or push can be the very remote or ref a store operation has read.
+        if (Git.Changes(list, out _)) Git.Forget();
+        return result;
     }
 
     public ProcResult Run(params string[] args) => Run((IEnumerable<string>)args);
@@ -427,6 +430,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "commondir"), "../..\n");
         File.WriteAllText(Path.Combine(dir, "HEAD"), root.Git.EnsureRootCommit() + "\n");
+        root.Git.Changed();
         root.RefreshTunnels();
     }
 

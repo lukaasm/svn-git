@@ -3,12 +3,17 @@ using Xunit;
 
 namespace Sg.Core.Tests;
 
+/// <summary>The tests set the one cached answer the whole process shares: one at a time, or one reads what another set.</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ElevationCollection { public const string Name = "Elevation"; }
+
 /// <summary>
 /// Noticing that sg is running as administrator. Nobody chooses this for sg: it is inherited from the
 /// terminal that started it, and the terminal was elevated because an installer asked. The first thing
 /// it breaks is every folder picker in the app, so the app has to say it before the first one is
 /// opened - which means this has to be right, and cheap enough to ask on the way to the first window.
 /// </summary>
+[Collection(ElevationCollection.Name)]
 public sealed class ElevationTests : IDisposable
 {
     /// <summary>The answer is cached, and these tests set it. Put it back so nothing else inherits one.</summary>

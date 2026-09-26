@@ -179,17 +179,10 @@ public sealed class GitRepo
     /// </summary>
     public string HeadCommit()
     {
+        if (Dirs() is not { } dirs) return "HEAD";
+        var (gitDir, common) = dirs;
         try
         {
-            var dotGit = System.IO.Path.Combine(Path, ".git");
-            string gitDir;
-            if (Directory.Exists(dotGit)) gitDir = dotGit;
-            else if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is var line && line.StartsWith("gitdir: ", StringComparison.Ordinal))
-                gitDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, line[8..].Trim()));
-            else return "HEAD";
-            var common = File.Exists(System.IO.Path.Combine(gitDir, "commondir"))
-                ? System.IO.Path.GetFullPath(System.IO.Path.Combine(gitDir, File.ReadAllText(System.IO.Path.Combine(gitDir, "commondir")).Trim()))
-                : gitDir;
             var head = File.ReadAllText(System.IO.Path.Combine(gitDir, "HEAD")).Trim();
             if (IsSha(head)) return head;
             if (!head.StartsWith("ref: refs/heads/", StringComparison.Ordinal)) return "HEAD";
@@ -221,15 +214,10 @@ public sealed class GitRepo
     /// </summary>
     string? HeadBranchFromFiles()
     {
+        if (Dirs() is not { } dirs) return null;
         try
         {
-            var dotGit = System.IO.Path.Combine(Path, ".git");
-            string gitDir;
-            if (Directory.Exists(dotGit)) gitDir = dotGit;
-            else if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is var line && line.StartsWith("gitdir: ", StringComparison.Ordinal))
-                gitDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, line[8..].Trim()));
-            else return null;
-            var head = File.ReadAllText(System.IO.Path.Combine(gitDir, "HEAD")).Trim();
+            var head = File.ReadAllText(System.IO.Path.Combine(dirs.GitDir, "HEAD")).Trim();
             if (head.Length == 40 && head.All(Uri.IsHexDigit)) return "";
             if (!head.StartsWith("ref: refs/heads/", StringComparison.Ordinal)) return null;
             var branch = head[16..];
@@ -242,42 +230,131 @@ public sealed class GitRepo
     }
 
     /// <summary>
-    /// branch.* and remote.* in one read: the values as `git config --get` gives them (the last one of a
-    /// key), and the remotes as git remote lists them, sorted.
-    /// Null when remotes are also defined the old way, in .git/remotes or .git/branches, which git remote
-    /// reads too.
+    /// branch.*, remote.* and url.* in one read: the values as `git config --get` gives them (the last one
+    /// of a key), the remotes as git remote lists them, sorted, each remote's URLs in order, and the
+    /// url.*.insteadOf rules git rewrites them by. Null when remotes are also defined the old way, in
+    /// remotes or branches files, which git remote reads too.
     /// </summary>
-    (Dictionary<string, string> Values, List<string> Remotes)? RemoteConfig()
+    RemoteSettings? RemoteConfig()
     {
+        if (Dirs() is not { } dirs) return null;
         try
         {
-            var dotGit = System.IO.Path.Combine(Path, ".git");
-            if (Directory.Exists(dotGit)
-                && (Directory.Exists(System.IO.Path.Combine(dotGit, "remotes")) && Directory.EnumerateFileSystemEntries(System.IO.Path.Combine(dotGit, "remotes")).Any()
-                    || Directory.Exists(System.IO.Path.Combine(dotGit, "branches")) && Directory.EnumerateFileSystemEntries(System.IO.Path.Combine(dotGit, "branches")).Any()))
-                return null;
+            foreach (var old in new[] { "remotes", "branches" })
+                if (Directory.Exists(System.IO.Path.Combine(dirs.CommonDir, old)) && Directory.EnumerateFileSystemEntries(System.IO.Path.Combine(dirs.CommonDir, old)).Any())
+                    return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
-        var r = Run("config", "-z", "--get-regexp", @"^(branch|remote)\.");
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        var remotes = new List<string>();
-        if (!r.Ok) return r.ExitCode == 1 ? (values, remotes) : null;
-        foreach (var entry in r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        var r = Run("config", "-z", "--show-scope", "--get-regexp", @"^(branch|remote|url)\.");
+        var settings = new RemoteSettings();
+        if (!r.Ok) return r.ExitCode == 1 ? settings : null;
+        // Each value comes as its scope, then the key and the value.
+        var parts = r.StdOut.Split('\0');
+        for (var i = 0; i + 1 < parts.Length; i += 2)
         {
+            var (scope, entry) = (parts[i], parts[i + 1]);
             var nl = entry.IndexOf('\n');
             var key = nl < 0 ? entry : entry[..nl];
-            values[key] = nl < 0 ? "" : entry[(nl + 1)..];
+            var value = nl < 0 ? "" : entry[(nl + 1)..];
+            settings.Values[key] = value;
             var dot = key.LastIndexOf('.');
-            if (key.StartsWith("remote.", StringComparison.Ordinal) && dot > 7 && !remotes.Contains(key[7..dot])) remotes.Add(key[7..dot]);
+            if (key.StartsWith("remote.", StringComparison.Ordinal) && dot > 7)
+            {
+                var name = key[7..dot];
+                if (!settings.Remotes.Contains(name)) settings.Remotes.Add(name);
+                // git remote get-url knows only a remote the repository's own config names.
+                if (scope is "local" or "worktree") settings.InRepository.Add(name);
+                if (key[(dot + 1)..] == "url")
+                {
+                    var urls = settings.Urls.TryGetValue(name, out var known) ? known : settings.Urls[name] = [];
+                    // An empty url starts the list again.
+                    if (value.Length == 0) urls.Clear();
+                    else urls.Add(value);
+                }
+            }
+            else if (key.StartsWith("url.", StringComparison.Ordinal) && key.EndsWith(".insteadof", StringComparison.Ordinal) && key.Length > 14)
+            {
+                var @base = key[4..^10];
+                var rule = settings.Rewrites.FirstOrDefault(x => x.Base == @base);
+                if (rule.Base == null) settings.Rewrites.Add(rule = (@base, []));
+                rule.InsteadOf.Add(value);
+            }
         }
         // git remote lists them sorted, byte by byte.
-        remotes.Sort(StringComparer.Ordinal);
-        return (values, remotes);
+        settings.Remotes.Sort(StringComparer.Ordinal);
+        return settings;
+    }
+
+    sealed class RemoteSettings
+    {
+        public readonly Dictionary<string, string> Values = new(StringComparer.Ordinal);
+        public readonly List<string> Remotes = [];
+        public readonly Dictionary<string, List<string>> Urls = new(StringComparer.Ordinal);
+        public readonly HashSet<string> InRepository = new(StringComparer.Ordinal);
+        /// <summary>Each url.&lt;base&gt;.insteadOf base in the order it first appears, with its prefixes in theirs.</summary>
+        public readonly List<(string Base, List<string> InsteadOf)> Rewrites = [];
+
+        /// <summary>
+        /// A URL as git rewrites it: the longest insteadOf prefix it starts with gives way to its base, and of
+        /// two as long, the one git met first - by base, then by prefix.
+        /// </summary>
+        public string Rewrite(string url)
+        {
+            (string Base, string Prefix)? longest = null;
+            foreach (var (@base, prefixes) in Rewrites)
+                foreach (var prefix in prefixes)
+                    if (url.StartsWith(prefix, StringComparison.Ordinal) && (longest == null || prefix.Length > longest.Value.Prefix.Length))
+                        longest = (@base, prefix);
+            return longest is { } l ? l.Base + url[l.Prefix.Length..] : url;
+        }
     }
 
     /// <summary>`git remote`: the remotes, in the order git lists them.</summary>
     public List<string> Remotes() =>
         RemoteConfig()?.Remotes ?? Run("remote").StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+
+    /// <summary>
+    /// `git remote get-url`: the remote's first URL as git rewrites it - or its name, when it has none -
+    /// and null for a remote the repository's own config does not name, which git calls no such remote.
+    /// </summary>
+    public string? RemoteUrl(string remote)
+    {
+        if (RemoteConfig() is { } settings)
+            return !settings.InRepository.Contains(remote) ? null
+                : settings.Rewrite(settings.Urls.TryGetValue(remote, out var urls) && urls.Count > 0 ? urls[0] : remote);
+        var r = Run("remote", "get-url", remote);
+        return r.Ok && r.StdOut.Trim().Length > 0 ? r.StdOut.Trim() : null;
+    }
+
+    /// <summary>
+    /// The folder git keeps this repository's state in, and the one it shares with the repository's other
+    /// worktrees, read from the files as git finds them: the .git folder, or the folder a .git file names,
+    /// and the folder its commondir names. Null when the files say anything else, for git to answer.
+    /// </summary>
+    (string GitDir, string CommonDir)? Dirs()
+    {
+        try
+        {
+            var dotGit = System.IO.Path.Combine(Path, ".git");
+            string gitDir;
+            if (Directory.Exists(dotGit)) gitDir = System.IO.Path.GetFullPath(dotGit);
+            else if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is var line && line.StartsWith("gitdir: ", StringComparison.Ordinal))
+                gitDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, line[8..].Trim()));
+            else return null;
+            if (!File.Exists(System.IO.Path.Combine(gitDir, "HEAD"))) return null;
+            var commondir = System.IO.Path.Combine(gitDir, "commondir");
+            var common = File.Exists(commondir) ? System.IO.Path.GetFullPath(System.IO.Path.Combine(gitDir, File.ReadAllText(commondir).Trim())) : gitDir;
+            return (gitDir, common);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>`git rev-parse --is-shallow-repository`: whether a shallow file is in the repository's common folder.</summary>
+    public bool IsShallow() =>
+        Dirs() is { } dirs ? File.Exists(System.IO.Path.Combine(dirs.CommonDir, "shallow")) : Out("rev-parse", "--is-shallow-repository") == "true";
 
     public bool IsAncestor(string a, string b) => Run("merge-base", "--is-ancestor", a, b).ExitCode == 0;
 
@@ -289,7 +366,7 @@ public sealed class GitRepo
     public string TreeOf(string commit) => Out("rev-parse", commit + "^{tree}");
 
     /// <summary>The folder git keeps this clone's state in: .git, or a linked worktree's own folder.</summary>
-    public string GitDir => System.IO.Path.GetFullPath(Out("rev-parse", "--absolute-git-dir"));
+    public string GitDir => Dirs()?.GitDir ?? System.IO.Path.GetFullPath(Out("rev-parse", "--absolute-git-dir"));
 
     /// <summary>A commit made the way the user's own git makes one: their name, their email, their dates.</summary>
     public string CommitTree(string tree, IEnumerable<string> parents, string message)
@@ -532,7 +609,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         var rootPath = root.RootPath.TrimEnd('\\', '/');
         if (rootPath.Equals(topPath, StringComparison.OrdinalIgnoreCase) || rootPath.StartsWith(topPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new SgException($"the sg root {rootPath} is inside the clone {topPath}. Make the root a folder outside the clone, like its parent.");
-        if (repo.Out("rev-parse", "--is-shallow-repository") == "true")
+        if (repo.IsShallow())
             throw new SgException($"{folder} is a shallow clone. sg reads the branch's history; fetch it whole first: git -C \"{folder}\" fetch --unshallow");
         var (local, remote, branch) = repo.Tracking();
         if (local == null)
@@ -852,7 +929,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
                     else
                     {
                         unit = GitUnit.Submodule(root, parent, e, wc, dir);
-                        if (unit.Repo.Out("rev-parse", "--is-shallow-repository") == "true")
+                        if (unit.Repo.IsShallow())
                             why = $"it is a shallow clone. Fetch it whole: git -C \"{dir}\" fetch --unshallow";
                         else if (unit.Switched && unit.Repo.Rev(unit.TrackingRef) == null)
                             why = $"{unit.Remote}/{unit.Branch} is not in it. Sync fetches it";

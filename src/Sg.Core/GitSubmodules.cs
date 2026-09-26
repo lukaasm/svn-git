@@ -60,8 +60,8 @@ public sealed class GitUnit
             : throw new SgException($"submodule {wc} has no remote to send to"),
         u =>
         {
-            var r = Remotes(u.Repo).Count > 0 ? u.Repo.Run("remote", "get-url", u.Remote) : null;
-            return r is { Ok: true } && r.StdOut.Trim().Length > 0 ? r.StdOut.Trim().TrimEnd('/') : GitSubmodules.Resolve(entry.Url, parent.Url);
+            var url = Remotes(u.Repo).Count > 0 ? u.Repo.RemoteUrl(u.Remote) : null;
+            return url != null ? url.TrimEnd('/') : GitSubmodules.Resolve(entry.Url, parent.Url);
         },
         u => u.Tracking is { Local: not null, Remote: not null, Branch: { } tracked } ? tracked
             : entry.Branch == "." ? parent.Branch

@@ -98,6 +98,71 @@ public sealed class GitHeadTests : IDisposable
     }
 
     [Fact]
+    public void Git_folders_shallowness_and_remote_urls_read_from_the_files_are_git_s()
+    {
+        var server = Path.Combine(_dir, "server");
+        Directory.CreateDirectory(server);
+        Git(server, "init", "-q", "-b", "main");
+        for (var i = 0; i < 3; i++)
+        {
+            File.WriteAllText(Path.Combine(server, "a.txt"), "a" + i);
+            Git(server, "add", "a.txt");
+            Git(server, "commit", "-q", "-m", "c" + i);
+        }
+        var clone = Path.Combine(_dir, "clone");
+        Git(_dir, "clone", "-q", "--depth", "1", "file://" + server.Replace('\\', '/'), clone);
+        var parent = Path.Combine(_dir, "parent");
+        Directory.CreateDirectory(parent);
+        Git(parent, "init", "-q", "-b", "main");
+        Git(parent, "submodule", "add", "-q", server, "libs/sub");
+        var linked = Path.Combine(_dir, "linked");
+        Git(clone, "worktree", "add", "-q", "-b", "side", linked);
+        var repos = new[] { clone, Path.Combine(parent, "libs", "sub"), linked, parent };
+        string? UrlByGit(string cwd, string remote)
+        {
+            var r = Proc.Run("git", ["-C", cwd, "remote", "get-url", remote], null, new CollectingLog());
+            return r.Ok ? r.StdOut.Trim() : null;
+        }
+        void Same()
+        {
+            foreach (var path in repos)
+            {
+                var repo = new GitRepo("git", path, new CollectingLog());
+                Assert.Equal(Path.GetFullPath(Git(path, "rev-parse", "--absolute-git-dir")), repo.GitDir, StringComparer.OrdinalIgnoreCase);
+                Assert.Equal(Git(path, "rev-parse", "--is-shallow-repository") == "true", repo.IsShallow());
+                foreach (var remote in new[] { "origin", "second", "empty", "reset", "nope" })
+                    Assert.Equal(UrlByGit(path, remote), repo.RemoteUrl(remote));
+            }
+        }
+
+        Assert.True(new GitRepo("git", clone, new CollectingLog()).IsShallow());
+        Same();
+        // Several URLs, the first counts; an empty one starts the list again; a remote with none.
+        Git(clone, "remote", "add", "second", "https://example.com/a/b.git");
+        Git(clone, "config", "--add", "remote.second.url", "https://example.com/other.git");
+        Git(clone, "config", "--add", "remote.reset.url", "https://example.com/gone.git");
+        Git(clone, "config", "--add", "remote.reset.url", "");
+        Git(clone, "config", "--add", "remote.reset.url", "https://example.com/kept.git");
+        Git(clone, "config", "remote.empty.fetch", "+refs/heads/*:refs/remotes/empty/*");
+        Same();
+        // insteadOf: the longest prefix wins (second's a/b.git), and of two as long the one whose base git
+        // met first, though the other prefix came first (reset's kept.git).
+        Git(clone, "config", "--add", "url.https://mirror.example/.insteadOf", "https://example.com/");
+        Git(clone, "config", "--add", "url.ssh://git@example.com/a/.insteadOf", "https://example.com/a/");
+        Git(clone, "config", "--add", "url.FIRST/.insteadOf", "https://example.com/o");
+        Git(clone, "config", "--add", "url.second/.insteadOf", "https://example.com/x");
+        Git(clone, "config", "--add", "url.second/.insteadOf", "https://example.com/k");
+        Git(clone, "config", "--add", "url.FIRST/.insteadOf", "https://example.com/k");
+        Same();
+        Assert.Equal("FIRST/ept.git", new GitRepo("git", clone, new CollectingLog()).RemoteUrl("reset"));
+        Assert.Equal("ssh://git@example.com/a/b.git", new GitRepo("git", clone, new CollectingLog()).RemoteUrl("second"));
+        // Whole again.
+        Git(clone, "fetch", "-q", "--unshallow");
+        Same();
+        Assert.False(new GitRepo("git", clone, new CollectingLog()).IsShallow());
+    }
+
+    [Fact]
     public void What_a_commit_declares_is_read_once()
     {
         var sub = Path.Combine(_dir, "sub");

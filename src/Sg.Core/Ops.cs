@@ -840,11 +840,11 @@ public static class Ops
         using var reading = git.Reading();
         var res = new StatusResult { Root = root.RootPath };
         // Two git calls answer every ref and every branch base. Asking one ref at a time cost a process
-        // each, and the overview asks again on every refresh and on every monitor tick.
-        var refs = git.RefIndex("refs/heads/", SgRoot.SnapshotRefPrefix, Shelf.RefPrefix.TrimEnd('/'), Backup.PushedPrefix + "heads");
-        var bases = git.BranchBases();
-        var shared = git.BranchConfig("sgShared");
-        var backedUp = git.BranchConfig("sgBackedUp");
+        // each, and the overview asks again on every refresh and on every monitor tick. Neither waits on
+        // the other, so they go out together.
+        var (refs, (bases, shared, backedUp)) = Fan.Two(
+            () => git.RefIndex("refs/heads/", SgRoot.SnapshotRefPrefix, Shelf.RefPrefix.TrimEnd('/'), Backup.PushedPrefix + "heads"),
+            () => (git.BranchBases(), git.BranchConfig("sgShared"), git.BranchConfig("sgBackedUp")));
         res.BackupUrl = root.Config.Backup?.Url;
         var shelves = Shelf.From(refs);
 

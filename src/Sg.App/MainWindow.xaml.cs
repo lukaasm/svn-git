@@ -41,6 +41,8 @@ public sealed partial class MainWindow : Window
     internal readonly Dictionary<string, string> RemoteErrors = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>How many files are edited directly in each checkout.</summary>
     internal readonly Dictionary<string, int> LocalEdits = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Each checkout's count, kept until a file under it changes: svn status took most of a second per refresh.</summary>
+    readonly EditCounts _editCounts = new();
 
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _monitor;
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _updates;
@@ -590,7 +592,7 @@ public sealed partial class MainWindow : Window
                 }),
                 Edits: Gated(gate, () =>
                 {
-                    try { return (int?)Ops.LocalEditCount(root, co); }
+                    try { return (int?)_editCounts.Count(co.Path, () => Ops.LocalEditCount(root, co)); }
                     catch (SgException) { return null; }
                 }))).ToList();
 
@@ -657,6 +659,7 @@ public sealed partial class MainWindow : Window
     {
         Remote.Clear();
         RemoteErrors.Clear();
+        _editCounts.Forget();
         return RefreshAsync();
     }
 
@@ -698,10 +701,12 @@ public sealed partial class MainWindow : Window
             _navigationRoot = null;
             _current = null;
             _status = null;
+            _editCounts.Keep([]);
             ShowOverview((CheckoutRow?)null);
             return;
         }
         var root = Session.Root;
+        _editCounts.Keep(root.Config.Checkouts.Select(c => c.Path));
         var snapshot = await Runner.Quiet(Pane, () =>
         {
             var status = Ops.Status(root, checkSvn: false);

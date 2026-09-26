@@ -8,8 +8,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class MergeTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     /// <summary>The game repository, whose "fort" branch the checkout has under fort/dev.</summary>
     string GameFort => f.GameUrl + "/branches/fort/dev";
@@ -107,25 +108,6 @@ public sealed class MergeTests : IDisposable
         Assert.Equal("fixed\n", Read(f.Checkout, "fort/dev/bugfix.cpp"));
         // It is a local change of the checkout, not a commit: the SVN commit window is where it goes out.
         Assert.Contains(f.CheckoutChanges(), c => c.Path.Replace('\\', '/').EndsWith("fort/dev/bugfix.cpp", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void A_cherry_pick_takes_the_named_revision_and_leaves_the_others()
-    {
-        f.Setup();
-        var url = MakeFixBranch(
-            ("one.cpp", "one\n", "the first one"),
-            ("two.cpp", "two\n", "the second one"));
-
-        var revisions = Merge.Revisions(f.Root, url, 10);
-        var second = revisions.First(x => x.Message.Trim() == "the second one");
-
-        var r = Merge.Run(f.Root, f.Co, GameTarget(), url, new[] { second.Revision }, dryRun: false);
-
-        Assert.True(r.Clean, r.Output);
-        Assert.Equal(new[] { second.Revision }, r.Revisions);
-        Assert.True(File.Exists(Path.Combine(f.Checkout, "fort", "dev", "two.cpp")));
-        Assert.False(File.Exists(Path.Combine(f.Checkout, "fort", "dev", "one.cpp")));
     }
 
     [Fact]

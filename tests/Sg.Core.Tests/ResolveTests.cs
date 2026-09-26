@@ -8,9 +8,10 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class ResolveTests : IDisposable
 {
-    readonly Fixture f = new();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
 
-    public void Dispose() => f.Dispose();
+    public void Dispose() => _fixture?.Dispose();
 
     static string Read(string root, string rel) =>
         File.ReadAllText(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar))).Replace("\r\n", "\n");

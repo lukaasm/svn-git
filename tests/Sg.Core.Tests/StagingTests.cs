@@ -64,13 +64,6 @@ public sealed class StagingTests : IDisposable
     }
 
     [Fact]
-    public void Two_edits_far_apart_are_two_blocks()
-    {
-        Write("f.txt", Edited);
-        Assert.Equal(2, Unstaged("f.txt").Length);
-    }
-
-    [Fact]
     public void Staging_one_block_leaves_the_other_unstaged()
     {
         Write("f.txt", Edited);

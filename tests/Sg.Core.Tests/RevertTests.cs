@@ -8,8 +8,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class RevertTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     string _wt = "";
 

@@ -8,9 +8,10 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed partial class ExportTests : IDisposable
 {
-    readonly Fixture f = new();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
 
-    public void Dispose() => f.Dispose();
+    public void Dispose() => _fixture?.Dispose();
 
     /// <summary>The remote PC: its own root, its own checkout of the same repository, its own snapshot.</summary>
     (SgRoot Root, CheckoutConfig Co) Far(string name = "far", string? url = null)

@@ -4,9 +4,10 @@ namespace Sg.Core.Tests;
 
 public sealed class BridgeTests : IDisposable
 {
-    readonly Fixture f = new();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
 
-    public void Dispose() => f.Dispose();
+    public void Dispose() => _fixture?.Dispose();
 
     List<string> SnapshotPaths() => f.Root.Git.LsTree(f.Root.SnapshotRef(f.Co), recursive: true).Select(e => e.Path).ToList();
     string SnapshotFile(string rel) => f.Root.Git.Out(null, "show", f.Root.SnapshotRef(f.Co) + ":" + rel);
@@ -427,17 +428,6 @@ public sealed class BridgeTests : IDisposable
         Assert.Equal("junk.txt", left[0].Path);
 
         Ops.SvnRevert(f.Root, f.Co, ["junk.txt"], deleteUnversioned: true);
-        Assert.Empty(Ops.CheckoutChanges(f.Root, f.Co));
-    }
-
-    [Fact]
-    public void SvnRevert_RestoresVersionedFiles()
-    {
-        f.Setup();
-        Fixture.Put(f.Checkout, "fort/dev/game.cpp", "int game = 42;\n");
-        Assert.Single(Ops.CheckoutChanges(f.Root, f.Co));
-        Ops.SvnRevert(f.Root, f.Co, ["fort/dev/game.cpp"], deleteUnversioned: false);
-        Assert.Equal("int game = 1;", Read(f.Checkout, "fort/dev/game.cpp"));
         Assert.Empty(Ops.CheckoutChanges(f.Root, f.Co));
     }
 

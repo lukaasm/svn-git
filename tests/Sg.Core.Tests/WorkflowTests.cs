@@ -2,8 +2,9 @@ namespace Sg.Core.Tests;
 
 public sealed class WorkflowTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
     string Branch()
     {
         f.Setup();

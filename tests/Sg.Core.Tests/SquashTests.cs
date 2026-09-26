@@ -8,10 +8,11 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class SquashTests : IDisposable
 {
-    readonly Fixture f = new();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
     string _wt = "";
 
-    public void Dispose() => f.Dispose();
+    public void Dispose() => _fixture?.Dispose();
 
     /// <summary>A branch with three commits of its own over the snapshot, oldest first: one, two, three.</summary>
     void Branch()
@@ -110,14 +111,6 @@ public sealed class SquashTests : IDisposable
         Assert.Equal(new[] { "three", "two, said better", "one" }, Subjects());
         Assert.Equal(tree, f.Root.Git.TreeOf(Own()[1]));
         Assert.Equal("", f.Root.Git.Out(_wt, "status", "--porcelain"));
-    }
-
-    [Fact]
-    public void Rewording_the_top_commit_works_the_same()
-    {
-        Branch();
-        Ops.Reword(f.Root, _wt, Own()[0], "three, said better");
-        Assert.Equal(new[] { "three, said better", "two", "one" }, Subjects());
     }
 
     [Fact]

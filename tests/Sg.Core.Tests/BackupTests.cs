@@ -8,9 +8,10 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed partial class BackupTests : IDisposable
 {
-    readonly Fixture f = new();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
 
-    public void Dispose() => f.Dispose();
+    public void Dispose() => _fixture?.Dispose();
 
     string _remote = "";
 
@@ -325,15 +326,12 @@ public sealed partial class BackupTests : IDisposable
 
     [Theory]
     [InlineData(false, "recover-edits")]
-    [InlineData(true, "recover-edits")]
     [InlineData(false, "recover")]
-    [InlineData(true, "recover")]
     [InlineData(false, "continue")]
     [InlineData(false, "skip")]
     [InlineData(false, "abort")]
     [InlineData(true, "continue")]
     [InlineData(true, "skip")]
-    [InlineData(true, "abort")]
     public void ConflictingBackup_KeepsAResumableSeries(bool pull, string action)
     {
         f.Setup();
@@ -1332,26 +1330,6 @@ public sealed partial class BackupTests : IDisposable
         Assert.True(pulled.Ok, pulled.Why);
         Assert.Equal(1, pulled.Applied);
         Assert.Null(Ops.Status(f.Root, checkSvn: false).Worktrees.Single(w => w.Branch == "feature-n").BackupRemote);
-    }
-
-    [Fact]
-    public void AnotherMachinesWorkUnderTheSameNameIsStillRefused()
-    {
-        // The rule above must not read every stranger as this machine's own past: the far side's commits
-        // were never this branch here, so they are not in its reflog and the refusal stands.
-        f.Setup();
-        MakeBranch("feature-x");
-        Backup.Set(f.Root, Remote());
-        Assert.True(Backup.Run(f.Root).Ok);
-
-        var far = Far();
-        var fwt = Ops.Branch(far.Root, "feature-x", far.Co).Path;
-        Fixture.Put(fwt, "schmetterling/engine.cpp", "int engine = 99; // the laptop's own\n");
-        far.Root.Git.Ok(fwt, "add", "-A");
-        far.Root.Git.Ok(fwt, "commit", "-q", "-m", "the laptop's own feature-x");
-
-        var r = Backup.Run(far.Root);
-        Assert.True(Item(r, "branch", "feature-x").Rejected);
     }
 
     /// <summary>

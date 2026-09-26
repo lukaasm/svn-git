@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Meziantou.Xunit.ParallelTestFramework" Version="2.3.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
@@ -19,7 +20,10 @@
   </ItemGroup>
 
   <!-- Every test spends its time waiting on git and svn processes, not on a core of its own, so twice
-       the cores run test classes side by side. The file has to sit next to the test dll to be read. -->
+       the cores run tests side by side. xUnit alone runs a class's tests one after another, and the
+       largest class alone was the whole run's length; Meziantou.Xunit.ParallelTestFramework runs them
+       side by side too, except in a class with an explicit [Collection]. The file has to sit next to
+       the test dll to be read. -->
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

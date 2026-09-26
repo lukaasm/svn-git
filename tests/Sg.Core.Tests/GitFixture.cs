@@ -248,6 +248,7 @@ public sealed class GitFixture : IDisposable
 
     public void Dispose()
     {
+        Profile.Write(Base, Log);
         try
         {
             foreach (var f in Directory.EnumerateFiles(Base, "*", SearchOption.AllDirectories))

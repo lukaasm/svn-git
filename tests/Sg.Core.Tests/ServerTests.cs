@@ -50,9 +50,10 @@ public sealed class RuleTests
 
 public sealed class ServerTests : IDisposable
 {
-    readonly Fixture f = new();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
 
-    public void Dispose() => f.Dispose();
+    public void Dispose() => _fixture?.Dispose();
 
     [Fact]
     public void ServerBranch_ThenCheckout_ThenPushIntoIt()

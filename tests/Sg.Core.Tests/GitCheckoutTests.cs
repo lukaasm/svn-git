@@ -9,8 +9,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class GitCheckoutTests : IDisposable
 {
-    readonly GitFixture f = new();
-    public void Dispose() => f.Dispose();
+    GitFixture? _fixture;
+    GitFixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     string SnapshotSha => f.Root.Git.RefSha(f.Root.SnapshotRef(f.Co))!;
     SnapshotMeta Snapshot => SnapshotMeta.Parse(f.Root.Git.Body(SnapshotSha));

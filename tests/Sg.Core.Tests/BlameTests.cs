@@ -9,8 +9,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class BlameTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     const string Original = "one\ntwo\nthree\nfour\n";
 

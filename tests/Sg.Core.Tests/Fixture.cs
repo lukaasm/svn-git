@@ -5,6 +5,8 @@ namespace Sg.Core.Tests;
 /// <summary>
 /// Three local SVN repositories shaped like the real monorepo:
 /// mono/trunk has externals into engine/branches/fort/dev (as schmetterling) and game/branches/fort/{dev,builds,tools} (under fort/).
+/// Making one costs seconds of svnadmin, svnmucc and svn, so a test class holds it lazily: a test that
+/// never reads it does not pay for it.
 /// </summary>
 public sealed class Fixture : IDisposable
 {
@@ -163,6 +165,7 @@ public sealed class Fixture : IDisposable
 
     public void Dispose()
     {
+        Profile.Write(Base, Log);
         try { Directory.Delete(Base, true); }
         catch { /* leftovers in temp are acceptable */ }
     }

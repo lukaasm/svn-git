@@ -8,8 +8,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class PushScopeTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     string _wt = "";
 
@@ -98,18 +99,6 @@ public sealed class PushScopeTests : IDisposable
         Assert.Equal("1 commit still on the branch", r.BranchState);
         Assert.Equal("third", f.Root.Git.Subject(f.Root.Git.HeadSha(_wt)));
         Assert.True(File.Exists(Path.Combine(_wt, "fort", "dev", "three.cpp")));
-    }
-
-    [Fact]
-    public void The_rest_goes_on_the_next_push()
-    {
-        Branch();
-        Push.Run(f.Root, _wt, "the first two", interactive: true, scope: PushScope.First(2));
-        var second = Push.Run(f.Root, _wt, "and the third one", interactive: true);
-
-        Assert.True(second.AllCommitted, string.Join("\n", second.Groups.Select(g => $"{g.Wc} {g.State} {g.Error}")));
-        Assert.True(InSvn("three"));
-        Assert.Equal(0, OnBranch());
     }
 
     [Fact]

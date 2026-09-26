@@ -8,8 +8,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class ShelfTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     string Abs(string rel) => Path.Combine(f.Checkout, rel.Replace('/', Path.DirectorySeparatorChar));
     string Read(string rel) => File.ReadAllText(Abs(rel));

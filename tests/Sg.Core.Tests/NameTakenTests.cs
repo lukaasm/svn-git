@@ -10,8 +10,9 @@ namespace Sg.Core.Tests;
 /// </summary>
 public sealed class NameTakenTests : IDisposable
 {
-    readonly Fixture f = new();
-    public void Dispose() => f.Dispose();
+    Fixture? _fixture;
+    Fixture f => _fixture ??= new();
+    public void Dispose() => _fixture?.Dispose();
 
     /// <summary>The message from a second branch of the same name, whatever state the first is left in.</summary>
     string Second(string name)

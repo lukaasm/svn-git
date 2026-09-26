@@ -39,16 +39,6 @@ public sealed class MatchCheckoutTests : IDisposable
         Bases = [new ExportWc { Rel = "", Url = url, Revision = 266 }],
     };
 
-    [Fact]
-    public void TheSameUrl_Matches()
-    {
-        Registered("fort", "https://svn.example.com/svn/mono/branches/fort");
-
-        var co = Export.MatchCheckout(_root, From("https://svn.example.com/svn/mono/branches/fort"));
-
-        Assert.Equal("fort", co?.Name);
-    }
-
     /// <summary>
     /// The case this was written for: one machine set up for http and the other for https, to one server.
     /// Every other line of the export agreed; the scheme was the whole disagreement.

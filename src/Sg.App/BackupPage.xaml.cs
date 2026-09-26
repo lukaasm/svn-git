@@ -181,9 +181,21 @@ public sealed partial class BackupPage : SgPage
         UrlText.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Before the remote is read: how the last run went is known here, and is worth seeing even when the remote cannot be reached now.
         ShowPageReport(root);
-        ReadingBackup.Running("Reading the backup repository…", "You can keep browsing. The saved report above remains available.");
+        // The overview shows what the backup held when it was last read in this session at once, with a
+        // bar along the top while it is read again: the read is a round trip to the remote, a second or
+        // more. A worktree's page reads it fresh, since restoring works from what is there now.
+        var key = root.RootPath + "\n" + Destination;
+        var seen = Overview && Seen.TryGetValue(key, out var last) ? last : null;
+        if (seen != null)
+        {
+            await Render(root, seen.Catalog, seen.Worktrees);
+            SetRefreshing(true);
+        }
+        else ReadingBackup.Running("Reading the backup repository…", "You can keep browsing. The saved report above remains available.");
 
-        var data = await read.Run(Pane, () => { var catalog = Backup.Browse(root); return new { Catalog = catalog, Worktrees = Backup.Worktrees(root, catalog) }; });
+        var data = await read.Run(Pane, () => { var catalog = Backup.Browse(root); return new BackupList(catalog, Backup.Worktrees(root, catalog)); },
+            loading: seen == null);
+        if (seen != null) SetRefreshing(false);
         if (!read.Current || root.RootPath != Session.Root?.RootPath) return;
         ReadingBackup.Hide();
         if (data == null)
@@ -191,9 +203,32 @@ public sealed partial class BackupPage : SgPage
             ReadError.IsOpen = true;
             return;
         }
-        _catalog = data.Catalog;
-        _worktrees = data.Worktrees;
-        _entries = data.Catalog.Items.Select(e => new BackupRow { Reference = e }).ToList();
+        Seen[key] = data;
+        var offset = ContentScroll.VerticalOffset;
+        await Render(root, data.Catalog, data.Worktrees);
+        if (seen != null) BrowseScroll.Restore(ContentScroll, offset);
+    }
+
+    /// <summary>What a read of the backup repository found, as the overview lists it.</summary>
+    sealed record BackupList(BackupCatalog Catalog, IReadOnlyList<BackupWorktree> Worktrees);
+
+    /// <summary>The last list read from each root's backup repository in this session.</summary>
+    static readonly Dictionary<string, BackupList> Seen = new(StringComparer.OrdinalIgnoreCase);
+
+    int _refreshing;
+
+    void SetRefreshing(bool on)
+    {
+        _refreshing += on ? 1 : -1;
+        RefreshBar.IsIndeterminate = _refreshing > 0;
+        Motion.FadeTo(RefreshBar, _refreshing > 0 ? 1 : 0);
+    }
+
+    async Task Render(SgRoot root, BackupCatalog catalog, IReadOnlyList<BackupWorktree> worktrees)
+    {
+        _catalog = catalog;
+        _worktrees = worktrees;
+        _entries = catalog.Items.Select(e => new BackupRow { Reference = e }).ToList();
         var others = _entries.Where(e => e.Reference.Kind != "branch").ToList();
         if (Overview && _entries.Count == 0 && _worktrees.Count == 0)
         {

@@ -9,6 +9,11 @@
 
         <InfoBar x:Name="ResultBar" Grid.Row="0" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
+        <!-- Runs along the top while the backup repository is read again behind the list it held last time. -->
+        <ProgressBar x:Name="RefreshBar" Grid.Row="1" MaxWidth="1000" VerticalAlignment="Top" Style="{StaticResource LoadingBar}"
+                     Margin="0,-8,0,0" Canvas.ZIndex="1" AutomationProperties.AutomationId="BackupRefreshing"
+                     AutomationProperties.Name="Checking the backup repository" />
+
         <!-- Constrain the viewport, not its content, so expanding a card cannot recenter the column. -->
         <ScrollViewer x:Name="ContentScroll" Grid.Row="1" MaxWidth="1000" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
             <StackPanel Spacing="8" Padding="0,0,0,8">

@@ -27,9 +27,10 @@ internal sealed class PageReads(Action<bool>? reading = null)
         // Child-process termination can take seconds. Invalidate synchronously, but never execute
         // cancellation callbacks on the UI thread when the user edits or leaves a page.
         internal void Cancel() => _cancellation ??= _cancel.CancelAsync();
-        public async Task<T?> Run<T>(StatusStrip pane, Func<T> work, Action<string>? failed = null) where T : class
+        /// <param name="loading">False when the page shows the read itself, as a bar over a list it already has: the strip's Loading would say it twice.</param>
+        public async Task<T?> Run<T>(StatusStrip pane, Func<T> work, Action<string>? failed = null, bool loading = true) where T : class
         {
-            using var feedback = pane.Reading();
+            using var feedback = loading ? pane.Reading() : null;
             try
             {
                 using (Cancellation.Use(_cancel.Token))

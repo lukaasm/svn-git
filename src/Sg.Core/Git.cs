@@ -115,7 +115,20 @@ public sealed class Git
     /// refs are read once and asked again only after a git command that could change them. One backup asked
     /// the same ls-remote ten times - ten round trips to a hosted remote - and listed the worktrees twelve.
     /// </summary>
-    internal void BeginRemembering() { lock (_memoGate) _remembering++; }
+    internal void BeginRemembering()
+    {
+        lock (_memoGate) _remembering++;
+        Interlocked.Increment(ref s_scopes);
+    }
+
+    /// <summary>Operations and reads remembering, in every store of the process: while there are any, clones remember too.</summary>
+    static int s_scopes;
+
+    /// <summary>Every write anywhere - a store's command, a clone's, a file written into .git - moves this on.</summary>
+    static long s_anyWrites;
+
+    internal static bool AnyRemembering => Volatile.Read(ref s_scopes) > 0;
+    internal static long AnyWrites => Interlocked.Read(ref s_anyWrites);
 
     /// <summary>
     /// What a read that asks many questions - the overview, the Backup page - holds while it asks: the
@@ -136,6 +149,7 @@ public sealed class Git
 
     internal void EndRemembering()
     {
+        if (Interlocked.Decrement(ref s_scopes) == 0) GitRepo.ForgetAll();
         lock (_memoGate)
         {
             if (--_remembering > 0) return;
@@ -178,10 +192,18 @@ public sealed class Git
     }
 
     /// <summary>For a change made to git's files from outside this store's own commands, as a clone's push does: nothing read before it is trusted, in any store.</summary>
-    public static void Forget() => Interlocked.Increment(ref s_writes);
+    public static void Forget()
+    {
+        Interlocked.Increment(ref s_writes);
+        Interlocked.Increment(ref s_anyWrites);
+    }
 
     /// <summary>For a file this store wrote into its own .git directly: nothing it read before is trusted.</summary>
-    public void Changed() => Interlocked.Increment(ref _writes);
+    public void Changed()
+    {
+        Interlocked.Increment(ref _writes);
+        Interlocked.Increment(ref s_anyWrites);
+    }
 
     /// <summary>Commands that change no ref, no config, no worktree and no remote: reads, and writes of objects and the index only.</summary>
     static readonly HashSet<string> Harmless = new(StringComparer.Ordinal)

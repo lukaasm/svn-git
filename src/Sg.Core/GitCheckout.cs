@@ -107,10 +107,46 @@ public sealed class GitRepo
             foreach (var kv in env) d[kv.Key] = kv.Value;
             e = d;
         }
+        // While an operation runs, what a clone says of its own refs, config and objects is asked once:
+        // every operation lists the checkout's submodules again, and each asked its HEAD, its remotes
+        // and its commits anew. A write anywhere - here, in the store, in another clone - ends it.
+        string? key = null;
+        long writes = 0;
+        if (stdin == null && env == null && Git.AnyRemembering && RepoRead(list.Skip(2)))
+        {
+            key = Path + "\0" + string.Join("\0", list.Skip(2));
+            writes = Git.AnyWrites;
+            if (Memo.TryGetValue(key, out var known) && known.Writes == writes) return known.Result;
+        }
         var result = Proc.Run(_exe, list, Path, _log, stdin, e);
         // A clone's fetch or push can be the very remote or ref a store operation has read.
         if (Git.Changes(list, out _)) Git.Forget();
+        else if (key != null && Git.AnyWrites == writes) Memo[key] = (writes, result);
         return result;
+    }
+
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Writes, ProcResult Result)> Memo = new(StringComparer.Ordinal);
+
+    /// <summary>The last operation or read let go: nothing a clone said is kept past it.</summary>
+    internal static void ForgetAll() => Memo.Clear();
+
+    /// <summary>
+    /// A command that reads only what the repository holds - refs, objects, config, remotes - never the
+    /// working files, which change without a git command saying so.
+    /// </summary>
+    static bool RepoRead(IEnumerable<string> args)
+    {
+        var words = args.ToList();
+        var verb = words.FirstOrDefault(w => !w.StartsWith('-'));
+        var rest = verb == null ? [] : words.Skip(words.IndexOf(verb) + 1).Where(w => !w.StartsWith('-')).ToList();
+        return verb switch
+        {
+            "rev-parse" or "cat-file" or "ls-tree" or "for-each-ref" or "show-ref" or "merge-base" or "rev-list" or "log" => true,
+            "config" => words.Any(w => w is "--get" or "--get-all" or "--get-regexp" or "--list" or "-l"),
+            "symbolic-ref" => rest.Count == 1,
+            "remote" => rest.Count == 0 || rest[0] == "get-url",
+            _ => false,
+        };
     }
 
     public ProcResult Run(params string[] args) => Run((IEnumerable<string>)args);
@@ -129,6 +165,8 @@ public sealed class GitRepo
     /// <summary>The commit a name points at, or null when it does not name one.</summary>
     public string? Rev(string rev)
     {
+        // HEAD is read from the files when they say plainly where it is.
+        if (rev == "HEAD" && HeadCommit() is var head && head != "HEAD") return head;
         var r = Run("rev-parse", "--verify", "-q", rev + "^{commit}");
         return r.Ok ? r.StdOut.Trim() : null;
     }
@@ -176,6 +214,70 @@ public sealed class GitRepo
         var r = Run("config", "--get", key);
         return r.Ok && r.StdOut.Trim().Length > 0 ? r.StdOut.Trim() : null;
     }
+
+    /// <summary>
+    /// The branch HEAD names, read from the HEAD file as HeadCommit reads it: "" when HEAD is detached,
+    /// null when the files say anything else and git has to be asked.
+    /// </summary>
+    string? HeadBranchFromFiles()
+    {
+        try
+        {
+            var dotGit = System.IO.Path.Combine(Path, ".git");
+            string gitDir;
+            if (Directory.Exists(dotGit)) gitDir = dotGit;
+            else if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is var line && line.StartsWith("gitdir: ", StringComparison.Ordinal))
+                gitDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, line[8..].Trim()));
+            else return null;
+            var head = File.ReadAllText(System.IO.Path.Combine(gitDir, "HEAD")).Trim();
+            if (head.Length == 40 && head.All(Uri.IsHexDigit)) return "";
+            if (!head.StartsWith("ref: refs/heads/", StringComparison.Ordinal)) return null;
+            var branch = head[16..];
+            return branch.Length == 0 || branch == ".invalid" ? null : branch;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// branch.* and remote.* in one read: the values as `git config --get` gives them (the last one of a
+    /// key), and the remotes as git remote lists them, sorted.
+    /// Null when remotes are also defined the old way, in .git/remotes or .git/branches, which git remote
+    /// reads too.
+    /// </summary>
+    (Dictionary<string, string> Values, List<string> Remotes)? RemoteConfig()
+    {
+        try
+        {
+            var dotGit = System.IO.Path.Combine(Path, ".git");
+            if (Directory.Exists(dotGit)
+                && (Directory.Exists(System.IO.Path.Combine(dotGit, "remotes")) && Directory.EnumerateFileSystemEntries(System.IO.Path.Combine(dotGit, "remotes")).Any()
+                    || Directory.Exists(System.IO.Path.Combine(dotGit, "branches")) && Directory.EnumerateFileSystemEntries(System.IO.Path.Combine(dotGit, "branches")).Any()))
+                return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        var r = Run("config", "-z", "--get-regexp", @"^(branch|remote)\.");
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        var remotes = new List<string>();
+        if (!r.Ok) return r.ExitCode == 1 ? (values, remotes) : null;
+        foreach (var entry in r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var nl = entry.IndexOf('\n');
+            var key = nl < 0 ? entry : entry[..nl];
+            values[key] = nl < 0 ? "" : entry[(nl + 1)..];
+            var dot = key.LastIndexOf('.');
+            if (key.StartsWith("remote.", StringComparison.Ordinal) && dot > 7 && !remotes.Contains(key[7..dot])) remotes.Add(key[7..dot]);
+        }
+        // git remote lists them sorted, byte by byte.
+        remotes.Sort(StringComparer.Ordinal);
+        return (values, remotes);
+    }
+
+    /// <summary>`git remote`: the remotes, in the order git lists them.</summary>
+    public List<string> Remotes() =>
+        RemoteConfig()?.Remotes ?? Run("remote").StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
 
     public bool IsAncestor(string a, string b) => Run("merge-base", "--is-ancestor", a, b).ExitCode == 0;
 
@@ -280,11 +382,26 @@ public sealed class GitRepo
     /// <summary>The local branch HEAD is on, and the remote branch it tracks. Nulls where there is none.</summary>
     public (string? Local, string? Remote, string? Branch) Tracking()
     {
-        var head = Run("symbolic-ref", "--short", "-q", "HEAD");
-        if (!head.Ok) return (null, null, null);
-        var local = head.StdOut.Trim();
-        var remote = ConfigGet($"branch.{local}.remote");
-        var merge = ConfigGet($"branch.{local}.merge");
+        // The branch from the HEAD file and its remote and merge from one config read: it was three processes.
+        var local = HeadBranchFromFiles();
+        if (local == null)
+        {
+            var head = Run("symbolic-ref", "--short", "-q", "HEAD");
+            if (!head.Ok) return (null, null, null);
+            local = head.StdOut.Trim();
+        }
+        else if (local.Length == 0) return (null, null, null);
+        string? remote, merge;
+        if (RemoteConfig() is { } cfg)
+        {
+            remote = cfg.Values.GetValueOrDefault($"branch.{local}.remote") is { Length: > 0 } rv ? rv : null;
+            merge = cfg.Values.GetValueOrDefault($"branch.{local}.merge") is { Length: > 0 } mv ? mv : null;
+        }
+        else
+        {
+            remote = ConfigGet($"branch.{local}.remote");
+            merge = ConfigGet($"branch.{local}.merge");
+        }
         if (remote == null || remote == "." || merge == null) return (local, null, null);
         return (local, remote, merge.StartsWith("refs/heads/", StringComparison.Ordinal) ? merge[11..] : merge);
     }

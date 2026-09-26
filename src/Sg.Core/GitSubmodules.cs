@@ -69,8 +69,7 @@ public sealed class GitUnit
             : GitSubmodules.DefaultBranch(u.Repo, u.Remote, wc),
         null);
 
-    static List<string> Remotes(GitRepo repo) =>
-        repo.Run("remote").StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+    static List<string> Remotes(GitRepo repo) => repo.Remotes();
 
     /// <summary>The local branch HEAD is on and the remote branch it tracks, read once.</summary>
     public (string? Local, string? Remote, string? Branch) Tracking => _tracking.Value;

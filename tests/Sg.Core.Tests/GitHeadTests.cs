@@ -62,6 +62,42 @@ public sealed class GitHeadTests : IDisposable
     }
 
     [Fact]
+    public void Tracking_and_remotes_read_from_config_are_git_s()
+    {
+        var server = Path.Combine(_dir, "server");
+        Directory.CreateDirectory(server);
+        Git(server, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(server, "a.txt"), "a");
+        Git(server, "add", "a.txt");
+        Git(server, "commit", "-q", "-m", "one");
+        var clone = Path.Combine(_dir, "clone");
+        Git(_dir, "clone", "-q", server, clone);
+        var repo = new GitRepo("git", clone, new CollectingLog());
+        (string?, string?, string?) ByGit()
+        {
+            var head = Proc.Run("git", ["-C", clone, "symbolic-ref", "--short", "-q", "HEAD"], null, new CollectingLog());
+            if (!head.Ok) return (null, null, null);
+            var local = head.StdOut.Trim();
+            string? Get(string key) { var r = Proc.Run("git", ["-C", clone, "config", "--get", key], null, new CollectingLog()); return r.Ok && r.StdOut.Trim().Length > 0 ? r.StdOut.Trim() : null; }
+            var remote = Get($"branch.{local}.remote");
+            var merge = Get($"branch.{local}.merge");
+            if (remote == null || remote == "." || merge == null) return (local, null, null);
+            return (local, remote, merge.StartsWith("refs/heads/", StringComparison.Ordinal) ? merge[11..] : merge);
+        }
+        List<string> RemotesByGit() => Git(clone, "remote").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
+
+        Assert.Equal(("main", "origin", "main"), repo.Tracking());
+        Assert.Equal(ByGit(), repo.Tracking());
+        Git(clone, "remote", "add", "zeta", server);
+        Git(clone, "remote", "add", "al.pha", server);
+        Assert.Equal(RemotesByGit(), repo.Remotes());
+        Git(clone, "checkout", "-q", "-b", "Local.Only");
+        Assert.Equal(ByGit(), repo.Tracking());
+        Git(clone, "checkout", "-q", "--detach");
+        Assert.Equal(ByGit(), repo.Tracking());
+    }
+
+    [Fact]
     public void What_a_commit_declares_is_read_once()
     {
         var sub = Path.Combine(_dir, "sub");

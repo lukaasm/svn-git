@@ -730,7 +730,82 @@ public sealed class Git
 
     public List<WorktreeInfo> WorktreeList() => [.. Remembered("worktrees", ReadWorktreeList)];
 
-    List<WorktreeInfo> ReadWorktreeList()
+    List<WorktreeInfo> ReadWorktreeList() => WorktreesFromFiles() ?? WorktreeListByGit();
+
+    /// <summary>
+    /// `git worktree list --porcelain` read from the files git keeps it in, without a process: the bare
+    /// store first, then each worktrees/&lt;id&gt; that has a gitdir file - its folder is that file's path
+    /// without /.git - sorted by path as git sorts them (ASCII letters in either case alike, as core.ignorecase
+    /// has it here), each with its HEAD resolved through the branch it names, loose or in packed-refs.
+    /// Null when the files say anything git might read another way: git lists them then.
+    /// </summary>
+    internal List<WorktreeInfo>? WorktreesFromFiles()
+    {
+        try
+        {
+            var store = Path.GetFullPath(Store);
+            if (!File.Exists(Path.Combine(store, "HEAD")) || File.Exists(Path.Combine(store, "reftable"))) return null;
+            var packed = new Lazy<Dictionary<string, string>>(() => PackedRefs(store));
+            var linked = new List<WorktreeInfo>();
+            var dir = Path.Combine(store, "worktrees");
+            if (Directory.Exists(dir))
+                foreach (var entry in Directory.EnumerateDirectories(dir))
+                {
+                    var gitdirFile = Path.Combine(entry, "gitdir");
+                    if (!File.Exists(gitdirFile)) continue;
+                    var gitdir = File.ReadAllText(gitdirFile).Trim();
+                    if (gitdir.Length == 0) return null;
+                    var path = gitdir.EndsWith("/.git", StringComparison.Ordinal) || gitdir.EndsWith("\\.git", StringComparison.Ordinal) ? gitdir[..^5] : gitdir;
+                    var head = File.ReadAllText(Path.Combine(entry, "HEAD")).Trim();
+                    string? sha, branch = null;
+                    if (IsSha(head)) sha = head;
+                    else if (head.StartsWith("ref: refs/heads/", StringComparison.Ordinal))
+                    {
+                        branch = head[16..];
+                        var loose = Path.Combine(store, "refs", "heads", branch.Replace('/', Path.DirectorySeparatorChar));
+                        sha = File.Exists(loose) ? File.ReadAllText(loose).Trim() : packed.Value.GetValueOrDefault("refs/heads/" + branch);
+                        if (sha == null || !IsSha(sha)) return null;
+                    }
+                    else return null;
+                    // worktree.useRelativePaths writes the path relative to the entry's own folder.
+                    linked.Add(new WorktreeInfo(Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(entry, path)), sha, branch, false));
+                }
+            linked.Sort((x, y) => AsciiCaseless(x.Path.Replace('\\', '/'), y.Path.Replace('\\', '/')));
+            return [new WorktreeInfo(store, null, null, true), .. linked];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+
+        static bool IsSha(string s) => s.Length == 40 && s.All(Uri.IsHexDigit);
+    }
+
+    static Dictionary<string, string> PackedRefs(string store)
+    {
+        var refs = new Dictionary<string, string>(StringComparer.Ordinal);
+        var file = Path.Combine(store, "packed-refs");
+        if (!File.Exists(file)) return refs;
+        foreach (var line in File.ReadLines(file))
+            if (line.Length > 41 && line[40] == ' ' && line[0] != '#' && line[0] != '^') refs[line[41..]] = line[..40];
+        return refs;
+    }
+
+    /// <summary>strcasecmp: bytes in order, with only the ASCII letters folded.</summary>
+    static int AsciiCaseless(string a, string b)
+    {
+        var x = Encoding.UTF8.GetBytes(a);
+        var y = Encoding.UTF8.GetBytes(b);
+        for (var i = 0; i < Math.Min(x.Length, y.Length); i++)
+        {
+            int cx = x[i] is >= (byte)'A' and <= (byte)'Z' ? x[i] + 32 : x[i];
+            int cy = y[i] is >= (byte)'A' and <= (byte)'Z' ? y[i] + 32 : y[i];
+            if (cx != cy) return cx - cy;
+        }
+        return x.Length - y.Length;
+    }
+
+    internal List<WorktreeInfo> WorktreeListByGit()
     {
         var r = Ok(null, "worktree", "list", "--porcelain");
         var res = new List<WorktreeInfo>();

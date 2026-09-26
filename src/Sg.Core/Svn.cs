@@ -137,17 +137,16 @@ public sealed class Svn
     /// <summary>Status of the given paths only, no recursion.</summary>
     public List<SvnStatusEntry> StatusTargets(string cwd, IEnumerable<string> targets)
     {
-        // svn status has no --targets. The lists here are short: parent folders of new files.
-        var res = new List<SvnStatusEntry>();
-        foreach (var chunk in targets.Chunk(100))
+        // svn status has no --targets, so a long list goes in pieces of a hundred. The pieces only read the
+        // working copy, and go out side by side; their answers come back in the order they were asked.
+        return Fan.Map(targets.Chunk(100).ToList(), chunk =>
         {
             var a = new List<string> { "status", "--xml", "--non-interactive", "--depth", "empty" };
             a.AddRange(chunk);
             var r = Run(cwd, a);
             if (string.IsNullOrWhiteSpace(r.StdOut) || !r.StdOut.Contains("<status")) r.EnsureOk();
-            res.AddRange(ParseStatus(r.StdOut));
-        }
-        return res;
+            return ParseStatus(r.StdOut);
+        }).SelectMany(x => x).ToList();
     }
 
     static readonly XmlReaderSettings ReaderSettings = new()

@@ -537,7 +537,6 @@ public static class Push
         return git.CommitTree(git.EditTree(newSnap, infos), newSnap, message);
     }
 
-    /// <summary>What a push would send, from the current snapshot, without syncing. For the push dialog.</summary>
     /// <summary>
     /// What a push would send, without sending it. scope narrows it to the oldest few commits; the list
     /// of commits is the whole branch either way, so a window can show what stays as well as what goes.
@@ -545,29 +544,41 @@ public static class Push
     public static PushPreview Preview(SgRoot root, string worktree, PushScope scope = default)
     {
         var git = root.Git;
+        using var reading = git.Reading();
         worktree = git.Toplevel(worktree);
         var branch = git.CurrentBranch(worktree);
         var co = Ops.BaseCheckout(root, branch);
         var snapRef = root.SnapshotRef(co);
         var snap = git.RefSha(snapRef) ?? throw new SgException("no snapshot for " + co.Name);
         var branchTip = git.HeadSha(worktree);
-        var commits = git.Log(worktree, snap + ".." + branchTip, 200);
-        var sending = Sending(scope, commits.Count);
-        // The oldest `sending` commits, so the boundary is the one that many up from the snapshot.
-        var tip = sending >= commits.Count ? branchTip : commits[commits.Count - sending].Sha;
+        // The worktree's status walks every file in it, and nothing else here waits on it; what does wait
+        // is the snapshot and the tip, and the four reads of those wait on none of each other. The window
+        // used to wait for the eight one after another.
+        var (dirty, read) = Fan.Two(
+            () => !git.IsClean(worktree),
+            () =>
+            {
+                var commits = git.Log(worktree, snap + ".." + branchTip, 200);
+                var sending = Sending(scope, commits.Count);
+                // The oldest `sending` commits, so the boundary is the one that many up from the snapshot.
+                var tip = sending >= commits.Count ? branchTip : commits[commits.Count - sending].Sha;
+                var ((ancestor, message), (meta, entries)) = Fan.Two(
+                    () => Fan.Two(() => git.IsAncestor(snap, branchTip), () => CleanMessage(git.LogBodies(snap, tip))),
+                    () => Fan.Two(() => SnapshotMeta.Parse(git.Body(snap)), () => git.DiffNameStatus(worktree, snap, tip)));
+                return (Commits: commits, Sending: sending, Tip: tip, Ancestor: ancestor, Message: message, Meta: meta, Entries: entries);
+            });
         var p = new PushPreview
         {
-            Branch = branch, Checkout = co.Name, Worktree = worktree, Base = snap, Tip = tip, BranchTip = branchTip,
-            Dirty = !git.IsClean(worktree),
-            NeedsRebase = !git.IsAncestor(snap, branchTip),
-            Commits = commits,
-            Sending = sending,
-            DefaultMessage = CleanMessage(git.LogBodies(snap, tip)),
+            Branch = branch, Checkout = co.Name, Worktree = worktree, Base = snap, Tip = read.Tip, BranchTip = branchTip,
+            Dirty = dirty,
+            NeedsRebase = !read.Ancestor,
+            Commits = read.Commits,
+            Sending = read.Sending,
+            DefaultMessage = read.Message,
         };
-        var meta = SnapshotMeta.Parse(git.Body(snap));
-        var wcs = WorkingCopies(meta.Externals.Keys);
+        var wcs = WorkingCopies(read.Meta.Externals.Keys);
         string WcOf(string path) => InnermostWc(wcs, path);
-        var entries = git.DiffNameStatus(worktree, snap, tip);
+        var entries = read.Entries;
         p.Groups = entries.GroupBy(e => WcOf(e.Path), StringComparer.OrdinalIgnoreCase)
             .Select(g => new PushGroup { Wc = g.Key, Entries = g.ToList(), Files = g.Select(x => x.Path).ToList() })
             .OrderBy(g => g.Wc.Length == 0 ? 0 : 1).ThenBy(g => g.Wc, StringComparer.OrdinalIgnoreCase)

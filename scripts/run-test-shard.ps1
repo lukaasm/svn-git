@@ -22,7 +22,7 @@ if (!$NoBuild) {
 $discovery = @(& dotnet test $project -c $Configuration --no-build --no-restore --list-tests --nologo 2>&1 | ForEach-Object { "$_" })
 $discovery | Set-Content -LiteralPath (Join-Path $ResultsDirectory 'discovery.txt') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "Test discovery failed ($LASTEXITCODE)." }
-$plan = Get-CiTestPlan -DiscoveryLines $discovery -ShardCount $ShardCount
+$plan = Get-CiTestPlan -DiscoveryLines $discovery -ShardCount $ShardCount -Seconds (Get-CiTestSeconds (Join-Path $repo 'tests/ci-timings.json'))
 $plan | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $ResultsDirectory 'plan.json') -Encoding utf8
 $selected = $plan.shards[$Shard - 1]
 Write-Host "Shard $Shard/$ShardCount : $($selected.caseCount) of $($plan.caseCount) cases, $($selected.methods.Count) of $($plan.methodCount) methods."

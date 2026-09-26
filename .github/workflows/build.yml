@@ -15,16 +15,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Eight shards: each pays about fifty seconds to set up and build before its first test, and the
-  # tests themselves shrink with every shard added. The repository is public, so runners cost nothing.
+  # Twelve shards, cut by how long each test took on CI (tests/ci-timings.json; refresh it with
+  # scripts/update-ci-timings.ps1). Each shard pays about fifty seconds to set up and build before its
+  # first test, and the tests shrink with every shard added. The repository is public, so runners cost nothing.
   test:
-    name: test (${{ matrix.shard }}/8)
+    name: test (${{ matrix.shard }}/12)
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +87,7 @@ jobs:
 
       - name: Test shard
         shell: pwsh
-        run: ./scripts/run-test-shard.ps1 -Shard ${{ matrix.shard }} -ShardCount 8 -ResultsDirectory TestResults/CI
+        run: ./scripts/run-test-shard.ps1 -Shard ${{ matrix.shard }} -ShardCount 12 -ResultsDirectory TestResults/CI
 
       - name: Upload test results and timings
         if: always()

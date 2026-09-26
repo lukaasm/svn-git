@@ -22,6 +22,23 @@ $heavyClass = @(1..8 | ForEach-Object { "    Example.BackupTests.Heavy(value: $_
     @(1..24 | ForEach-Object { '    Example.BackupTests.Test{0:d2}' -f $_ })
 $balanced = Get-CiTestPlan $heavyClass 4
 Assert (@($balanced.shards | Where-Object { $_.caseCount -ne 8 }).Count -eq 0) 'A large theory overloaded one shard of a sequential test class.'
+
+# By time: the slowest methods land on different shards, every method exactly once, whatever order
+# discovery lists them in, and a method with no timing weighs what the middle one does.
+$timed = @{ 'Example.Tests.Case.Test01' = 100.0; 'Example.Tests.Case.Test02' = 90.0; 'Example.Tests.Case.Test03' = 80.0; 'Example.Tests.Case.Test04' = 70.0; 'Example.Tests.Theories.Value' = 60.0 }
+foreach ($i in 5..40) { $timed['Example.Tests.Case.Test{0:d2}' -f $i] = 1.0 }
+$byTime = Get-CiTestPlan $lines 4 -Seconds $timed
+$slowest = @('Example.Tests.Case.Test01', 'Example.Tests.Case.Test02', 'Example.Tests.Case.Test03', 'Example.Tests.Case.Test04')
+Assert (@($byTime.shards | Where-Object { @($_.methods | Where-Object { $slowest -contains $_ }).Count -gt 1 }).Count -eq 0) 'Two of the slowest methods share a shard.'
+$timedAll = @($byTime.shards | ForEach-Object { $_.methods })
+Assert ($timedAll.Count -eq 41 -and @($timedAll | Select-Object -Unique).Count -eq 41) 'A timed plan duplicated or omitted methods.'
+Assert (($byTime.shards | Measure-Object caseCount -Sum).Sum -eq 42) 'A timed plan omitted theory cases.'
+Assert (($byTime | ConvertTo-Json -Depth 6 -Compress) -ceq ((Get-CiTestPlan $reverse 4 -Seconds $timed) | ConvertTo-Json -Depth 6 -Compress)) 'Discovery order changed a timed plan.'
+$partly = @{} + $timed
+$partly.Remove('Example.Tests.Case.Test40')
+$untimed = (Get-CiTestPlan $lines 4 -Seconds $partly).shards | Where-Object { $_.methods -contains 'Example.Tests.Case.Test40' }
+Assert ($null -ne $untimed) 'A method with no timing was left out.'
+
 Assert-Throws { Get-CiTestPlan @('No tests') 4 }
 Assert-Throws { Get-CiTestPlan @('    A custom display name') 1 }
 Assert-Throws { Get-CiTestPlan @('    Example.Tests.OnlyTest') 4 }

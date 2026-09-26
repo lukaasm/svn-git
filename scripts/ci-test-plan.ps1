@@ -1,6 +1,6 @@
 # Shared by the CI runner and its fast, repository-free checks.
 function Get-CiTestPlan {
-    param([string[]]$DiscoveryLines, [ValidateRange(1, 16)][int]$ShardCount = 4)
+    param([string[]]$DiscoveryLines, [ValidateRange(1, 16)][int]$ShardCount = 4, [hashtable]$Seconds)
     $cases = [Collections.Generic.Dictionary[string, int]]::new([StringComparer]::Ordinal)
     foreach ($line in $DiscoveryLines) {
         if ($line -notmatch '^ {4}\S') { continue }
@@ -23,8 +23,35 @@ function Get-CiTestPlan {
         $classes[$class].Add($method)
     }
     $shards = @(for ($shard = 0; $shard -lt $ShardCount; $shard++) {
-        [pscustomobject]@{ number = $shard + 1; methods = [Collections.Generic.List[string]]::new(); caseCount = 0 }
+        [pscustomobject]@{ number = $shard + 1; methods = [Collections.Generic.List[string]]::new(); caseCount = 0; seconds = 0.0 }
     })
+    if ($Seconds -and $Seconds.Count -gt 0) {
+        # By time, when a CI run has said how long each method takes: the longest first, each onto the
+        # shard with the least so far. Counting cases put the backup tests, the slowest by far, on one
+        # shard, and the run waited for it. A method CI has not timed yet weighs what the middle one does.
+        $known = @($Seconds.Values | Sort-Object)
+        $middle = [double]$known[[int][Math]::Floor($known.Count / 2)]
+        $weight = @{}
+        foreach ($method in $methods) { $weight[$method] = $Seconds.ContainsKey($method) ? [double]$Seconds[$method] : $middle }
+        [string[]]$ordered = $methods.Clone()
+        [Array]::Sort($ordered, [Comparison[string]]{
+            param($left, $right)
+            $heavier = $weight[$right].CompareTo($weight[$left])
+            if ($heavier -ne 0) { return $heavier }
+            return [StringComparer]::Ordinal.Compare($left, $right)
+        })
+        foreach ($method in $ordered) {
+            $target = 0
+            for ($i = 1; $i -lt $ShardCount; $i++) {
+                if ($shards[$i].seconds -lt $shards[$target].seconds -or
+                    ($shards[$i].seconds -eq $shards[$target].seconds -and $shards[$i].caseCount -lt $shards[$target].caseCount)) { $target = $i }
+            }
+            $shards[$target].methods.Add($method)
+            $shards[$target].caseCount += $cases[$method]
+            $shards[$target].seconds += $weight[$method]
+        }
+        return [pscustomobject]@{ methodCount = $methods.Count; caseCount = [int](($cases.Values | Measure-Object -Sum).Sum); shards = $shards }
+    }
     # xUnit runs methods of one class sequentially. Balance each class separately, assigning its
     # largest theories first; a theory with many cases must not count as one ordinary test.
     foreach ($group in $classes.Values) {
@@ -48,6 +75,14 @@ function Get-CiTestPlan {
         }
     }
     [pscustomobject]@{ methodCount = $methods.Count; caseCount = [int](($cases.Values | Measure-Object -Sum).Sum); shards = $shards }
+}
+
+function Get-CiTestSeconds {
+    param([string]$Path)
+    if (!(Test-Path -LiteralPath $Path)) { return $null }
+    $seconds = @{}
+    foreach ($p in (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json).seconds.PSObject.Properties) { $seconds[$p.Name] = [double]$p.Value }
+    $seconds
 }
 
 function Write-CiTestSettings {

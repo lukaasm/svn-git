@@ -295,17 +295,9 @@ public static class CheckoutTransfer
         finally { File.Delete(a); File.Delete(b); File.Delete(c); }
     }
 
-    static string Commit(SgRoot root, string parent, IEnumerable<(string Path, string? Sha)> files)
-    {
-        var index = root.NewTempFile(".index");
-        try
-        {
-            root.Git.ReadTree(root.Git.Store, parent, index);
-            root.Git.UpdateIndexInfo(root.Git.Store, files.Select(f => (f.Sha == null ? "0" : "100644", f.Sha ?? new string('0', 40), f.Path)), index);
-            return root.Git.CommitTree(root.Git.WriteTree(root.Git.Store, index), parent, "Transfer recovery\n");
-        }
-        finally { File.Delete(index); }
-    }
+    static string Commit(SgRoot root, string parent, IEnumerable<(string Path, string? Sha)> files) =>
+        root.Git.CommitTree(root.Git.EditTree(parent,
+            files.Select(f => (f.Sha == null ? "0" : "100644", f.Sha ?? new string('0', 40), f.Path)).ToList()), parent, "Transfer recovery\n");
 
     static ShelfInfo Keep(SgRoot root, CheckoutConfig co, string path, string? branch, string basis,
         IEnumerable<(string Path, string? Sha)> files, List<TransferContent> contents, string title)

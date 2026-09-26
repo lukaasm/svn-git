@@ -731,25 +731,15 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         return tree;
     }
 
-    /// <summary>The tree with every skipped path taken out, built in an index of the store's own.</summary>
+    /// <summary>The tree with every skipped path taken out.</summary>
     static string WithoutSkipped(SgRoot root, CheckoutConfig co, string tree)
     {
         var git = root.Git;
-        var idx = root.NewTempFile(".index");
-        try
-        {
-            git.ReadTree(null!, tree, idx);
-            var gone = new List<(string, string, string)>();
-            foreach (var chunk in co.Skip.Chunk(100))
-                foreach (var e in git.LsTree(tree, chunk.Select(PathUtil.Rel), recursive: true))
-                    gone.Add(("0", new string('0', 40), e.Path));
-            git.UpdateIndexInfo(null!, gone, idx);
-            return git.WriteTree(null!, idx);
-        }
-        finally
-        {
-            if (File.Exists(idx)) File.Delete(idx);
-        }
+        var gone = new List<(string, string, string)>();
+        foreach (var chunk in co.Skip.Chunk(100))
+            foreach (var e in git.LsTree(tree, chunk.Select(PathUtil.Rel), recursive: true))
+                gone.Add(("0", new string('0', 40), e.Path));
+        return git.EditTree(tree, gone);
     }
 
     static string Message(CheckoutConfig co, SnapshotInfo info, string extra)
@@ -1285,19 +1275,9 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         foreach (var chunk in paths.Chunk(100))
             foreach (var e in git.LsTree(tip, chunk).Where(e => e.Type == "blob"))
                 entries.Add((e.Mode, e.Sha, unit.RelOf(e.Path)));
-        var idx = root.NewTempFile(".index");
-        try
-        {
-            git.UpdateIndexInfo(null!, entries, idx);
-            var tree = git.WriteTree(null!, idx);
-            var sha = git.CommitTree(tree, null, "sg: files for " + co.Name + "\n");
-            git.UpdateRef(OutgoingRef(co), sha);
-            return sha;
-        }
-        finally
-        {
-            if (File.Exists(idx)) File.Delete(idx);
-        }
+        var sha = git.CommitTree(git.EditTree(null, entries), null, "sg: files for " + co.Name + "\n");
+        git.UpdateRef(OutgoingRef(co), sha);
+        return sha;
     }
 
     public CommitId CommitWritten(SgRoot root, CheckoutConfig co, PushGroup g, string message)

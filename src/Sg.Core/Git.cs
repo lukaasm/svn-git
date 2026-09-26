@@ -816,6 +816,31 @@ public sealed class Git
         finally { File.Delete(f); }
     }
 
+    /// <summary>
+    /// The tree that is baseTreeish's (or an empty one's) with these entries put in - mode "0" takes the
+    /// path out - as read-tree, update-index --index-info and write-tree on a private index make it.
+    /// Inside an operation it is built in-process on the reader; outside one, or when git has to
+    /// decide, git builds it.
+    /// </summary>
+    public string EditTree(string? baseTreeish, IReadOnlyList<(string Mode, string Sha, string Path)> entries)
+    {
+        if (Reader() is { } reader)
+        {
+            (string, byte[])? Read(string rev) =>
+                reader.TryContents(rev, out var header, out var data) && header is { Type: "tree" } h && data != null ? (h.Oid, data) : null;
+            bool Exists(string oid) => reader.TryContents(oid, out var header, out _, headerOnly: true) && header != null;
+            if (TreeEditor.Edit(Read, Exists, bytes => ObjectWriter.Write(Store, "tree", bytes), baseTreeish, entries) is { } tree) return tree;
+        }
+        var index = Path.Combine(Path.GetTempPath(), "sg-" + Guid.NewGuid().ToString("N")[..12] + ".index");
+        try
+        {
+            if (baseTreeish != null) ReadTree(Store, baseTreeish, index);
+            UpdateIndexInfo(Store, entries, index);
+            return WriteTree(Store, index);
+        }
+        finally { try { File.Delete(index); } catch (IOException) { } }
+    }
+
     /// <summary>Entries with mode "0" remove the path from the index.</summary>
     public void UpdateIndexInfo(string worktree, IEnumerable<(string Mode, string Sha, string Path)> entries, string? indexFile = null)
     {

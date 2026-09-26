@@ -140,68 +140,55 @@ public static class Thin
         var present = new HashSet<string>(git.LsTree(thinParent, null, recursive: true).Select(e => e.Path), StringComparer.Ordinal);
         var chain = git.RevListFirstParent(from + ".." + tip);
         var leftOut = new Dictionary<string, long>(StringComparer.Ordinal);
-        var index = root.NewTempFile(".index");
-        try
+        foreach (var c in chain)
         {
-            foreach (var c in chain)
+            var parent = git.ParentOf(c) ?? snapshot;
+            var changed = git.DiffNameStatus(git.Store, parent, c, renames: false);
+            var who = git.IdentityOf(c);
+
+            // The version each path starts from, for the paths this history has not seen. A path the
+            // commit adds has none, and one the run deleted earlier and adds again has none either.
+            var needBase = changed.Where(e => e.Status != 'A' && !present.Contains(e.Path)).Select(e => e.Path).ToList();
+            var bases = needBase.Count > 0 ? git.BlobsAt(parent, needBase) : new List<TreeEntry>();
+            var adds = changed.Where(e => e.Status != 'D').Select(e => e.Path).ToList();
+            var entries = git.BlobsAt(c, adds);
+            if (maxFileBytes > 0)
             {
-                var parent = git.ParentOf(c) ?? snapshot;
-                var changed = git.DiffNameStatus(git.Store, parent, c, renames: false);
-                var who = git.IdentityOf(c);
-
-                // The version each path starts from, for the paths this history has not seen. A path the
-                // commit adds has none, and one the run deleted earlier and adds again has none either.
-                var needBase = changed.Where(e => e.Status != 'A' && !present.Contains(e.Path)).Select(e => e.Path).ToList();
-                var bases = needBase.Count > 0 ? git.BlobsAt(parent, needBase) : new List<TreeEntry>();
-                var adds = changed.Where(e => e.Status != 'D').Select(e => e.Path).ToList();
-                var entries = git.BlobsAt(c, adds);
-                if (maxFileBytes > 0)
+                var sizes = git.ObjectSizes(bases.Concat(entries).Select(e => e.Sha));
+                var big = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var e in bases.Concat(entries))
                 {
-                    var sizes = git.ObjectSizes(bases.Concat(entries).Select(e => e.Sha));
-                    var big = new HashSet<string>(StringComparer.Ordinal);
-                    foreach (var e in bases.Concat(entries))
-                    {
-                        var size = sizes.GetValueOrDefault(e.Sha);
-                        if (size <= maxFileBytes) continue;
-                        big.Add(e.Path);
-                        leftOut[e.Path] = Math.Max(size, leftOut.GetValueOrDefault(e.Path));
-                    }
-                    bases = bases.Where(e => !big.Contains(e.Path)).ToList();
-                    entries = entries.Where(e => !big.Contains(e.Path)).ToList();
+                    var size = sizes.GetValueOrDefault(e.Sha);
+                    if (size <= maxFileBytes) continue;
+                    big.Add(e.Path);
+                    leftOut[e.Path] = Math.Max(size, leftOut.GetValueOrDefault(e.Path));
                 }
-                if (bases.Count > 0)
-                {
-                    var tree = Compose(git, index, thinParent, bases, Array.Empty<string>());
-                    var msg = $"sg base: {bases.Count} file(s) the next change starts from\n\n{KeyKind}: base\n{KeySource}: {c}\n";
-                    thinParent = git.CommitTreeExact(tree, thinParent, msg, who);
-                    foreach (var b in bases) present.Add(b.Path);
-                }
-
-                var dels = changed.Where(e => e.Status == 'D' && present.Contains(e.Path)).Select(e => e.Path).ToList();
-                var t = Compose(git, index, thinParent, entries, dels);
-                var body = who.Body.TrimEnd() + "\n\n" + KeyKind + ": change\n" + KeySource + ": " + c + "\n";
-                thinParent = git.CommitTreeExact(t, thinParent, body, who);
-                foreach (var e in entries) present.Add(e.Path);
-                foreach (var d in dels) present.Remove(d);
+                bases = bases.Where(e => !big.Contains(e.Path)).ToList();
+                entries = entries.Where(e => !big.Contains(e.Path)).ToList();
             }
-        }
-        finally
-        {
-            try { File.Delete(index); } catch (IOException) { }
+            if (bases.Count > 0)
+            {
+                var tree = Compose(git, thinParent, bases, Array.Empty<string>());
+                var msg = $"sg base: {bases.Count} file(s) the next change starts from\n\n{KeyKind}: base\n{KeySource}: {c}\n";
+                thinParent = git.CommitTreeExact(tree, thinParent, msg, who);
+                foreach (var b in bases) present.Add(b.Path);
+            }
+
+            var dels = changed.Where(e => e.Status == 'D' && present.Contains(e.Path)).Select(e => e.Path).ToList();
+            var t = Compose(git, thinParent, entries, dels);
+            var body = who.Body.TrimEnd() + "\n\n" + KeyKind + ": change\n" + KeySource + ": " + c + "\n";
+            thinParent = git.CommitTreeExact(t, thinParent, body, who);
+            foreach (var e in entries) present.Add(e.Path);
+            foreach (var d in dels) present.Remove(d);
         }
         return new Result(thinParent, chain.Count, scratch,
             leftOut.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} ({DiskUsage.Human(kv.Value)})").ToList());
     }
 
-    /// <summary>A tree that is another commit's tree with these blobs put in and these paths taken out, built in an index of its own.</summary>
-    static string Compose(Git git, string index, string baseCommit, IEnumerable<TreeEntry> put, IEnumerable<string> remove)
-    {
-        git.ReadTree(git.Store, baseCommit, index);
-        var entries = put.Select(e => (e.Mode, e.Sha, e.Path))
-            .Concat(remove.Select(p => ("0", "0000000000000000000000000000000000000000", p)));
-        git.UpdateIndexInfo(git.Store, entries, index);
-        return git.WriteTree(git.Store, index);
-    }
+    /// <summary>A tree that is another commit's tree with these blobs put in and these paths taken out.</summary>
+    static string Compose(Git git, string baseCommit, IEnumerable<TreeEntry> put, IEnumerable<string> remove) =>
+        git.EditTree(baseCommit, put.Select(e => (e.Mode, e.Sha, e.Path))
+            .Concat(remove.Select(p => ("0", "0000000000000000000000000000000000000000", p))).ToList());
 }
 
 /// <summary>One thing a backup sends: a branch, the uncommitted changes of a folder, or a shelf.</summary>

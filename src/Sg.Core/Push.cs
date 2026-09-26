@@ -531,21 +531,10 @@ public static class Push
     static string PendingCommit(SgRoot root, CheckoutConfig co, string newSnap, string tip, List<string> paths, string message)
     {
         var git = root.Git;
-        var idx = root.NewTempFile(".index");
-        try
-        {
-            git.ReadTree(co.Path, newSnap, idx);
-            var existing = git.LsTree(tip, paths).Where(e => e.Type == "blob")
-                .ToDictionary(e => e.Path, e => e, StringComparer.OrdinalIgnoreCase);
-            var infos = paths.Select(p => existing.TryGetValue(p, out var e) ? (e.Mode, e.Sha, p) : ("0", new string('0', 40), p));
-            git.UpdateIndexInfo(co.Path, infos, idx);
-            var tree = git.WriteTree(co.Path, idx);
-            return git.CommitTree(tree, newSnap, message);
-        }
-        finally
-        {
-            if (File.Exists(idx)) File.Delete(idx);
-        }
+        var existing = git.LsTree(tip, paths).Where(e => e.Type == "blob")
+            .ToDictionary(e => e.Path, e => e, StringComparer.OrdinalIgnoreCase);
+        var infos = paths.Select(p => existing.TryGetValue(p, out var e) ? (e.Mode, e.Sha, p) : ("0", new string('0', 40), p)).ToList();
+        return git.CommitTree(git.EditTree(newSnap, infos), newSnap, message);
     }
 
     /// <summary>What a push would send, from the current snapshot, without syncing. For the push dialog.</summary>

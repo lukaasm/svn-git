@@ -133,15 +133,13 @@ public sealed class Git
     /// The object a revision names in the store, or null when it names nothing. Inside an operation it
     /// is asked of the operation's reader; outside one, or when the reader cannot answer, of git.
     /// </summary>
-    string? ReadOid(string rev, Func<string?> ask)
+    string? ReadOid(string rev, Func<string?> ask) =>
+        Reader() is { } reader && reader.TryInfo(rev, out var oid) ? oid : ask();
+
+    /// <summary>The operation's reader, started on the first question; none outside an operation.</summary>
+    GitReader? Reader()
     {
-        GitReader? reader;
-        lock (_memoGate)
-        {
-            if (_remembering == 0) return ask();
-            reader = _reader ??= new GitReader(_exe, Store, _env, _log);
-        }
-        return reader.TryInfo(rev, out var oid) ? oid : ask();
+        lock (_memoGate) return _remembering == 0 ? null : _reader ??= new GitReader(_exe, Store, _env, _log);
     }
 
     void StopReader()
@@ -392,14 +390,13 @@ public sealed class Git
         var parts = PathUtil.Rel(path).Split('/');
         string Rebuild(string at, int depth)
         {
-            var listing = Ok(null, "ls-tree", "-z", at).StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries);
             var sb = new StringBuilder();
             var found = false;
-            foreach (var line in listing)
+            foreach (var entry in LsTree(at))
             {
-                var tab = line.IndexOf('\t');
-                var name = line[(tab + 1)..];
-                var meta = line[..tab].Split(' ');
+                var name = entry.Path;
+                var line = $"{entry.Mode} {entry.Type} {entry.Sha}\t{name}";
+                string[] meta = [entry.Mode, entry.Type, entry.Sha];
                 if (name == parts[depth])
                 {
                     found = true;
@@ -1047,6 +1044,24 @@ public sealed class Git
     }
 
     public List<TreeEntry> LsTree(string treeish, IEnumerable<string>? paths = null, bool recursive = false)
+    {
+        var list = paths?.ToList();
+        if (Reader() is { } reader)
+        {
+            (string, byte[])? Read(string rev) =>
+                reader.TryContents(rev, out var header, out var data) && header is { Type: "tree" } h && data != null ? (h.Oid, data) : null;
+            if (TreeListing.List(Read, treeish, list, recursive) is { } listed)
+            {
+                _log.Cmd("[" + Store + "] git cat-file --batch-command < ls-tree -z" + (recursive ? " -r " : " ") + treeish
+                    + (list is { Count: > 0 } ? " -- " + string.Join(" ", list) : ""));
+                return listed;
+            }
+        }
+        return LsTreeByGit(treeish, list, recursive);
+    }
+
+    /// <summary>The same listing from `git ls-tree`, the way it was always read: outside an operation, and whenever the reader cannot.</summary>
+    internal List<TreeEntry> LsTreeByGit(string treeish, IReadOnlyList<string>? paths, bool recursive)
     {
         var a = new List<string> { "ls-tree", "-z" };
         if (recursive) a.Add("-r");

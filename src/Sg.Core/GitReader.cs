@@ -4,11 +4,12 @@ using System.Text;
 namespace Sg.Core;
 
 /// <summary>
-/// One git process that stays up for an operation and answers "what does this name point at" on a
-/// pipe: `git cat-file --batch-command`, asked `info &lt;rev&gt;` once per question. Resolving a ref
-/// was a git process each - a quarter of all the processes a backup started - and each start costs
-/// 30 ms on Windows where an answer here costs a fraction of one. git reads the refs and objects
-/// fresh for every question, so what another command wrote a moment ago is seen.
+/// One git process that stays up for an operation and answers questions about objects on a pipe:
+/// `git cat-file --batch-command`, asked `info &lt;rev&gt;` for what a name points at and
+/// `contents &lt;rev&gt;` for an object's bytes. Resolving a ref was a git process each - a quarter of
+/// all the processes a backup started - and each start costs 30 ms on Windows where an answer here
+/// costs a fraction of one. git reads the refs and objects fresh for every question, so what another
+/// command wrote a moment ago is seen.
 /// When it cannot answer - a git older than 2.36, a process that died, a name git calls ambiguous -
 /// the caller asks with a process of its own, as before.
 /// </summary>
@@ -24,6 +25,9 @@ sealed class GitReader : IDisposable
     readonly ILog _log;
     readonly object _gate = new();
     Process? _process;
+    Stream? _in, _out;
+    readonly byte[] _buffer = new byte[1 << 16];
+    int _start, _end;
     readonly StringBuilder _stderr = new();
     bool _failed;
 
@@ -35,6 +39,9 @@ sealed class GitReader : IDisposable
         _log = log;
     }
 
+    /// <summary>What an object's header says: its id and its type.</summary>
+    public readonly record struct Header(string Oid, string Type);
+
     /// <summary>
     /// What a revision names: its object id, or null when it names nothing. False when this reader
     /// could not ask, and the question has to go to a process of its own.
@@ -42,19 +49,31 @@ sealed class GitReader : IDisposable
     public bool TryInfo(string rev, out string? oid)
     {
         oid = null;
+        if (!Ask("info", rev, read: false, out var header, out _)) return false;
+        oid = header?.Oid;
+        return true;
+    }
+
+    /// <summary>An object's type and bytes, or null for both when the revision names nothing. False as for <see cref="TryInfo"/>.</summary>
+    public bool TryContents(string rev, out Header? header, out byte[]? data) => Ask("contents", rev, read: true, out header, out data);
+
+    bool Ask(string command, string rev, bool read, out Header? header, out byte[]? data)
+    {
+        header = null;
+        data = null;
         if (rev.Length == 0 || rev.IndexOfAny(['\n', '\r']) >= 0) return false;
         lock (_gate)
         {
             for (var attempt = 0; attempt < 2; attempt++)
             {
-                var p = Started();
-                if (p == null) return false;
+                if (!Started()) return false;
                 string? line;
                 try
                 {
-                    p.StandardInput.Write("info " + rev + "\n");
-                    p.StandardInput.Flush();
-                    line = p.StandardOutput.ReadLine();
+                    var ask = Utf8.GetBytes(command + " " + rev + "\n");
+                    _in!.Write(ask);
+                    _in.Flush();
+                    line = ReadLine();
                 }
                 catch (Exception e) when (e is IOException or InvalidOperationException or ObjectDisposedException)
                 {
@@ -74,12 +93,24 @@ sealed class GitReader : IDisposable
                     }
                     continue;
                 }
-                _log.Cmd("[" + _store + "] git cat-file --batch-command < info " + rev);
+                // A lookup is a line in the log, as its process was; the trees a listing reads are its caller's one line.
+                if (!read) _log.Cmd("[" + _store + "] git cat-file --batch-command < " + command + " " + rev);
                 if (line.EndsWith(" missing", StringComparison.Ordinal)) return true;
                 if (line.EndsWith(" ambiguous", StringComparison.Ordinal)) return false;
-                var space = line.IndexOf(' ');
-                if (space <= 0) { Stop(); return false; }
-                oid = line[..space];
+                var fields = line.Split(' ');
+                if (fields.Length != 3 || !long.TryParse(fields[2], out var size)) { Stop(); return false; }
+                header = new Header(fields[0], fields[1]);
+                if (!read) return true;
+                // The object's bytes, then the newline git puts after them.
+                try
+                {
+                    data = new byte[size];
+                    if (!ReadExact(data) || !ReadExact(new byte[1])) { Stop(); data = null; header = null; return false; }
+                }
+                catch (Exception e) when (e is IOException or ObjectDisposedException or OutOfMemoryException)
+                {
+                    Stop(); data = null; header = null; return false;
+                }
                 return true;
             }
             _failed = true;
@@ -87,13 +118,50 @@ sealed class GitReader : IDisposable
         }
     }
 
-    Process? Started()
+    string? ReadLine()
     {
-        if (_process is { HasExited: false }) return _process;
-        _process?.Dispose();
-        _process = null;
-        if (_failed) return null;
-        lock (Unsupported) if (Unsupported.Contains(_exe)) return null;
+        var line = new List<byte>();
+        while (true)
+        {
+            for (var i = _start; i < _end; i++)
+            {
+                if (_buffer[i] != (byte)'\n') continue;
+                line.AddRange(new ArraySegment<byte>(_buffer, _start, i - _start));
+                _start = i + 1;
+                return Utf8.GetString(line.ToArray());
+            }
+            line.AddRange(new ArraySegment<byte>(_buffer, _start, _end - _start));
+            if (!Fill()) return null;
+        }
+    }
+
+    bool ReadExact(byte[] into)
+    {
+        var done = 0;
+        while (done < into.Length)
+        {
+            if (_start == _end && !Fill()) return false;
+            var n = Math.Min(into.Length - done, _end - _start);
+            Array.Copy(_buffer, _start, into, done, n);
+            _start += n;
+            done += n;
+        }
+        return true;
+    }
+
+    bool Fill()
+    {
+        _start = 0;
+        _end = _out!.Read(_buffer, 0, _buffer.Length);
+        return _end > 0;
+    }
+
+    bool Started()
+    {
+        if (_process is { HasExited: false }) return true;
+        Stop();
+        if (_failed) return false;
+        lock (Unsupported) if (Unsupported.Contains(_exe)) return false;
         var psi = new ProcessStartInfo
         {
             FileName = _exe,
@@ -103,8 +171,6 @@ sealed class GitReader : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = _store,
-            StandardInputEncoding = Utf8,
-            StandardOutputEncoding = Utf8,
             StandardErrorEncoding = Utf8,
         };
         foreach (var a in (string[])["-C", _store, "cat-file", "--batch-command"]) psi.ArgumentList.Add(a);
@@ -122,15 +188,21 @@ sealed class GitReader : IDisposable
         {
             p.Dispose();
             _failed = true;
-            return null;
+            return false;
         }
-        return _process = p;
+        _process = p;
+        _in = p.StandardInput.BaseStream;
+        _out = p.StandardOutput.BaseStream;
+        _start = _end = 0;
+        return true;
     }
 
     void Stop()
     {
         var p = _process;
         _process = null;
+        _in = _out = null;
+        _start = _end = 0;
         if (p == null) return;
         try
         {

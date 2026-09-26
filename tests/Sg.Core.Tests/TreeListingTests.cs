@@ -32,7 +32,8 @@ public sealed class TreeListingTests : IDisposable
     {
         var root = Ops.Init(_dir, _log, fsmonitor: false);
         string Git(string? stdin, params string[] args) =>
-            Proc.Run("git", ["-C", root.StorePath, .. args], null, _log, stdin == null ? null : Encoding.UTF8.GetBytes(stdin)).EnsureOk().StdOut.Trim();
+            Proc.Run("git", ["-C", root.StorePath, "-c", "user.name=T", "-c", "user.email=t@x", .. args], null, _log,
+                stdin == null ? null : Encoding.UTF8.GetBytes(stdin)).EnsureOk().StdOut.Trim();
         var entries = new List<(string Mode, string Sha, string Path)>();
         foreach (var f in Files) entries.Add(("100644", Git("content of " + f + "\n", "hash-object", "-w", "--stdin"), f));
         entries.Add(("100755", Git("#!/bin/sh\n", "hash-object", "-w", "--stdin"), "exec.sh"));

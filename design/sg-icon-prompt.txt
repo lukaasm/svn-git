@@ -1,0 +1,14 @@
+sg application icon
+
+Created with the built-in image_gen tool. The final full-resolution RGBA
+artwork is src/Sg.App/Assets/sg.png. Rebuild the Windows icon by running
+scripts/update-app-icon.ps1 from PowerShell on Windows. It embeds PNG frames
+at 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 pixels.
+
+Generation prompt
+
+Use case: logo-brand. Create the final production application icon for sg, a Windows developer tool for Git branches and worktrees over SVN and Git checkouts. One icon only, square 1024x1024 canvas with genuine transparent background outside its rounded tile. A crisp violet rounded square occupies 92 percent of the canvas, centered, with generous rounded corners, a restrained violet gradient from luminous upper left to deep purple lower right. On the tile, a large bold minimal source-control branch emblem: one straight white vertical trunk on the left connects a solid white circular terminal at the top to a solid white circular terminal at the bottom. A thick mint/aqua branch curves smoothly from the trunk's middle to a third solid mint circular terminal at the upper right. Exactly THREE solid circular terminals, no holes in them. The mint branch joins the white trunk seamlessly. Balanced, confident, distinctive silhouette, large terminals and thick strokes, beautifully proportioned negative space, exceptionally readable at 16 and 32 pixels. The emblem fills roughly 64 percent of tile height and 56 percent of tile width. Flat face-on vector-like geometry with very subtle soft depth in the purple tile only. No lettering, no sg text, no wordmark, no borders around circles, no extra branches, no little details, no floor, no perspective, no cast shadow outside tile, no mockup, no presentation board, no watermark. Output the ready-to-use icon by itself with alpha transparency in the corners.
+
+Refinement prompt
+
+Refine this exact application icon into clean production artwork. Preserve the purple rounded square and the white and mint three-node branch symbol and their proportions. Change only edge quality and surface smoothness: make the exterior rounded-square silhouette perfectly smooth, mathematically crisp and antialiased, eliminate ALL stray blue/purple pixels, noisy fringing, scattered pixels and haze outside the tile, especially at its bottom edge. Fully transparent pixels everywhere outside the rounded tile. Smooth flat gradient inside, no grain. Make the white/mint junction a clean seamless branch junction without the little curled lip. Keep the exact composition and colors. Center the icon with equal transparent padding on all four sides. No new elements or text.

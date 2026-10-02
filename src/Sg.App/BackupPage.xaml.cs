@@ -115,7 +115,7 @@ public sealed partial class BackupPage : SgPage
     }
     string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
     internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, BackupFilter.SelectedIndex,
-        _shownWorktrees, _returning?.Offset ?? ContentScroll.VerticalOffset, _expanded.ToArray(), CurrentDraft(), AdvancedOptions.IsExpanded);
+        _shownWorktrees, _returning?.Offset ?? _restoringTo ?? ContentScroll.VerticalOffset, _expanded.ToArray(), CurrentDraft(), AdvancedOptions.IsExpanded);
     RestoreDraft? CurrentDraft() => _picked is { Kind: "branch", Unreadable: null }
         ? new(DestinationDraft.Capture(NameBox.Text, Into), WipBox.IsChecked == true, !_form.Running && ForceBox.IsChecked == true)
         : _draft;
@@ -204,9 +204,23 @@ public sealed partial class BackupPage : SgPage
             return;
         }
         Seen[key] = data;
-        var offset = ContentScroll.VerticalOffset;
+        var offset = _restoringTo ?? ContentScroll.VerticalOffset;
         await Render(root, data.Catalog, data.Worktrees);
-        if (seen != null) BrowseScroll.Restore(ContentScroll, offset);
+        if (seen != null) RestoreScroll(offset);
+    }
+
+    double? _restoringTo;
+
+    /// <summary>
+    /// Scrolls back once the list has its height. Until that queued scroll runs, the place it is going is
+    /// the place to keep: a fresh read of a nearby backup can land first, and capturing the offset then
+    /// read the top of the page and sent it back there after the return had restored it.
+    /// </summary>
+    void RestoreScroll(double offset)
+    {
+        _restoringTo = offset;
+        BrowseScroll.Restore(ContentScroll, offset);
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _restoringTo = null);
     }
 
     /// <summary>What a read of the backup repository found, as the overview lists it.</summary>
@@ -259,7 +273,7 @@ public sealed partial class BackupPage : SgPage
             if (selected != null) { await PreviewAsync(selected); if (_separate && _draft == null) await SuggestSeparateNameAsync(); }
             else SelectionHint.Text = "No remote backup of this worktree is available. Back it up to create the first copy.";
         }
-        if (_returning is { } view) { BrowseScroll.Restore(ContentScroll, view.Offset); _returning = null; }
+        if (_returning is { } view) { RestoreScroll(view.Offset); _returning = null; }
     }
 
     public override void OnHidden() { _hidden = true; _reads.Cancel(); _previewReads.Cancel(); RevisionPreview.Clear(); _targetValidation.Invalidate(); }

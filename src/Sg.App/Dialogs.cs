@@ -35,6 +35,17 @@ public static class Dialogs
         return await d.ShowAsync() == ContentDialogResult.Primary;
     }
 
+    /// <summary>
+    /// The one question before operations that need attention are dismissed, wherever Dismiss sits:
+    /// the banner, Activity, the operation's own page. Dismissing runs nothing and loses nothing, so it
+    /// says what stays rather than asking for a tick.
+    /// </summary>
+    public static Task<bool> ConfirmDismiss(object owner, IReadOnlyList<string> operations) => Confirm(owner,
+        operations.Count == 1 ? "Dismiss this operation?" : $"Dismiss {operations.Count} operations?",
+        string.Join("\n", operations) + "\n\nNothing runs. This will:\n• Close the record, so it stops asking for attention.\n"
+        + "• Keep its checkpoint. Activity can still restore the commits to a new branch.\n• Keep every saved shelf and the current files.",
+        "Dismiss");
+
     /// <summary>One thing a destructive action takes with it, worn as the badge the card already used for it.</summary>
     public sealed record Loss(ChipSeverity Severity, string Glyph, string Text);
 

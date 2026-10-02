@@ -197,6 +197,28 @@ public sealed class WorkflowTests : IDisposable
     }
 
     [Fact]
+    public void An_operation_whose_worktree_is_gone_resumes_nothing_and_can_be_dismissed()
+    {
+        var path = Branch();
+        var record = Operations.TrackReplay(f.Root, "Get changes from backup", path, "Incoming backup: feature");
+        Assert.False(Operations.WorktreeGone(f.Root, path));
+        Assert.False(Operations.WorktreeGone(f.Root, f.Checkout));
+        f.Root.Git.WorktreeRemove(path, force: true);
+        // Removing a worktree can leave its folder behind, empty, and git refuses to run in it.
+        Directory.CreateDirectory(path);
+        Assert.True(Operations.WorktreeGone(f.Root, path));
+        var resumed = Operations.Resume(f.Root, record.Id);
+        Assert.Equal(OperationPhase.NeedsReview, resumed.Phase);
+        Assert.Equal(Operations.GoneDetail, resumed.Detail);
+        var dismissed = Operations.FinishReview(f.Root, record.Id);
+        Assert.Equal(OperationPhase.Cancelled, dismissed.Phase);
+        Assert.Contains(dismissed.Steps, s => s.StartsWith("Dismissed by the user"));
+        Assert.Null(Operations.Pending(f.Root, path));
+        Assert.Equal(record.Before, f.Root.Git.RefSha(record.Checkpoint));
+        Assert.Equal(OperationPhase.Cancelled, Operations.FinishReview(f.Root, record.Id).Phase);
+    }
+
+    [Fact]
     public void Temporary_cleanup_rechecks_age_contents_and_pending_operations()
     {
         var path = Branch();

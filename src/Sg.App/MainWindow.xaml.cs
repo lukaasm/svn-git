@@ -89,6 +89,7 @@ public sealed partial class MainWindow : Window
         Session.Settings.Saved += BackupSettingsSaved;
         ArmBackup();
         Nav.Loaded += (_, _) => DispatcherQueue.TryEnqueue(EnglishChrome);
+        RecoveryNotice.Closing += RecoveryNotice_Closing;
         Shortcuts.Add(this, VirtualKey.F5, () => _ = RefreshAllAsync());
         Shortcuts.Add(this, VirtualKey.K, VirtualKeyModifiers.Control, () => _ = QuickJump.ShowAsync(this, JumpEntries()));
         MonitorService.Changed += UpdateMonitorBadge;
@@ -133,12 +134,40 @@ public sealed partial class MainWindow : Window
         RecoveryNotice.Title = unshown.Count == 1 ? unshown[0].Title : $"{unshown.Count} unfinished operations";
         RecoveryNotice.Message = unshown.Count == 1 ? unshown[0].Detail : "Saved work needs attention. Review each operation in Activity before continuing.";
         RecoveryButton.Content = unshown.Count == 1 ? unshown[0].Action : "Review recovery";
+        RecoveryNotice.IsClosable = unshown.Any(i => i.Operations?.Count > 0);
+        // WinUI names the close button in the Windows display language, and here it dismisses for good.
+        foreach (var child in Descendants(RecoveryNotice))
+        {
+            if (child is not Button { Name: "CloseButton" } close) continue;
+            AutomationProperties.SetName(close, "Dismiss");
+            AutomationProperties.SetAutomationId(close, "RecoveryDismiss");
+            ToolTipService.SetToolTip(close, unshown.Count == 1 ? "Dismiss this operation" : "Dismiss these operations");
+        }
     }
+
+    /// <summary>The banner's close button dismisses what it lists, after asking; it never just hides the banner until the next refresh.</summary>
+    void RecoveryNotice_Closing(InfoBar sender, InfoBarClosingEventArgs args)
+    {
+        if (args.Reason != InfoBarCloseReason.CloseButton) return;
+        args.Cancel = true;
+        _ = DismissRecoveryAsync();
+    }
+
+    async Task DismissRecoveryAsync()
+    {
+        if (_recoveryRoot != Session.Root?.RootPath || Session.Root is not { } root) return;
+        var items = Unshown().Where(i => i.Operations?.Count > 0).ToList();
+        if (items.Count == 0 || !await Dialogs.ConfirmDismiss(this, items.Select(i => i.Title).ToList())) return;
+        var ids = items.SelectMany(i => i.Operations!).ToList();
+        await Runner.Run(Pane, items.Count == 1 ? "Dismiss operation" : $"Dismiss {items.Count} operations",
+            () => ids.Select(id => Operations.FinishReview(root, id)).ToList());
+    }
+
     void Recovery_Click(object sender, RoutedEventArgs e)
     {
         if (_recoveryRoot != Session.Root?.RootPath) return;
         var unshown = Unshown();
-        if (unshown.Count == 1 && Directory.Exists(unshown[0].Path))
+        if (unshown.Count == 1 && !unshown[0].Gone && Directory.Exists(unshown[0].Path))
         {
             var item = unshown[0];
             if (item.Replay) Host.Go(() => new ConflictPage(item.Path), "resolve:" + item.Path);
@@ -740,7 +769,7 @@ public sealed partial class MainWindow : Window
         var snapshot = await Runner.Quiet(Pane, () =>
         {
             var status = Ops.Status(root, checkSvn: false);
-            return new { Status = status, Recovery = Recovery.Find(Operations.List(root), status.Worktrees) };
+            return new { Status = status, Recovery = Recovery.Find(Operations.List(root), status.Worktrees, path => Operations.WorktreeGone(root, path)) };
         });
         if (snapshot == null || generation != _generation || Session.Root != root) return;
         _status = snapshot.Status;

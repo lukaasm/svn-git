@@ -186,27 +186,36 @@ public sealed class UpdateBranchPage : WorkflowPage
         if (state is OperationRecord record)
         {
             Title = OperationTitle(record); Branch = record.Branch; Checkout = record.Checkout;
-            Text(record.PhaseLabel, true); Text(record.Detail ?? (record.Terminal ? "The recorded operation is complete. Its checkpoint and recovery shelves remain available." : "The operation can resume from its recorded step."));
+            // A removed worktree leaves nothing git can resume or plan in; dismissing is the only way on.
+            var gone = !record.Terminal && Operations.WorktreeGone(root, record.Path);
+            Text(record.PhaseLabel, true);
+            Text(gone ? Operations.GoneDetail : record.Detail ?? (record.Terminal ? "The recorded operation is complete. Its checkpoint and recovery shelves remain available." : "The operation can resume from its recorded step."));
+            async Task Dismiss()
+            {
+                if (await Dialogs.ConfirmDismiss(this, [OperationTitle(record) + " · " + record.Branch]))
+                    await Execute("Dismiss operation", () => _lastResult = Operations.FinishReview(root, record.Id));
+            }
             var actions = Body.Children.Count;
-            if (record.Phase == OperationPhase.Replaying)
+            if (record.Phase == OperationPhase.Replaying && !gone)
                 Action("Review replay", () => Navigate(() => new ConflictPage(_path), "resolve:" + _path), glyph: "\uE8A5");
-            if (!record.Terminal && record.Phase != OperationPhase.NeedsReview)
+            if (gone) Action("Dismiss operation", Dismiss, true, mutates: true, glyph: "\uE894");
+            else if (!record.Terminal && record.Phase != OperationPhase.NeedsReview)
             {
                 _submit = () => Execute("Resume pull", () => _lastResult = Operations.Resume(root, record.Id));
                 Action(record.Kind == "Update from SVN" ? "Resume pull" : "Refresh operation state", _submit, true, mutates: true, glyph: "\uE768");
             }
             if (record.Terminal) Action("Back to branch", () => { Close(); return Task.CompletedTask; }, true, glyph: "\uE72B");
             Action("Review saved edits", () => Navigate(() => new ShelfPage(root.Checkout(record.Checkout)), "shelves:" + record.Checkout), glyph: "\uE7B8");
-            RefreshPlan();
+            if (!gone) RefreshPlan();
             WrapActions(actions);
             var advanced = Body.Children.Count;
             Details("Steps and checkpoint", record.Steps.Select(step => "✓ " + step).Append("Branch checkpoint: " + record.Before
                 + $". Restoring it does not undo {Server(root, record.Checkout)} updates or published commits."));
             Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");
-            if (!record.Terminal)
+            if (!record.Terminal && !gone)
             {
-                Text("Close operation keeps current files and every shelf. Any edits not restored yet remain on their shelves.");
-                Action("Keep current files and close operation", () => Execute("Close operation", () => _lastResult = Operations.FinishReview(root, record.Id)), mutates: true, glyph: "\uE73E");
+                Text("Dismiss keeps current files and every shelf. Any edits not restored yet remain on their shelves.");
+                Action("Dismiss operation", Dismiss, mutates: true, glyph: "\uE894");
             }
             _advanced = CollapseActions(advanced, "Advanced");
         }

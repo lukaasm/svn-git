@@ -1,11 +1,13 @@
 namespace Sg.Core;
 
-public sealed record RecoveryItem(string Title, string Path, string Detail, string Action, bool Replay);
+/// <summary>One thing that needs attention. <see cref="Operations"/> names the records behind it, which Dismiss closes; a paused replay with no record has none.</summary>
+public sealed record RecoveryItem(string Title, string Path, string Detail, string Action, bool Replay, IReadOnlyList<string>? Operations = null, bool Gone = false);
 
 /// <summary>Recovery navigation from durable records and current Git state; never replays a command.</summary>
 public static class Recovery
 {
-    public static IReadOnlyList<RecoveryItem> Find(IEnumerable<OperationRecord> records, IEnumerable<WorktreeStatus> worktrees)
+    /// <param name="gone">Whether a folder no listed worktree has is no worktree at all. A listed worktree with no folder is gone without asking.</param>
+    public static IReadOnlyList<RecoveryItem> Find(IEnumerable<OperationRecord> records, IEnumerable<WorktreeStatus> worktrees, Func<string, bool>? gone = null)
     {
         var pending = records.Where(r => !r.Terminal).OrderByDescending(r => r.Updated).ToList();
         var trees = worktrees.ToList();
@@ -19,12 +21,15 @@ public static class Recovery
             var replay = tree != null && (tree.Stopped != Sg.Core.Replay.None || tree.BackupFinalizing);
             var action = replay ? "Review replay" : record.Phase == OperationPhase.NeedsReview ? "Review saved edits" : "Review and resume";
             var detail = record.Detail ?? $"Last recorded step: {record.PhaseLabel}. Review the saved state before continuing.";
-            if (tree?.Missing == true)
+            var isGone = tree?.Missing == true || tree == null && gone?.Invoke(record.Path) == true;
+            if (isGone)
             {
-                detail = "The worktree folder is missing. Open Activity to inspect its checkpoint and recover commits to a separate branch.";
+                detail = Sg.Core.Operations.GoneDetail;
                 action = "View recovery checkpoint";
+                replay = false;
             }
-            items.Add(new(record.Kind + " · " + record.Branch, record.Path, detail, action, replay));
+            var ids = pending.Where(r => Key(r.Path).Equals(Key(record.Path), StringComparison.OrdinalIgnoreCase)).Select(r => r.Id).ToList();
+            items.Add(new(record.Kind + " · " + record.Branch, record.Path, detail, action, replay, ids, isGone));
         }
         foreach (var tree in trees.Where(w => w.Stopped != Sg.Core.Replay.None || w.BackupFinalizing))
         {

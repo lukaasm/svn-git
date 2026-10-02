@@ -87,6 +87,15 @@ public static class Operations
         .Select(p => Read(root, System.IO.Path.GetFileNameWithoutExtension(p))).OrderByDescending(x => x.Updated).ToList();
     public static OperationRecord? Pending(SgRoot root, string path) => List(root).FirstOrDefault(x => !x.Terminal && !string.IsNullOrEmpty(x.Path) && System.IO.Path.GetFullPath(x.Path).Equals(System.IO.Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));
     public static bool ProtectsShelf(SgRoot root, string id) => List(root).Any(x => !x.Terminal && (x.BranchShelf == id || x.CheckoutShelf == id || x.ReviewShelves.Contains(id)));
+
+    /// <summary>
+    /// Whether the folder an operation ran in is no worktree any more: removed, or left behind empty
+    /// without the .git that made it one. Git cannot be asked anything there, so nothing can resume;
+    /// the record can only be dismissed, and its checkpoint still restores the commits elsewhere.
+    /// </summary>
+    public static bool WorktreeGone(SgRoot root, string path) =>
+        !Directory.Exists(path) || root.Git.TunnelOf(path) == null && Git.GitDirOf(path) == null;
+
     static void Save(SgRoot root, OperationRecord record)
     {
         record.Updated = DateTimeOffset.UtcNow;
@@ -161,6 +170,7 @@ public static class Operations
         using var operation = root.Lock();
         var record = Read(root, id);
         if (record.Terminal || record.Phase == OperationPhase.NeedsReview) return record;
+        if (WorktreeGone(root, record.Path)) return Review(root, record, GoneDetail);
         var git = root.Git;
         if (record.Kind != "Update from SVN")
         {
@@ -259,13 +269,21 @@ public static class Operations
         record.Phase = OperationPhase.NeedsReview; record.Detail = detail; Save(root, record); return record;
     }
 
+    public const string GoneDetail = "The worktree is gone, so this operation cannot resume. Dismiss it; its checkpoint still restores the commits to a new branch.";
+
+    /// <summary>
+    /// Closes a record that needs attention without running anything. Explicit acknowledgement keeps
+    /// every shelf, including ones not restored yet, and the checkpoint ref.
+    /// </summary>
     public static OperationRecord FinishReview(SgRoot root, string id)
     {
         using var operation = root.Lock();
         var record = Read(root, id);
-        if (Conflicts.HasPending(root.Git, record.Path)) throw new SgException("Finish or cancel the replay first.");
-        // Explicit acknowledgement keeps every shelf, including ones not restored yet.
-        Move(root, record, OperationPhase.Cancelled, "Closed by the user; current files and all saved shelves retained.");
+        if (record.Terminal) return record;
+        var gone = WorktreeGone(root, record.Path);
+        if (!gone && Conflicts.HasPending(root.Git, record.Path)) throw new SgException("Finish or cancel the replay first.");
+        Move(root, record, OperationPhase.Cancelled, gone ? "Dismissed by the user; the worktree was gone. Checkpoint and all saved shelves retained."
+            : "Closed by the user; current files and all saved shelves retained.");
         return record;
     }
 

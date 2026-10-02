@@ -1054,7 +1054,7 @@ public static partial class Backup
         {
             if (!force) throw new SgException($"branch exists here: {target}. Restore it under another name with --name, or force to write over it.");
             if (Operations.List(root).Any(x => !x.Terminal && x.Branch == target))
-                throw new SgException("An unfinished operation protects this branch. Finish or close it in Activity before replacing it.");
+                throw new SgException("An unfinished operation protects this branch. Finish or dismiss it in Activity before replacing it.");
             // Keep the entire original worktree, including ignored and untracked files.
             // A failed replacement must leave an accessible recovery branch.
             var recovery = target + "-before-restore-" + Guid.NewGuid().ToString("N")[..8];

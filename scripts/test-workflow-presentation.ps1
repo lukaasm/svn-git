@@ -70,10 +70,13 @@ try {
     $window = Wait-For { Get-TestAppWindow $process }
     Start-UiScenario 'Activity status and collapsed details'
     (Wait-For { Find 'ActivityItem' -Id }).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-    Expand (Wait-For { Find 'Steps and checkpoint' })
-    $null = Wait-For { Find 'View branch history' }
+    $expandable = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
+    $entry = Wait-For { @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $expandable) | Where-Object { $_.Current.AutomationId -like 'ActivityEntry_*' })[0] }
+    Expand $entry
+    $named = { param($name) $entry.FindFirst([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $name)) }
+    $null = Wait-For { & $named 'View branch history' }
     $beforeRecovery = @(Get-ChildItem -LiteralPath $FixtureRoot -Directory -Filter '*-recovered-*').Count
-    Invoke 'Restore commits to a separate branch'
+    (Wait-For { & $named 'Restore commits to a new branch' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $null = Wait-For { Find 'Restore checkpoint to a new branch?' }
     $dialogText = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
         Where-Object { $_.Current.Name -like 'This will:*Create branch*Create its worktree*Restore the recorded commits*' } | Select-Object -First 1
@@ -89,9 +92,12 @@ try {
         if ($parent.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll) -and $scroll.Current.VerticallyScrollable) { break }
         $parent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
     }
-    if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
+    # The overview can fit the window, or nearly: UIA then refuses the scroll with InvalidOperationException,
+    # and there is nothing below to bring into view anyway.
+    function Scroll-Bottom { if ($scroll) { try { $scroll.SetScrollPercent(-1, 100) } catch [InvalidOperationException] { } } }
+    Scroll-Bottom
     Expand $branch
-    $advanced = Wait-For { if ($scroll) { $scroll.SetScrollPercent(-1, 100) }; Find 'AdvancedWorktreeActions' -Id }
+    $advanced = Wait-For { Scroll-Bottom; Find 'AdvancedWorktreeActions' -Id }
     Expand $advanced
     $button = Wait-For {
         $action = Find 'BackupCoverageAction' -Id
@@ -218,7 +224,7 @@ try {
     Expand $archive
     $null = Wait-For { Find 'Archive and remove this worktree' }
     Invoke 'View recovery checkpoints'
-    $null = Wait-For { Find 'Steps and checkpoint' }
+    $null = Wait-For { @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $expandable) | Where-Object { $_.Current.AutomationId -like 'ActivityEntry_*' })[0] }
     Complete-UiScenario
     Write-UiResult $ArtifactDirectory @{ status = 'passed'; scenarios = @(Read-UiScenarios $ArtifactDirectory) }
 } catch {

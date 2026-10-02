@@ -119,15 +119,16 @@ public sealed partial class MainWindow : Window
     /// The banner is for work nothing else on screen shows. A stopped pull in a worktree already has
     /// its card saying so, with the button that finishes it, and Activity counts it; a banner on top
     /// was the same fact a third time. What is left is work with no card to show it: a worktree that is
-    /// gone, or an operation that stopped before it made one.
+    /// gone, or an operation that stopped before it made one. Activity lists all of them, so the banner
+    /// stays down while it is open.
     /// </summary>
-    List<RecoveryItem> Unshown() => _recovery.Where(r => _status?.Worktrees.Any(w => !w.Missing
+    List<RecoveryItem> Unshown() => _recovery.Where(r => r.Path.Length == 0 || _status?.Worktrees.Any(w => !w.Missing
         && Path.GetFullPath(w.Path).TrimEnd('\\', '/').Equals(Path.GetFullPath(r.Path).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) != true).ToList();
 
     void ShowRecovery()
     {
         var unshown = Unshown();
-        var visible = _recoveryRoot == Session.Root?.RootPath && unshown.Count > 0
+        var visible = _recoveryRoot == Session.Root?.RootPath && unshown.Count > 0 && Host.Current is not ActivityPage
             && Session.Root != null && Session.Tasks.Blocking(Session.Root.RootPath) == null;
         RecoveryNotice.IsOpen = visible;
         if (!visible) return;
@@ -253,6 +254,7 @@ public sealed partial class MainWindow : Window
         ForwardButton.Visibility = Host.CanGoForward ? Visibility.Visible : Visibility.Collapsed;
         RefreshButton.Visibility = Session.Root != null ? Visibility.Visible : Visibility.Collapsed;
         ActivityItem.IsEnabled = StorageItem.IsEnabled = ReviewInboxItem.IsEnabled = Session.Root != null;
+        ShowRecovery();
 
         // The pane highlights the checkout the page is about, the monitor, or the settings.
         var key = Host.CurrentKey ?? "";

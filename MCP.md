@@ -40,6 +40,16 @@ For example, pass this input to `sg_backup`:
 
 Each command-family result contains `exitCode`, `output` (CLI stdout), and `diagnostics` (stderr). JSON mode is requested automatically, but some older CLI actions still return text. A nonzero exit code sets MCP `isError`; paused operations retain their existing recovery state. Request cancellation terminates the CLI process and its children. Typed review tools return JSON directly and report validation failures as MCP tool errors.
 
+## Settling operations that need attention
+
+An operation that stopped part way (a pull, a replay from backup, an import) stays on record until it finishes or someone dismisses it. `sg_activity` with `["attention"]` lists what needs attention as JSON: title, worktree path, detail, whether a replay is paused, whether the worktree is gone, and the ids of the records behind each item. `["handoff"]` returns the same items as instructions for an agent, with each one's checkpoint, shelves, completed steps and a suggested next step; the records' own text is fenced as data. The desktop app's Activity page copies the same text with **Copy agent instructions**.
+
+An agent should:
+
+1. Read `attention`, then each record with `sg_activity` and no arguments, and any shelves with `sg_shelf` `["show", "<id>"]`.
+2. Propose one step per operation, and run it only when the user agrees: `["resume", "<id>"]`, `sg_resolve` inside the worktree for a paused replay, `["recover", "<id>"]` to put a checkpoint's commits on a new branch, or `["dismiss", "<id>"]` to close the record. Dismiss runs nothing and keeps the checkpoint and every shelf. `close` remains an alias of `dismiss`.
+3. Never publish to SVN, drop shelves, delete branches or remove worktrees as part of recovery.
+
 ## Addressing review feedback
 
 Eight additional typed tools expose review feedback. `sg_review_inbox` takes an absolute `workingDirectory` anywhere inside the root and optional `state` (`open`, `resolved`, `all`), `query`, `worktree` (branch name or path), and `offset`. The other tools take an absolute registered `worktree` path:

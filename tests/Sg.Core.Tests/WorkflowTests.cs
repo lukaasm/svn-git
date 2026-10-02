@@ -219,6 +219,24 @@ public sealed class WorkflowTests : IDisposable
     }
 
     [Fact]
+    public void Attention_reads_a_gone_worktree_and_hands_it_to_an_agent_as_data()
+    {
+        var path = Branch();
+        var record = Operations.TrackReplay(f.Root, "Get changes from backup", path, "Incoming backup: feature");
+        f.Root.Git.WorktreeRemove(path, force: true);
+        var records = Operations.List(f.Root);
+        var item = Assert.Single(Recovery.Read(f.Root, records));
+        Assert.True(item.Gone);
+        Assert.Equal([record.Id], item.Operations!);
+        var text = Recovery.Handoff(f.Root, [item], records);
+        Assert.Contains($"--- BEGIN OPERATION {record.Id} ---", text);
+        Assert.Contains("State: worktree gone", text);
+        Assert.Contains($"Checkpoint: {record.Checkpoint} at {record.Before}", text);
+        Assert.Contains("sg activity dismiss <id>", text);
+        Assert.Contains("do not publish to SVN", text);
+    }
+
+    [Fact]
     public void Temporary_cleanup_rechecks_age_contents_and_pending_operations()
     {
         var path = Branch();

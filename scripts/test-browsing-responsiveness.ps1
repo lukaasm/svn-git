@@ -45,9 +45,12 @@ function Select-Element($element) { $element.GetCurrentPattern([System.Windows.A
 function Set-Field([string]$id, [string]$value) { (Wait-For "$id input" { Find $id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Entries {
     @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.AndCondition]::new(
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Steps and checkpoint'),
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true))))
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)) |
+        Where-Object { $_.Current.AutomationId -like 'ActivityEntry_*' })
+}
+function Attention-Cards {
+    @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        Where-Object { $_.Current.AutomationId -like 'Attention_*' })
 }
 function Backup-Cards {
     @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
@@ -123,12 +126,14 @@ try {
     @{ activityMilliseconds = $watch.ElapsedMilliseconds; renderedEntries = $count; replayedRecords = 240 } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'timings.json')
     if ($count -ne 20) { throw "Activity created $count entries; expected a first page of 20." }
+    # The one unfinished record sits above the history, not somewhere down the timeline.
+    if ((Attention-Cards).Count -ne 1) { throw 'The unfinished record is not listed under Needs attention.' }
     $checkpoint = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Branch checkpoint: Not recorded')
     if ($window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $checkpoint)) { throw 'Collapsed checkpoint details were rendered eagerly.' }
     (Entries)[0].GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     $null = Wait-For 'checkpoint details load on demand' { $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $checkpoint) }
     Start-UiScenario 'Search includes records beyond the first page and has an empty state'
-    Set-Field 'ActivitySearch' 'replay-239'
+    Set-Field 'ActivitySearch' 'replay-238'
     $null = Wait-For 'older matching record' { (Entries).Count -eq 1 -and (Find 'ActivityResults').Current.Name -like '*1 of 1*' }
     Set-Field 'ActivitySearch' 'no-record-matches-this-search'
     $null = Wait-For 'search empty state' { (Find 'ActivityResults').Current.Name -like 'No matching*' }
@@ -170,15 +175,19 @@ try {
     $null = Wait-For 'activity scroll retained' { $scroll.Current.VerticalScrollPercent -gt 50 }
     @{ before = $beforeScroll; after = $scroll.Current.VerticalScrollPercent } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'scroll.json')
     $scroll.SetScrollPercent(-1, 0)
-    Set-Field 'ActivitySearch' ''
-    (Find 'ActivityFilter').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-    $attention = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Needs attention'))
-    Select-Element $attention
-    $null = Wait-For 'attention filter finds older unfinished record' { (Entries).Count -eq 1 }
+    Set-Field 'ActivitySearch' 'replay-238'
+    $null = Wait-For 'search narrows the history' { (Entries).Count -eq 1 }
     Invoke-Element (Find 'ActivityRefresh')
-    $null = Wait-For 'refresh keeps the history filter' { (Entries).Count -eq 1 -and (Find 'ActivityResults').Current.Name -like '*1 of 1*' }
+    $null = Wait-For 'refresh keeps the search' { (Entries).Count -eq 1 -and (Find 'ActivityResults').Current.Name -like '*1 of 1*' }
+    if ((Attention-Cards).Count -ne 1) { throw 'Searching the history hid what needs attention.' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'activity-filter.png')
+    Start-UiScenario 'Dismiss closes what needs attention and keeps the record'
+    Invoke-Element (Wait-For 'dismiss on the attention card' { Find 'ActivityDismiss' })
+    Invoke-Element (Wait-For 'dismiss confirmation' { Find 'PrimaryButton' })
+    $null = Wait-For 'nothing needs attention after dismissing' { (Attention-Cards).Count -eq 0 -and !(Find 'ActivityDismiss') }
+    $dismissed = Get-Content -Raw -LiteralPath $created[239] | ConvertFrom-Json
+    if ($dismissed.phase -ne 'cancelled') { throw "Dismiss left the record in phase $($dismissed.phase)." }
+    Save-UiWindow $window (Join-Path $ArtifactDirectory 'activity-dismissed.png')
     Start-UiScenario 'Large backup catalogs render in batches and retain their filter and loaded cards'
     Invoke-Element (Find 'NavigationViewBackButton')
     $watch.Restart()

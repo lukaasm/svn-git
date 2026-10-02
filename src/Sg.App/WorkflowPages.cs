@@ -123,8 +123,6 @@ public abstract class WorkflowPage : SgPage
         Body.Children.Add(expander);
         return expander;
     }
-    // Keep the persisted operation kind stable for older installations and recovery records.
-    protected static string OperationTitle(OperationRecord record) => record.Kind == "Update from SVN" ? "Pull from SVN" : record.Kind;
 }
 
 public sealed class UpdateBranchPage : WorkflowPage
@@ -185,14 +183,14 @@ public sealed class UpdateBranchPage : WorkflowPage
         Body.Children.Clear(); _submit = null;
         if (state is OperationRecord record)
         {
-            Title = OperationTitle(record); Branch = record.Branch; Checkout = record.Checkout;
+            Title = record.Title; Branch = record.Branch; Checkout = record.Checkout;
             // A removed worktree leaves nothing git can resume or plan in; dismissing is the only way on.
             var gone = !record.Terminal && Operations.WorktreeGone(root, record.Path);
             Text(record.PhaseLabel, true);
             Text(gone ? Operations.GoneDetail : record.Detail ?? (record.Terminal ? "The recorded operation is complete. Its checkpoint and recovery shelves remain available." : "The operation can resume from its recorded step."));
             async Task Dismiss()
             {
-                if (await Dialogs.ConfirmDismiss(this, [OperationTitle(record) + " · " + record.Branch]))
+                if (await Dialogs.ConfirmDismiss(this, [record.Title + " · " + record.Branch]))
                     await Execute("Dismiss operation", () => _lastResult = Operations.FinishReview(root, record.Id));
             }
             var actions = Body.Children.Count;

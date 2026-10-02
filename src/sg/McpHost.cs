@@ -18,7 +18,7 @@ static class McpHost
         ("transfer", "Preview copying checkout edits into a worktree. arguments: target --from checkout [--new] [--move] [--file path]... . Apply with --yes --version token from the preview. Conflicts block writes; move cleans source only after successful transfer. Recovery shelves retain both versions.", false),
         ("rename", "Preview renaming a local worktree folder and branch. arguments: worktree new-name. Apply with --yes --version token. Keeps edits, shelves and code review comments; old remote backups remain available.", false),
         ("branch-update", "Preview a pull from the server, or execute with --yes. Saves edits, syncs, replays and recovers edits.", false),
-        ("activity", "List durable operations, or resume|close|recover operation-id. Recovery creates a separate branch.", false),
+        ("activity", "List durable operations; attention lists what needs attention, handoff prepares agent instructions for it. Or resume|dismiss|recover operation-id: dismiss closes a record and keeps its checkpoint and shelves, recover creates a separate branch.", false),
         ("review", "Review readiness: status|run|ready. Also inbox across the root, files, file path, threads, thread id, comment, reply, resolve, reopen, export and handoff. Prefer typed review tools for comments.", false),
         ("storage", "List storage or preview archive: archive branch; --yes executes the preview after core validation.", false),
         ("handoff", "Backup coverage, receipt preview and restore rehearsal. arguments: coverage [-o file], preview file, test file.", false),

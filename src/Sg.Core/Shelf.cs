@@ -592,7 +592,7 @@ public static class Shelf
     public static void Drop(SgRoot root, string id)
     {
         using var operation = root.Lock();
-        if (Operations.ProtectsShelf(root, id)) throw new SgException("This shelf belongs to a pending operation. Finish or close that operation first.");
+        if (Operations.ProtectsShelf(root, id)) throw new SgException("This shelf belongs to a pending operation. Finish or dismiss that operation in Activity first.");
         var info = Read(root, id);
         root.Git.DeleteRef(info.RefName);
         root.Log.Info("dropped shelf " + info.Id);

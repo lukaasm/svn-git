@@ -35,6 +35,8 @@ public sealed class OperationRecord
         OperationPhase.Completed => "Complete",
         _ => "Closed; preserved work retained"
     };
+    /// <summary>What the operation is called on screen. The stored kind stays as older records wrote it.</summary>
+    public string Title => Kind == "Update from SVN" ? "Pull from SVN" : Kind;
     public bool Terminal => Phase is OperationPhase.Completed or OperationPhase.Cancelled;
     public string Checkpoint => "refs/sg/operations/" + Id;
     public string Action => Phase == OperationPhase.NeedsReview ? "Review saved edits" : Terminal ? "View result" : "Resume";
@@ -175,7 +177,7 @@ public static class Operations
         if (record.Kind != "Update from SVN")
         {
             if (Conflicts.HasPending(git, record.Path)) { record.Detail = "Open the replay to review, continue, or skip its current step."; Save(root, record); return record; }
-            return Review(root, record, "The replay is no longer active. Review the current branch before closing this record; no command was repeated.");
+            return Review(root, record, "The replay is no longer active. Review the current branch, then dismiss this record; no command was repeated.");
         }
         var co = root.Checkout(record.Checkout);
         try
@@ -296,7 +298,7 @@ public static class Operations
             Move(root, record, aborted ? OperationPhase.Cancelled : OperationPhase.Completed, aborted ? "Replay cancelled. Current files and existing recovery shelves retained." : "Replay finished. Inspect saved edits in Shelves if recovery required review.");
             return record;
         }
-        if (aborted) return Review(root, record, "Replay cancelled. SVN remains synced; recover saved edits from the shelves, then close this operation.");
+        if (aborted) return Review(root, record, "Replay cancelled. SVN remains synced; recover saved edits from the shelves, then dismiss this operation.");
         return Resume(root, record.Id);
     }
 

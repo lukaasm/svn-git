@@ -86,8 +86,14 @@ static class Cli
                 break;
             case "activity":
                 if (action == "resume") Json(Operations.Resume(root, a.Arg(1, "operation id")));
-                else if (action == "close") Json(Operations.FinishReview(root, a.Arg(1, "operation id")));
+                else if (action is "dismiss" or "close") Json(Operations.FinishReview(root, a.Arg(1, "operation id")));
                 else if (action == "recover") Console.WriteLine(Operations.RestoreCheckpoint(root, a.Arg(1, "operation id")));
+                else if (action == "attention") Json(Recovery.Read(root, Operations.List(root)));
+                else if (action == "handoff")
+                {
+                    var records = Operations.List(root);
+                    Json(new { instructions = Recovery.Handoff(root, Recovery.Read(root, records), records) });
+                }
                 else Json(Operations.List(root));
                 break;
             case "review":
@@ -150,7 +156,8 @@ static class Cli
                  --yes --version <preview-token>     apply that preview; conflicts and changed files are refused
             sg rename <worktree> <new-name>          preview renaming a worktree folder and branch together
                  --yes --version <preview-token>     apply the reviewed rename; keeps edits, shelves and comments
-            sg activity [resume|close|recover <id>]  durable operations and separate recovery branches
+            sg activity [resume|dismiss|recover <id>] durable operations and separate recovery branches
+            sg activity attention | handoff          what needs attention, or instructions to paste into an AI agent
             sg review [status|run|ready]              version-bound checks and readiness; configure reviewChecks in .sg/sg.json
             sg review inbox [--state open|resolved|all] [--search text] [--worktree name-or-path] [--offset N]
             sg review files|file <path>|threads|thread <id>

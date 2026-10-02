@@ -796,7 +796,7 @@ public static class Ops
         if (wt == null && git.RefSha("refs/heads/" + branch) == null) throw new SgException("no such branch: " + branch);
         if (wt != null)
         {
-            if (Operations.Pending(root, wt.Path) != null) throw new SgException("An unfinished operation protects this worktree. Finish or close it in Activity first.");
+            if (Operations.Pending(root, wt.Path) != null) throw new SgException("An unfinished operation protects this worktree. Finish or dismiss it in Activity first.");
             if (Directory.Exists(wt.Path))
             {
                 if (!force && !git.IsClean(wt.Path))

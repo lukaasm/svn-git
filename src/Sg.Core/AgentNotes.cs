@@ -37,7 +37,9 @@ public static class AgentNotes
                commit, or `sg resolve abort` to put it all back. You are an agent: settle the files yourself,
                keeping both sides' changes, rather than running `sg resolve auto`, which starts another one.
             5. Do not push to {server}. When the work is committed and ready, say so. A human runs `sg push`.
-            6. `sg status --json` shows every checkout and worktree.
+            6. `sg status --json` shows every checkout and worktree. `sg activity attention` shows sg operations that
+               stopped part way, and `sg activity handoff` explains each one with the commands that settle it.
+               Propose a step before you resume, dismiss or recover one.
             7. Do not create files with reserved Windows names: nul, con, aux, prn, com1-9, lpt1-9.
             {(j.Count > 0 ? note : "")}
 

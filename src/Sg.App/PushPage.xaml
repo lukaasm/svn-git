@@ -60,13 +60,18 @@
                 <!-- The commits take the height they need, up to a cap; the files get the rest. -->
                 <Grid x:Name="ChangesPane" Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
                     <!-- Pick where the push stops. The list is newest first, so picking a line sends
-                         everything from the snapshot up to it and leaves the lines above it behind. -->
-                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="6">
+                         everything from the snapshot up to it and leaves the lines above it behind.
+                         "This commit" acts on the picked line alone: send it on its own, write only it
+                         into the checkout, shelve it, or discard it. A right click on any line does the same. -->
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
                         <TextBlock x:Name="CommitsHeader" Text="Commits on the branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"
-                                   Grid.ColumnSpan="2" TextTrimming="CharacterEllipsis" />
+                                   Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" />
                         <TextBox x:Name="CommitFilterBox" Grid.Row="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12"
                                  ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. It changes the list, never what gets pushed: the cut stays on the commit it was on." />
-                        <Button x:Name="AllCommitsButton" Grid.Row="1" Grid.Column="1" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
+                        <local:IconButton x:Name="CommitActionsButton" Grid.Row="1" Grid.Column="1" Glyph="&#xE712;" Text="This commit" Click="CommitActions_Click"
+                                          FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False"
+                                          ToolTipService.ToolTip="The picked commit alone: push it on its own, write only it into the checkout, shelve it, or discard it. Right click any commit for the same." />
+                        <Button x:Name="AllCommitsButton" Grid.Row="1" Grid.Column="2" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
                                 IsEnabled="False"
                                 ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
                     </Grid>
@@ -74,7 +79,7 @@
                         <Grid>
                             <local:RowListView x:Name="Commits" SelectionMode="Single" SelectionChanged="Commits_SelectionChanged"
                                                ItemTemplate="{StaticResource CommitRowTemplate}"
-                                               ToolTipService.ToolTip="Pick the last commit this push should send. Everything under it goes with it; everything above it stays on the branch for the next push." />
+                                               ToolTipService.ToolTip="Pick the last commit this push should send. Everything under it goes with it; everything above it stays on the branch for the next push. Right click a commit to send it on its own, shelve it, or discard it." />
                             <local:Skeleton x:Name="CommitsSkeleton" RowCount="4" Badges="False" Visibility="Collapsed" />
                         </Grid>
                     </Border>

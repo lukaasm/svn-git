@@ -17,14 +17,14 @@ Example client configuration (use an absolute executable path if `sg` is not on 
 
 ## Command coverage
 
-All 23 public CLI command families have an MCP tool. Their full action/option surface is passed as an **argument array**, without a shell. `workingDirectory` must be an existing absolute directory; use the relevant worktree for worktree operations. `--root` remains available in the array. These tools execute operations with the server process's permissions; connect a trusted local client.
+All 26 public CLI command families have an MCP tool. Their full action/option surface is passed as an **argument array**, without a shell. `workingDirectory` must be an existing absolute directory; use the relevant worktree for worktree operations. `--root` remains available in the array. These tools execute operations with the server process's permissions; connect a trusted local client.
 
 | Area | MCP tools |
 | --- | --- |
 | Setup | `sg_init`, `sg_checkout`, `sg_branch`, `sg_rm` |
 | SVN | `sg_sync`, `sg_branch_update`, `sg_rebase`, `sg_resolve`, `sg_push`, `sg_server_branch`, `sg_server_checkout` |
-| Saved work | `sg_shelve`, `sg_shelf`, `sg_export`, `sg_import`, `sg_backup` |
-| Workflows | `sg_activity`, `sg_review`, `sg_storage`, `sg_handoff` |
+| Saved work | `sg_shelve`, `sg_shelf`, `sg_discard`, `sg_export`, `sg_import`, `sg_backup` |
+| Workflows | `sg_transfer`, `sg_rename`, `sg_activity`, `sg_review`, `sg_storage`, `sg_handoff` |
 | Inspection and installation | `sg_status`, `sg_version`, `sg_update` |
 
 `sg_help` returns the full command reference. Tool annotations conservatively identify command families that can write, even when an individual invocation is a preview. Existing preview/execution switches (`--check`, `--yes`, `--dry-run`, etc.) are unchanged. The existing agent SVN-publish restriction is enforced; MCP does not grant publish permission or answer interactive prompts.

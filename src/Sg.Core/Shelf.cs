@@ -253,6 +253,34 @@ public static class Shelf
     }
 
     /// <summary>
+    /// A shelf of what one commit changed, made without touching the worktree: its parent is the commit's
+    /// own parent and its tree is the commit's. Putting it back is a restore like any other, so the change
+    /// merges into files that moved on since. This is how a commit leaves a branch without being lost.
+    /// </summary>
+    internal static ShelfInfo FromCommit(SgRoot root, string worktree, string branch, string sha, string parent, string title)
+    {
+        var git = root.Git;
+        var files = git.DiffNameStatus(git.Store, parent, sha, renames: false);
+        if (files.Count == 0)
+            throw new SgException("that commit changes no file, so there is nothing to put on the shelf. Discard it instead.");
+        var info = new ShelfInfo
+        {
+            Title = Title(title),
+            Kind = "worktree",
+            Checkout = SafeBase(root, branch),
+            Branch = branch,
+            Path = worktree,
+            Base = parent,
+            Created = DateTimeOffset.Now,
+            Files = files.Select(e => new ShelfFile(e.Path, e.Status.ToString())).ToList(),
+        };
+        info.Id = FreeId(root, info.Title);
+        info.Sha = git.CommitTree(git.TreeOf(sha), parent, Message(info));
+        git.UpdateRef(info.RefName, info.Sha);
+        return info;
+    }
+
+    /// <summary>
     /// The commit itself. It is built in an index of its own: a checkout's index is the snapshot's, kept
     /// warm so the next snapshot costs a walk instead of rehashing 173k files, and a shelf must not disturb it.
     /// </summary>

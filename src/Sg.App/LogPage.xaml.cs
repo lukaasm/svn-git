@@ -36,7 +36,7 @@ public sealed partial class LogPage : SgPage
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(item);
         });
-        // The same three the buttons under the list offer, on the rows they act on. The buttons say what
+        // The same actions the buttons under the list offer, on the rows they act on. The buttons say what
         // is possible and stay where the eye can find them; the menu is for the hand that is already on
         // the commit. Both run exactly the same code, and the menu is greyed by the same rules.
         Commits.RightTapped += (_, e) =>
@@ -54,6 +54,16 @@ public sealed partial class LogPage : SgPage
             Add(menu, "Reword", "", RewordButton.IsEnabled, "Reword",
                 "Replace this commit with one that has the same files and a new message.",
                 () => Reword_Click(this, null!));
+            menu.Items.Add(new MenuFlyoutSeparator());
+            Add(menu, "Push this commit alone", "\uE898", PushAloneButton.IsEnabled, "Push this commit alone",
+                $"Open Push to {_server} with only this commit going, cherry picked onto the snapshot. The commits under and over it stay on the branch.",
+                () => PushAlone_Click(this, null!));
+            Add(menu, "Shelve this commit", "\uE7B8", ShelveCommitButton.IsEnabled, "Shelve this commit",
+                "Take this commit off the branch and put what it changed on the shelf, like git stash. The commits over it are replayed.",
+                () => ShelveCommit_Click(this, null!));
+            Add(menu, "Discard this commit", "\uE74D", DiscardCommitButton.IsEnabled, "Discard this commit",
+                "Take this commit out of the branch. The commits over it are replayed, and Activity keeps the branch as it was.",
+                () => DiscardCommit_Click(this, null!));
             menu.ShowAt(Commits, new FlyoutShowOptions { Position = e.GetPosition(Commits) });
             e.Handled = true;
         };
@@ -245,6 +255,13 @@ public sealed partial class LogPage : SgPage
         TaskGate.SetHelp(SquashButton, cannotRewrite ?? (own.Count < 2 ? "Select two or more consecutive local commits to squash." : !run ? "Select consecutive commits with no gaps in the branch history." : "Combine the selected commits and replay the commits above them."));
         TaskGate.SetHelp(RewordButton, cannotRewrite ?? (own.Count != 1 ? "Select exactly one local commit to change its message." : "Change the selected commit's message without changing its files."));
         TaskGate.SetHelp(RevertButton, snapshot ? $"Select local commits only. Snapshots of {_server} cannot be reverted here." : own.Count == 0 ? "Select one or more local commits to revert." : "Add a commit that reverses the selected changes.");
+        // One commit alone, from anywhere on the branch: sent on its own, shelved, or discarded.
+        var one = own.Count == 1 && !snapshot;
+        PushAloneButton.IsEnabled = ShelveCommitButton.IsEnabled = DiscardCommitButton.IsEnabled = one;
+        var pickOne = cannotRewrite ?? (one ? null : "Select exactly one local commit.");
+        ActionHint.SetHelp(PushAloneButton, pickOne ?? $"Open Push to {_server} with only this commit going, cherry picked onto the snapshot.");
+        TaskGate.SetHelp(ShelveCommitButton, pickOne ?? "Take this commit off the branch and onto the shelf; the commits over it are replayed.");
+        TaskGate.SetHelp(DiscardCommitButton, pickOne ?? "Take this commit out of the branch; the commits over it are replayed.");
         SquashLabel.Text = run ? $"Squash {own.Count}" : "Squash";
         RevertLabel.Text = own.Count > 1 && !snapshot ? $"Revert {own.Count}" : "Revert";
         PickHint.Text = all.Any(r => r.IsGroup) ? "Press that line to open the snapshots, or leave it folded."
@@ -415,6 +432,7 @@ public sealed partial class LogPage : SgPage
         {
             MessageDialog.Remember(msg);
             Message.Text = "";
+            ResultBar.ActionButton = null;
             ResultBar.Severity = InfoBarSeverity.Success;
             ResultBar.Message = verb == "Revert"
                 ? $"{Short(r.Sha)} on {r.Branch} takes {(r.Replaced == 1 ? "that commit" : r.Replaced + " commits")} back out. Nothing went to {_server}."
@@ -424,6 +442,34 @@ public sealed partial class LogPage : SgPage
             ResultBar.IsOpen = true;
         }
         await LoadAsync(select: r?.Sha);
+    }
+
+    /// <summary>
+    /// Push to SVN with only the picked commit going, cherry picked onto the snapshot. The push page shows
+    /// what would go and runs every check before anything is sent, so this only opens it.
+    /// </summary>
+    void PushAlone_Click(object sender, RoutedEventArgs e)
+    {
+        var picked = Picked();
+        if (picked.Count != 1) return;
+        var sha = picked[0].Sha;
+        Go(() => new PushPage(_worktree, only: sha) { Checkout = Checkout, Branch = Branch }, "push:" + _worktree);
+    }
+
+    async void ShelveCommit_Click(object sender, RoutedEventArgs e) => await TakeOutAsync(shelve: true);
+
+    async void DiscardCommit_Click(object sender, RoutedEventArgs e) => await TakeOutAsync(shelve: false);
+
+    /// <summary>One commit off the branch, onto the shelf or thrown away, then the list read again from the new tip.</summary>
+    async Task TakeOutAsync(bool shelve)
+    {
+        var picked = Picked();
+        if (picked.Count != 1) return;
+        ResultBar.IsOpen = false;
+        var r = await CommitTakeOut.RunAsync(this, Pane, _worktree, picked[0], Branch, shelve);
+        if (r == null) return;
+        CommitTakeOut.Show(ResultBar, Pane, _worktree, r, _server, () => LoadAsync());
+        await LoadAsync();
     }
 
     static string Short(string sha) => sha.Length >= 8 ? sha[..8] : sha;

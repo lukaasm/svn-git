@@ -114,9 +114,9 @@ public sealed class McpTests
         using var client = new Client(apphost); await client.Init();
         var list = await client.Call("tools/list", new { });
         var names = list.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
-        foreach (var command in "init checkout sync branch transfer rename branch-update activity review storage handoff rebase resolve push rm shelve shelf export import backup status server-branch server-checkout update version".Split(' '))
+        foreach (var command in "init checkout sync branch transfer rename branch-update activity review storage handoff rebase resolve push rm discard shelve shelf export import backup status server-branch server-checkout update version".Split(' '))
             Assert.Contains("sg_" + command.Replace('-', '_'), names);
-        Assert.Equal(34, names.Count);
+        Assert.Equal(35, names.Count);
         Assert.Contains("sg_review_inbox", names);
         var version = await client.Tool("sg_version", new { workingDirectory = path });
         Assert.Equal(0, version.GetProperty("exitCode").GetInt32());

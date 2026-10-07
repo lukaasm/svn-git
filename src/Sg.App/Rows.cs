@@ -878,6 +878,8 @@ public enum PushFix
     Rebase,
     /// <summary>Take the checkout's edits on exactly the colliding files out of the way, and keep them.</summary>
     Shelve,
+    /// <summary>Send the commit picked to go alone together with the commits under it, which it builds on.</summary>
+    WithUnder,
 }
 
 /// <summary>

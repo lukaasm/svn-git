@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Sg.Core;
 
 public sealed class PushGroup
@@ -47,6 +49,7 @@ public static class PushChecks
     public const string Paths = "paths";
     public const string Collisions = "collisions";
     public const string Checkout = "checkout";
+    public const string Alone = "alone";
 }
 
 public sealed class PushPreview
@@ -70,6 +73,13 @@ public sealed class PushPreview
 
     /// <summary>How many of them go now, counting up from the snapshot. The rest stay on the branch.</summary>
     public int Sending;
+
+    /// <summary>
+    /// The one commit going on its own, cherry picked onto the snapshot, when the push was scoped to one.
+    /// Empty for a push of the oldest few or of the whole branch. Tip is then the commit that carries it
+    /// on the snapshot, and Base the snapshot, so what is shown is exactly what the server gets.
+    /// </summary>
+    public string Picked = "";
 
     /// <summary>Only part of the branch is going, so a commit will be left holding the rest.</summary>
     public bool Partial => Sending < Commits.Count;
@@ -107,8 +117,12 @@ public enum PushFinish
 /// the branch for the next push. It counts rather than naming a commit on purpose: a push rebases the
 /// branch onto a fresh snapshot before it sends anything, and that gives every commit a new sha. A
 /// count says the same thing before and after, as long as the rebase is clean, which a push demands.
+///
+/// Or one commit from anywhere on the branch, on its own: a cherry pick onto the server. That one is
+/// named, because a count cannot pick a commit out of the middle, and it is found again after the
+/// rebase by what a rebase keeps: its author, its author date and its message.
 /// </summary>
-public readonly record struct PushScope(int? FirstCommits)
+public readonly record struct PushScope(int? FirstCommits, string? Picked = null)
 {
     /// <summary>Everything between the snapshot and the branch tip. What a push has always sent.</summary>
     public static PushScope Whole => new((int?)null);
@@ -116,7 +130,10 @@ public readonly record struct PushScope(int? FirstCommits)
     /// <summary>The oldest n commits of the branch, counting up from the snapshot.</summary>
     public static PushScope First(int n) => new(n);
 
-    public bool Partial => FirstCommits.HasValue;
+    /// <summary>One of the branch's own commits on its own. The commits under and over it stay on the branch.</summary>
+    public static PushScope Only(string commit) => new(null, commit);
+
+    public bool Partial => FirstCommits.HasValue || Picked != null;
 }
 
 /// <summary>What one batch did: one SVN commit per working copy it touched.</summary>
@@ -141,6 +158,12 @@ public sealed class PushResult
     /// <summary>Every working copy commit of every batch, in the order they were made.</summary>
     public List<PushGroup> Groups => Batches.SelectMany(b => b.Groups).ToList();
     public bool AllCommitted;
+
+    /// <summary>
+    /// Everything that was asked for went, and the rest of the branch stays on it on purpose: a push of
+    /// the oldest few commits, or of one on its own. Not a failure, though not the whole branch either.
+    /// </summary>
+    public bool OnPurpose;
 
     /// <summary>The change was written into the checkout and left there. Nothing reached the server.</summary>
     public bool AppliedOnly;
@@ -204,6 +227,16 @@ public static class Push
                 throw new SgException($"message for {(wc.Length == 0 ? "root" : wc)} too short: {clean.Length} chars, the minimum is {root.Config.MinMessageLength}");
             own[PathUtil.Rel(wc)] = clean;
         }
+        // A commit picked to go on its own is named before the rebase, and found again after it by what
+        // a rebase keeps, since the rebase gives it a new sha.
+        (CommitIdentity Who, int At)? picking = null;
+        if (scope.Picked != null)
+        {
+            if (batches is { Count: > 0 }) throw new SgException("a push of one commit on its own goes as one batch");
+            var mine = OwnCommits(git, worktree, snapRef);
+            var sha = PickedCommit(git, worktree, mine, scope.Picked);
+            picking = (git.IdentityOf(sha), mine.IndexOf(sha));
+        }
         using var _ = root.Lock();
 
         // 1. Fresh base, branch on top of it.
@@ -213,14 +246,31 @@ public static class Push
             throw new SgException("the branch does not rebase cleanly on the new snapshot. Run 'sg rebase', then 'sg resolve auto --all' to have the resolver settle it"
                                   + " or 'sg resolve' to pick a version per file, then push again.\n" + rb.Output);
         var tip = git.HeadSha(worktree);
+        var snapSha = git.RefSha(snapRef) ?? throw new SgException("no snapshot for " + co.Name);
         var whole = git.DiffNameStatus(worktree, snapRef, tip);
         if (whole.Count == 0) throw new SgException("nothing to push: the branch equals " + snapRef);
+
+        // The picked commit, cherry picked onto the snapshot in memory. What goes to the server is that
+        // commit's own change and nothing the commits under it wrote; one that needs them is refused here,
+        // before anything is written.
+        string? picked = null, alone = null;
+        if (picking is { } p)
+        {
+            var mine = OwnCommits(git, worktree, snapRef);
+            picked = Refind(git, mine, p.Who, p.At);
+            var (tree, conflicted) = Alone(git, snapSha, picked);
+            if (tree == null)
+                throw new SgException($"{Short(picked)} \"{git.Subject(picked)}\" does not go to {server} without the commits under it: it changes what they wrote in "
+                                      + string.Join(", ", conflicted.Take(5)) + (conflicted.Count > 5 ? ", ..." : "")
+                                      + ". Nothing was sent. Push it together with them, or push those first.");
+            alone = git.CommitTree(tree, snapSha, git.Body(picked).TrimEnd() + "\n");
+        }
 
         // 2. Refusals, over the whole push rather than per batch. A path this tool must not write is a
         // reason to send nothing at all, not a reason to stop after the second of five SVN commits.
         // "The whole push" is what is actually going: a commit further up a branch that is only partly
         // being sent has no say in whether the part below it can go.
-        var lastSent = LastSent(git, worktree, snapRef, tip, batches, scope);
+        var lastSent = alone ?? LastSent(git, worktree, snapRef, tip, batches, scope);
         var going = lastSent == tip ? whole : git.DiffNameStatus(worktree, snapRef, lastSent);
         if (going.Count == 0) throw new SgException("nothing to push: the commits picked change no files");
         var scan = vcs.Scan(root, co);
@@ -237,7 +287,7 @@ public static class Push
             return LeaveInCheckout(root, co, vcs, log, branch, lastSent, going, wcs);
 
         // 3. The plan: what goes out, in how many pieces, under which messages.
-        var plan = ResolveBatches(root, git, worktree, snapRef, tip, batches, message, interactive, editMessage, scope);
+        var plan = ResolveBatches(root, git, worktree, snapRef, tip, batches, message, interactive, editMessage, scope, alone);
 
         var result = new PushResult { Branch = branch, Checkout = co.Name, Message = plan[0].Message };
 
@@ -314,8 +364,39 @@ public static class Push
         // Everything from here on did not reach SVN: the batch that failed, or the tail of a push that
         // was asked to stop early. Both are the same shape, and both are rebuilt onto the new snapshot.
         var sent = stoppedAfter ?? plan[^1].Through;
-        var sentAll = stoppedAfter == null && git.ResolveCommit(worktree, plan[^1].Through) == tip;
-        if (sentAll)
+        var sentAll = picked == null && stoppedAfter == null && git.ResolveCommit(worktree, plan[^1].Through) == tip;
+        if (picked != null)
+        {
+            // Every commit of the branch stays but the one that went, and stays the commit it was. When
+            // only part of it went, it stays too: replayed onto a snapshot that has that part, it keeps
+            // what has not gone yet.
+            var went = stoppedAfter == null;
+            var rest = git.RevList(worktree, snapSha + ".." + tip).AsEnumerable().Reverse().Where(c => !went || c != picked).ToList();
+            if (rest.Count == 0)
+            {
+                git.ResetHard(worktree, snapRef);
+                result.AllCommitted = true;
+                result.BranchState = "reset to " + snapRef;
+            }
+            else if (Ops.ReplayOnto(git, sync.Sha, rest) is { StoppedAt: null } replay)
+            {
+                git.ResetHard(worktree, replay.Tip);
+                var left = git.CountCommits(snapRef, "refs/heads/" + branch);
+                result.BranchState = (went ? "sent " + Short(picked) + " on its own; " : "")
+                                     + (left == 1 ? "1 commit still on the branch" : $"{left} commits still on the branch");
+            }
+            else
+            {
+                result.Warnings.Add("the commits that were not pushed do not replay onto the new snapshot cleanly, so they were kept as one commit instead");
+                var restPaths = git.DiffNameStatus(worktree, snapSha, tip)
+                    .SelectMany(e => e.OldPath != null ? new[] { e.Path, e.OldPath } : new[] { e.Path })
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                var sha = PendingCommit(root, co, sync.Sha, tip, restPaths, "not pushed yet: the rest of the branch\n\n" + plan[^1].Message + "\n");
+                git.ResetHard(worktree, sha);
+                result.BranchState = "pending commit " + sha[..10] + " holds what did not go";
+            }
+        }
+        else if (sentAll)
         {
             git.ResetHard(worktree, snapRef);
             result.AllCommitted = true;
@@ -337,6 +418,8 @@ public static class Push
             git.ResetHard(worktree, sha);
             result.BranchState = "pending commit " + sha[..10] + " holds what did not go";
         }
+        // A push that stopped where it was asked to stop sent all it was asked for. Only a failure is not that.
+        result.OnPurpose = !result.AllCommitted && stoppedAfter == null;
         Operations.Receipt(root, "Push to " + server, worktree, result.Batches.SelectMany(x => x.Groups).Select(g => g.Wc + ": " + g.State + (g.Label.Length == 0 ? "" : " " + g.Label)).Append(result.BranchState));
         return result;
     }
@@ -435,6 +518,7 @@ public static class Push
     /// </summary>
     static int Sending(PushScope scope, int onBranch)
     {
+        if (scope.Picked != null) return Math.Min(1, onBranch);
         if (!scope.Partial) return onBranch;
         var n = scope.FirstCommits!.Value;
         if (n < 1) throw new SgException("a push of the first commits needs at least one of them");
@@ -448,11 +532,13 @@ public static class Push
     /// </summary>
     static List<PushBatch> ResolveBatches(SgRoot root, Git git, string worktree, string snapRef, string tip,
         IReadOnlyList<PushBatch>? batches, string? message, bool interactive, Func<string, string?>? editMessage,
-        PushScope scope)
+        PushScope scope, string? alone = null)
     {
         if (batches == null || batches.Count == 0)
         {
-            var through = LastSent(git, worktree, snapRef, tip, null, scope);
+            // A commit going on its own goes as the commit that carries it on the snapshot, whose
+            // message is its own, so the message offered is that commit's alone.
+            var through = alone ?? LastSent(git, worktree, snapRef, tip, null, scope);
             var msg = CleanMessage(message ?? git.LogBodies(snapRef, through));
             if (message == null && interactive && editMessage != null)
                 msg = CleanMessage(editMessage(msg) ?? throw new SgException("push aborted: empty message"));
@@ -484,6 +570,66 @@ public static class Push
         var which = count > 1 ? $"batch {index}: " : "";
         throw new SgException($"{which}message too short: {msg.Length} chars, the minimum is {root.Config.MinMessageLength}");
     }
+
+    // ---- one commit on its own ----
+
+    /// <summary>The branch's own commits, oldest first: everything between the snapshot and HEAD.</summary>
+    static List<string> OwnCommits(Git git, string worktree, string snapRef)
+    {
+        var own = git.RevList(worktree, snapRef + "..HEAD");
+        own.Reverse();
+        return own;
+    }
+
+    /// <summary>The commit a push of one commit names, checked to be the branch's own: a snapshot already is on the server.</summary>
+    static string PickedCommit(Git git, string worktree, List<string> own, string rev)
+    {
+        var sha = git.ResolveCommit(worktree, rev) ?? throw new SgException("no such commit: " + rev);
+        if (!own.Contains(sha, StringComparer.OrdinalIgnoreCase))
+            throw new SgException($"{Short(sha)} is not one of this branch's own commits. A snapshot is on the server already, and another branch's commit is that branch's to push.");
+        return sha;
+    }
+
+    /// <summary>
+    /// The picked commit again after the rebase renamed it: the one with the same author, author date and
+    /// message. Two such commits are told apart by where they sat, counting up from the snapshot.
+    /// </summary>
+    static string Refind(Git git, List<string> own, CommitIdentity who, int at)
+    {
+        var body = who.Body.TrimEnd();
+        var hits = own.Where(c => git.IdentityOf(c) is var i && SameAuthor(i.Author, who.Author) && i.Body.TrimEnd() == body).ToList();
+        if (hits.Count == 1) return hits[0];
+        if (hits.Count > 1 && at >= 0 && at < own.Count && hits.Contains(own[at])) return own[at];
+        throw new SgException(hits.Count == 0
+            ? "the commit picked to go on its own is not on the branch after the rebase: what it changed came in from the server already, so the rebase dropped it. Nothing was sent."
+            : "the commit picked to go on its own cannot be told apart from another one with the same author, date and message after the rebase. Nothing was sent. Pick it again.");
+    }
+
+    /// <summary>
+    /// The same person at the same moment. The date is compared as a moment rather than as text: git
+    /// writes a zone of +0000 as Z in one place and as +00:00 in another.
+    /// </summary>
+    static bool SameAuthor(Author a, Author b) =>
+        a.Name == b.Name && a.Email == b.Email
+        && (a.Date == b.Date
+            || DateTimeOffset.TryParse(a.Date, CultureInfo.InvariantCulture, DateTimeStyles.None, out var x)
+            && DateTimeOffset.TryParse(b.Date, CultureInfo.InvariantCulture, DateTimeStyles.None, out var y)
+            && x == y && x.Offset == y.Offset);
+
+    /// <summary>
+    /// The tree of the snapshot with one commit's own change in it, and nothing the commits under it
+    /// wrote: a cherry pick, in memory. Null with the paths it could not settle when the change needs
+    /// those commits under it.
+    /// </summary>
+    static (string? Tree, List<string> Conflicted) Alone(Git git, string snap, string commit)
+    {
+        var under = git.ParentOf(commit) ?? throw new SgException(Short(commit) + " has nothing under it");
+        if (under == snap) return (git.TreeOf(commit), []);
+        var m = git.MergeTree(under, snap, commit);
+        return m.Clean ? (m.Tree, []) : (null, m.Conflicted);
+    }
+
+    static string Short(string sha) => sha.Length >= 8 ? sha[..8] : sha;
 
     /// <summary>One group per working copy. A rename across working copies becomes delete plus add.</summary>
     static List<PushGroup> GroupsFor(List<DiffEntry> entries, List<string> wcs, CheckoutConfig co)
@@ -538,8 +684,9 @@ public static class Push
     }
 
     /// <summary>
-    /// What a push would send, without sending it. scope narrows it to the oldest few commits; the list
-    /// of commits is the whole branch either way, so a window can show what stays as well as what goes.
+    /// What a push would send, without sending it. scope narrows it to the oldest few commits, or to one
+    /// commit on its own; the list of commits is the whole branch either way, so a window can show what
+    /// stays as well as what goes.
     /// </summary>
     public static PushPreview Preview(SgRoot root, string worktree, PushScope scope = default)
     {
@@ -562,18 +709,38 @@ public static class Push
                 var sending = Sending(scope, commits.Count);
                 // The oldest `sending` commits, so the boundary is the one that many up from the snapshot.
                 var tip = sending >= commits.Count ? branchTip : commits[commits.Count - sending].Sha;
+                var from = snap;
+                var picked = "";
+                List<string> conflicted = [];
+                if (scope.Picked != null)
+                {
+                    // One commit on its own: its change cherry picked onto the snapshot, so the files and
+                    // the diff are what the server would get. One that needs the commits under it shows
+                    // its own change instead, and a check that says why it cannot go.
+                    picked = PickedCommit(git, worktree, OwnCommits(git, worktree, snap), scope.Picked);
+                    var (tree, bad) = Alone(git, snap, picked);
+                    if (tree != null) tip = git.CommitTree(tree, snap, git.Body(picked).TrimEnd() + "\n");
+                    else
+                    {
+                        tip = picked;
+                        from = git.ParentOf(picked)!;
+                        conflicted = bad;
+                    }
+                }
                 var ((ancestor, message), (meta, entries)) = Fan.Two(
-                    () => Fan.Two(() => git.IsAncestor(snap, branchTip), () => CleanMessage(git.LogBodies(snap, tip))),
-                    () => Fan.Two(() => SnapshotMeta.Parse(git.Body(snap)), () => git.DiffNameStatus(worktree, snap, tip)));
-                return (Commits: commits, Sending: sending, Tip: tip, Ancestor: ancestor, Message: message, Meta: meta, Entries: entries);
+                    () => Fan.Two(() => git.IsAncestor(snap, branchTip), () => CleanMessage(picked.Length > 0 ? git.Body(picked) : git.LogBodies(snap, tip))),
+                    () => Fan.Two(() => SnapshotMeta.Parse(git.Body(snap)), () => git.DiffNameStatus(worktree, from, tip)));
+                return (Commits: commits, Sending: sending, Tip: tip, From: from, Picked: picked, Conflicted: conflicted,
+                    Ancestor: ancestor, Message: message, Meta: meta, Entries: entries);
             });
         var p = new PushPreview
         {
-            Branch = branch, Checkout = co.Name, Worktree = worktree, Base = snap, Tip = read.Tip, BranchTip = branchTip,
+            Branch = branch, Checkout = co.Name, Worktree = worktree, Base = read.From, Tip = read.Tip, BranchTip = branchTip,
             Dirty = dirty,
             NeedsRebase = !read.Ancestor,
             Commits = read.Commits,
             Sending = read.Sending,
+            Picked = read.Picked,
             DefaultMessage = read.Message,
         };
         var wcs = WorkingCopies(read.Meta.Externals.Keys);
@@ -610,6 +777,8 @@ public static class Push
             Check(PushChecks.Paths, "Paths sg may write", unwritable, "none skipped, no reserved names"),
             Check(PushChecks.Collisions, "No local edit in the checkout on the same file", collisions, "no collisions"),
         ];
+        if (p.Picked.Length > 0)
+            p.Checks.Add(Check(PushChecks.Alone, "Goes without the commits under it", read.Conflicted, "its change applies onto svn/" + co.Name + " on its own"));
         // A checkout that cannot take a commit at all says why. SVN always can, so it shows no row for it.
         var blockers = vcs.WriteBlockers(root, co);
         if (blockers.Count > 0)

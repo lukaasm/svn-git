@@ -43,6 +43,7 @@ static class Cli
                 "resolve" => ResolveCmd(a, log),
                 "push" => PushCmd(a, log),
                 "rm" => Rm(a, log),
+                "discard" => Discard(a, log),
                 "shelve" => Shelve(a, log),
                 "shelf" => ShelfCmd(a, log),
                 "export" => ExportCmd(a, log),
@@ -180,8 +181,17 @@ static class Cli
             sg push [-m <message>] [--check]          commit this branch to the server: one SVN commit per repository,
                                                       or one git commit pushed to the clone's branch
                                                       --check only runs the pre-checks, and exits 10 when one fails
+                 [--only <commit>] [--apply]          --only sends one of the branch's own commits on its own, cherry picked
+                                                      onto the server from anywhere on the branch; the commits under and
+                                                      over it stay. --apply writes the change into the checkout and stops:
+                                                      nothing is committed and the branch does not move
             sg rm <branch> [--force]                  remove a worktree and its branch
+            sg discard <commit>                       take one of this branch's own commits out of it, from anywhere on it;
+                                                      the commits over it are replayed. Activity keeps the branch as it was:
+                                                      sg activity recover <id> makes a branch of it again
             sg shelve [-m <title>] [<path>...]        put local changes aside, here or in the named paths
+            sg shelve --commit <commit> [-m <title>]  stash one of this branch's own commits: take it out of the branch and
+                                                      onto the shelf; sg shelf restore puts it back as uncommitted changes
             sg shelf [list] [--json]                  what is on the shelf
             sg shelf show <id> [--json]               one shelf: where it came from, and every file in it
             sg shelf restore <id> [--keep]            put it back where it came from. --keep leaves it on the shelf
@@ -631,10 +641,12 @@ static class Cli
         var root = FindRoot(a, log);
         var msg = a.Get("-m", "--message");
 
+        var scope = a.Get("--only") is { } only ? PushScope.Only(only) : PushScope.Whole;
+
         // --check answers the same questions the Push window shows, without writing anything.
         if (a.Has("--check"))
         {
-            var p = Push.Preview(root, Environment.CurrentDirectory);
+            var p = Push.Preview(root, Environment.CurrentDirectory, scope);
             if (a.Has("--json")) Json(new { p.Branch, p.Checkout, p.Ready, p.Checks });
             else
             {
@@ -648,7 +660,23 @@ static class Cli
         var interactive = !Console.IsInputRedirected
                           && Environment.GetEnvironmentVariable("CLAUDECODE") == null
                           && Environment.GetEnvironmentVariable("CURSOR_AGENT") == null;
-        var r = Push.Run(root, Environment.CurrentDirectory, msg, interactive, text => EditMessage(root, text));
+        // --apply stops before the server: the change is written into the checkout and left there.
+        if (a.Has("--apply"))
+        {
+            var applied = Push.Run(root, Environment.CurrentDirectory, msg, interactive, scope: scope, finish: PushFinish.LeaveInCheckout);
+            var ok = applied.Groups.All(g => g.State == "applied");
+            if (a.Has("--json")) Json(applied);
+            else
+            {
+                foreach (var g in applied.Groups)
+                    Console.WriteLine($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State,-10}" + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
+                Console.WriteLine(ok ? $"written into {applied.Checkout}, not committed. {applied.BranchState}" : "nothing was applied: " + applied.BranchState);
+                Warn(applied.Warnings);
+            }
+            return ok ? 0 : 2;
+        }
+
+        var r = Push.Run(root, Environment.CurrentDirectory, msg, interactive, text => EditMessage(root, text), scope: scope);
         if (a.Has("--json")) Json(r);
         else
         {
@@ -658,10 +686,12 @@ static class Cli
                                   + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
             Console.WriteLine(r.AllCommitted
                 ? $"pushed. {r.Branch} now equals svn/{r.Checkout} at {r.Label}"
-                : $"partly pushed. {r.Branch} keeps the rest: {r.BranchState}");
+                : r.OnPurpose
+                    ? $"pushed the commit picked, at {r.Label}. {r.Branch}: {r.BranchState}"
+                    : $"partly pushed. {r.Branch} keeps the rest: {r.BranchState}");
             Warn(r.Warnings);
         }
-        return r.AllCommitted ? 0 : 2;
+        return r.AllCommitted || r.OnPurpose ? 0 : 2;
     }
 
     static string? EditMessage(SgRoot root, string initial)
@@ -741,6 +771,16 @@ static class Cli
     static int Shelve(Args a, ILog log)
     {
         var root = FindRoot(a, log);
+        if (a.Get("--commit") is { } commit)
+        {
+            if (a.Pos.Count > 0) throw new SgException("a commit goes onto the shelf whole: name the commit, or paths, not both");
+            var taken = Ops.Stash(root, Environment.CurrentDirectory, commit, a.Get("-m", "--message"));
+            if (a.Has("--json")) { Json(taken); return 0; }
+            Console.WriteLine($"{taken.Shelf}: {taken.Commit[..10]} \"{taken.Subject}\" is off {taken.Branch} and on the shelf"
+                              + (taken.Replayed > 0 ? $"; {taken.Replayed} commit(s) over it were replayed" : ""));
+            Console.WriteLine("put it back, uncommitted, with: sg shelf restore " + taken.Shelf);
+            return 0;
+        }
         var title = a.Get("-m", "--message") ?? "shelf";
         var paths = a.Pos.Count > 0 ? a.Pos.Select(p => Rel(root, p)).ToList() : null;
         var res = Shelf.Save(root, Environment.CurrentDirectory, paths, title);
@@ -869,6 +909,18 @@ static class Cli
         var co = root.CheckoutContaining(full);
         var top = co?.Path ?? root.Git.Toplevel(Environment.CurrentDirectory);
         return PathUtil.RelativeTo(top, full);
+    }
+
+    /// <summary>One of the branch's own commits taken out of it. Recoverable: Activity keeps the branch as it was.</summary>
+    static int Discard(Args a, ILog log)
+    {
+        var root = FindRoot(a, log);
+        var r = Ops.Discard(root, Environment.CurrentDirectory, a.Arg(0, "commit"));
+        if (a.Has("--json")) { Json(r); return 0; }
+        Console.WriteLine($"discarded {r.Commit[..10]} \"{r.Subject}\" from {r.Branch}"
+                          + (r.Replayed > 0 ? $"; {r.Replayed} commit(s) over it were replayed" : ""));
+        Console.WriteLine("changed your mind? sg activity recover " + r.Operation + " makes a branch of it as it was");
+        return 0;
     }
 
     static int Rm(Args a, ILog log)
@@ -1185,7 +1237,7 @@ sealed class Args
     static readonly HashSet<string> ValueOpts = new(StringComparer.OrdinalIgnoreCase)
     {
         "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared", "--kind",
-        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only",
+        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only", "--commit",
         "--worktree", "--body-file", "--body", "--file", "--side", "--lines", "--actor", "--expected-revision", "--version", "--request-id", "--state", "--offset",
     };
 

@@ -335,6 +335,18 @@ public static class Operations
         return record;
     }
 
+    /// <summary>
+    /// A finished record of a rewrite, whose checkpoint keeps the branch tip from before it. History lists
+    /// it like any other, and Restore commits to a new branch brings that tip back as a branch of its own.
+    /// </summary>
+    public static OperationRecord Checkpoint(SgRoot root, string kind, string branch, string path, string checkout, string head, IEnumerable<string> steps)
+    {
+        var record = new OperationRecord { Kind = kind, Branch = branch, Path = path, Checkout = checkout, Before = head, Phase = OperationPhase.Completed, Steps = steps.ToList() };
+        root.Git.UpdateRef(record.Checkpoint, head);
+        Save(root, record);
+        return record;
+    }
+
     public static void Receipt(SgRoot root, string kind, string path, IEnumerable<string> effects, bool required = false)
     {
         try

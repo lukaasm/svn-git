@@ -751,6 +751,117 @@ public static class Ops
         return new RewriteResult(r.Branch, git.HeadSha(r.Worktree), replaced);
     }
 
+    // ---- taking one commit out of the middle ----
+
+    /// <summary>
+    /// What taking one commit out of a branch left behind: the commit that went, the new tip, how many
+    /// commits above it were replayed, the shelf it went onto when it was shelved, and the Activity record
+    /// whose checkpoint still holds the branch as it was.
+    /// </summary>
+    public sealed record TakeOutResult(string Branch, string Commit, string Subject, string Tip, int Replayed, string? Shelf, string Operation);
+
+    /// <summary>
+    /// Takes one of the branch's own commits out of it, from anywhere on it. The commits above it are
+    /// replayed onto the one under it, and the branch moves there. Nothing is thrown away for good: the
+    /// branch as it was stays in Activity, which can make a new branch of it.
+    /// </summary>
+    public static TakeOutResult Discard(SgRoot root, string worktree, string sha) => TakeOut(root, worktree, sha, shelve: false, null);
+
+    /// <summary>
+    /// Takes one of the branch's own commits out of it and puts what it changed onto the shelf: git's stash,
+    /// for a commit. Putting the shelf back writes the change into the worktree, uncommitted, merging it
+    /// into files that moved on since, so the work can come back on this branch later or be dropped there.
+    /// </summary>
+    public static TakeOutResult Stash(SgRoot root, string worktree, string sha, string? title = null) => TakeOut(root, worktree, sha, shelve: true, title);
+
+    static TakeOutResult TakeOut(SgRoot root, string worktree, string sha, bool shelve, string? title)
+    {
+        using var operation = root.Lock();
+        var git = root.Git;
+        var full = git.ResolveCommit(worktree, sha) ?? throw new SgException("no such commit: " + sha);
+        var r = Check(root, worktree, [full]);
+        var subject = git.Subject(full);
+        var under = git.ParentOf(full) ?? throw new SgException($"{Short(full)} has nothing under it, so there is no branch to take it out of.");
+
+        // Everything above it, oldest first, put back onto the commit under it. In memory: a commit that
+        // will not go without the one taken out stops this before a single file or ref has moved.
+        var above = git.RevList(r.Worktree, full + "..HEAD");
+        above.Reverse();
+        var replay = ReplayOnto(git, under, above);
+        if (replay.StoppedAt != null)
+            throw new SgException($"{Short(replay.StoppedAt)} \"{git.Subject(replay.StoppedAt)}\" builds on what {Short(full)} changed, so it cannot stay without it"
+                + (replay.Conflicted.Count > 0 ? ": " + string.Join(", ", replay.Conflicted.Take(5)) + (replay.Conflicted.Count > 5 ? ", ..." : "") : "")
+                + ". Nothing was changed.\nTake that one out first, or revert " + Short(full) + " instead: a revert adds a commit and rewrites nothing.");
+
+        var before = git.HeadSha(r.Worktree);
+        var checkout = BaseCheckout(root, r.Branch).Name;
+        string? shelf = null;
+        if (shelve)
+            shelf = Shelf.FromCommit(root, r.Worktree, r.Branch, full, under, string.IsNullOrWhiteSpace(title) ? subject : title).Id;
+        var steps = new List<string>
+        {
+            (shelve ? "Shelved " : "Discarded ") + Short(full) + " \"" + subject + "\"",
+            above.Count == 1 ? "1 commit above it replayed" : above.Count + " commits above it replayed",
+        };
+        if (shelf != null) steps.Add("Shelf: " + shelf);
+        steps.Add("The branch as it was is this record's checkpoint.");
+        var record = Operations.Checkpoint(root, shelve ? "Shelve commit" : "Discard commit", r.Branch, r.Worktree, checkout, before, steps);
+        // The worktree is clean, Check made sure, so this only writes the files the commit had changed.
+        git.ResetHard(r.Worktree, replay.Tip);
+        root.Log.Info($"{(shelve ? "shelved" : "discarded")} {Short(full)} \"{subject}\" from {r.Branch}"
+            + (above.Count > 0 ? $", {above.Count} commit(s) above it replayed" : "") + (shelf != null ? ", shelf " + shelf : ""));
+        return new TakeOutResult(r.Branch, full, subject, replay.Tip, above.Count, shelf, record.Id);
+    }
+
+    /// <summary>
+    /// Undoes a discard or a shelve while nothing has happened on the branch since: the branch goes back
+    /// to the tip the record kept, and the shelf the commit went onto, if any, is dropped again. Once the
+    /// branch has moved on, this refuses, and Activity can still make a branch of the tip as it was.
+    /// </summary>
+    public static void PutBack(SgRoot root, string worktree, TakeOutResult taken)
+    {
+        using var operation = root.Lock();
+        var git = root.Git;
+        worktree = git.Toplevel(worktree);
+        var before = git.RefSha(Operations.Read(root, taken.Operation).Checkpoint)
+                     ?? throw new SgException("the branch as it was is not kept any more, so it cannot be put back.");
+        if (git.HeadBranch(worktree) != taken.Branch || git.HeadSha(worktree) != taken.Tip)
+            throw new SgException($"{taken.Branch} has moved on since, so {Short(taken.Commit)} is not put back into it. Activity can still make a branch of it as it was.");
+        if (Conflicts.HasPending(git, worktree))
+            throw new SgException(Conflicts.Note(git, worktree) + ". " + Conflicts.Where);
+        if (!git.IsClean(worktree))
+            throw new SgException("the worktree has uncommitted changes: " + worktree + "\nCommit them or discard them first, then put the commit back.");
+        git.ResetHard(worktree, before);
+        if (taken.Shelf != null && git.RefSha(Shelf.RefPrefix + taken.Shelf) != null) Shelf.Drop(root, taken.Shelf);
+        root.Log.Info($"put {Short(taken.Commit)} \"{taken.Subject}\" back into {taken.Branch}");
+    }
+
+    /// <summary>
+    /// How a replay in memory came out: the last commit it made, and where it stopped when a commit would
+    /// not merge, with the paths that would not. Nothing points at what it made until a caller says so.
+    /// </summary>
+    internal sealed record Replayed(string Tip, string? StoppedAt, List<string> Conflicted);
+
+    /// <summary>
+    /// Replays commits onto another one without a worktree, oldest first: each one's own change, merged
+    /// three ways onto what the replay has made so far, under its own message and author. Nothing on disk
+    /// moves and no ref changes, so a commit that does not fit is a refusal and never a stopped rebase.
+    /// A commit that already sits where it would go is kept as it is.
+    /// </summary>
+    internal static Replayed ReplayOnto(Git git, string onto, IEnumerable<string> oldestFirst)
+    {
+        var tip = onto;
+        foreach (var c in oldestFirst)
+        {
+            var under = git.ParentOf(c) ?? throw new SgException("a commit with nothing under it cannot be replayed: " + Short(c));
+            if (under == tip) { tip = c; continue; }
+            var m = git.MergeTree(under, tip, c);
+            if (!m.Clean) return new Replayed(tip, c, m.Conflicted);
+            tip = git.CommitTreeAs(m.Tree, tip, git.Body(c).TrimEnd() + "\n", git.AuthorOf(c));
+        }
+        return new Replayed(tip, null, []);
+    }
+
     // ---- rebase ----
 
     public static RebaseResult Rebase(SgRoot root, string worktree, bool abortOnConflict = false, bool refreshShared = true)

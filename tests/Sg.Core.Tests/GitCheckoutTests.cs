@@ -252,6 +252,29 @@ public sealed class GitCheckoutTests : IDisposable
     }
 
     [Fact]
+    public void One_commit_from_the_middle_goes_to_the_server_on_its_own()
+    {
+        f.Setup();
+        var wt = Worktree();
+        GitFixture.Put(wt, "src/app.cpp", "int app = 35;\n");
+        CommitIn(wt, "first of three");
+        GitFixture.Put(wt, "README.md", "hello from the middle\n");
+        CommitIn(wt, "second of three");
+        var second = f.Root.Git.HeadSha(wt);
+        GitFixture.Put(wt, "src/new.cpp", "int fresh = 35;\n");
+        CommitIn(wt, "third of three");
+
+        var r = Push.Run(f.Root, wt, "only the middle one goes", interactive: true, scope: PushScope.Only(second));
+
+        Assert.All(r.Groups, g => Assert.Equal("committed", g.State));
+        Assert.Equal("hello from the middle", f.RemoteShow(f.RemoteHead(), "README.md"));
+        Assert.NotEqual("int app = 35;", f.RemoteShow(f.RemoteHead(), "src/app.cpp"));
+        Assert.False(f.RemoteHas(f.RemoteHead(), "src/new.cpp"));
+        Assert.Equal(["third of three", "first of three"],
+            f.Root.Git.RevList(wt, f.Root.SnapshotRef(f.Co) + "..HEAD").Select(f.Root.Git.Subject));
+    }
+
+    [Fact]
     public void Push_refuses_a_file_that_has_a_local_edit_in_the_clone()
     {
         f.Setup();

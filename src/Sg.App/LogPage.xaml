@@ -31,8 +31,8 @@
                     <TextBox x:Name="CommitFilterBox" Grid.Column="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12" MinWidth="200"
                              ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. Every word typed has to be found. The snapshots are searched too." />
                 </Grid>
-                <!-- Both of these rewrite the branch's own commits, so neither touches a snapshot: those
-                     are what SVN said, and the list refuses to pick one for them. -->
+                <!-- These act on the branch's own commits, so none touches a snapshot: those are what
+                     SVN said, and the list refuses to pick one for them. -->
                 <local:WrapRow Grid.Row="1" Spacing="6">
                     <local:TaskGate>
                     <Button x:Name="SquashButton" AutomationProperties.Name="Squash" Click="Squash_Click" IsEnabled="False"
@@ -49,6 +49,18 @@
                             ToolTipService.ToolTip="Add a commit on top that takes the picked commits back out. Nothing is rewritten, so this is safe even for a commit somebody else already has.">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE7A7;" FontSize="14" /><TextBlock x:Name="RevertLabel" Text="Revert" /></StackPanel>
                     </Button>
+                    </local:TaskGate>
+                    <!-- One commit from anywhere on the branch, alone: sent to the server on its own, put on
+                         the shelf, or thrown away. The commits under and over it stay on the branch. -->
+                    <local:IconButton x:Name="PushAloneButton" Text="Push alone" Glyph="&#xE898;" Click="PushAlone_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Open Push to SVN with only the picked commit going, cherry picked onto the snapshot. The commits under and over it stay on the branch." />
+                    <local:TaskGate>
+                    <local:IconButton x:Name="ShelveCommitButton" Text="Shelve" Glyph="&#xE7B8;" Click="ShelveCommit_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Take the picked commit off the branch and put what it changed on the shelf, like git stash. The commits over it are replayed." />
+                    </local:TaskGate>
+                    <local:TaskGate>
+                    <local:IconButton x:Name="DiscardCommitButton" Text="Discard" Glyph="&#xE74D;" Click="DiscardCommit_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Take the picked commit out of the branch. The commits over it are replayed, and Activity keeps the branch as it was." />
                     </local:TaskGate>
                     <TextBlock x:Name="PickHint" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                Text="Ctrl or Shift picks more than one." />

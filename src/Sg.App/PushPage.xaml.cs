@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Sg.Core;
 using Windows.System;
 
@@ -26,7 +27,8 @@ public sealed partial class PushPage : SgPage
 
     /// <summary>
     /// How much of the branch this push sends. Picking a commit in the list narrows it to the run that
-    /// ends there; everything above waits for the next push.
+    /// ends there; everything above waits for the next push. "This commit" narrows it to one commit on
+    /// its own, from anywhere on the branch, and everything under and over it waits.
     /// </summary>
     PushScope _scope = PushScope.Whole;
     // Remember the boundary itself across navigation and refresh. A count can name another commit
@@ -70,10 +72,12 @@ public sealed partial class PushPage : SgPage
     string _commitsTitle = "Commits on the branch";
     readonly CommitFilter _commitFilter;
 
-    public PushPage(string worktree)
+    /// <param name="only">A commit to send on its own, cherry picked from anywhere on the branch, rather than the whole branch.</param>
+    public PushPage(string worktree, string? only = null)
     {
         InitializeComponent();
         _worktree = worktree;
+        if (only != null) _scope = PushScope.Only(only);
         Title = "Push to SVN";
         Subtitle = worktree;
         _layout = new ReviewLayout(this, Body, ChangesPane, DiffPane, Splitter, CompactViews);
@@ -86,6 +90,14 @@ public sealed partial class PushPage : SgPage
         _commitFilter = new CommitFilter(CommitFilterBox, this);
         _commitFilter.Changed += ShowCommits;
         _scopeDebounce.Tick += (_, _) => { _scopeDebounce.Stop(); _ = LoadAsync(); };
+        // The menu is about the line under the pointer, and opening it moves nothing: the cut stays where
+        // it was, so reading the menu never starts a new preview.
+        Commits.RightTapped += (_, e) =>
+        {
+            if (RowUnder(e.OriginalSource as DependencyObject) is not { } row) return;
+            CommitMenu(row).ShowAt(Commits, new FlyoutShowOptions { Position = e.GetPosition(Commits) });
+            e.Handled = true;
+        };
         Message.Minimum = Session.Root?.Config.MinMessageLength ?? 10;
         // The shared text is needed while any working copy still uses it, and each own text has the same rule.
         Message.Needed = () => _repos.Count == 0 || _repos.Any(r => !r.Custom);
@@ -94,7 +106,9 @@ public sealed partial class PushPage : SgPage
         {
             var where = string.Join(", ", _repos.Select(r => r.Repo + (r.Custom ? " (own message)" : "")));
             var p = _preview;
-            var part = p is { Partial: true }
+            var part = p is { Picked.Length: > 0 }
+                ? $" It sends {Short(p.Picked)} on its own and leaves the other {p.Commits.Count - 1} commit(s) on the branch."
+                : p is { Partial: true }
                 ? $" It sends the oldest {p.Sending} of {p.Commits.Count} commits and leaves {p.Commits.Count - p.Sending} on the branch."
                 : "";
             if (_co?.IsGit == true)
@@ -219,8 +233,16 @@ public sealed partial class PushPage : SgPage
         // older read that landed late left the field describing something the screen no longer showed.
         var bundle = await request.Run(Pane, () =>
         {
-            var preview = Push.Preview(root, _worktree, scope);
+            PushPreview preview;
             var missing = false;
+            if (scope.Picked != null)
+            {
+                // One commit on its own. A push or a rewrite since may have taken it off the branch, or
+                // given it a new sha; then the whole branch is shown and a commit has to be picked again.
+                try { preview = Push.Preview(root, _worktree, scope); }
+                catch (SgException) { preview = Push.Preview(root, _worktree); missing = true; }
+            }
+            else preview = Push.Preview(root, _worktree, scope);
             if (through != null)
             {
                 var index = preview.Commits.FindIndex(c => c.Sha == through);
@@ -262,7 +284,9 @@ public sealed partial class PushPage : SgPage
         if (root.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(p.Checkout, StringComparison.OrdinalIgnoreCase)) is { } co) SayServer(co);
         var server = _co?.IsGit == true ? "server" : "SVN";
         Subtitle = $"{p.Branch}  →  svn/{p.Checkout}   {_worktree}";
-        Header.Text = _rangeMissing ? "Select the commits to push" : p.Partial
+        Header.Text = _rangeMissing ? "Select the commits to push" : p.Picked.Length > 0
+            ? $"Sending {Short(p.Picked)} on its own, {p.Entries.Count()} file(s), {p.Groups.Count} {server} commit(s)"
+            : p.Partial
             ? $"Sending {p.Sending} of {p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} {server} commit(s)"
             : $"{p.Commits.Count} commit(s), {p.Entries.Count()} file(s), {p.Groups.Count} {server} commit(s)";
         var warnings = new List<string>();
@@ -276,21 +300,30 @@ public sealed partial class PushPage : SgPage
         // rather than after the push has already synced and moved the checkout.
         WarnBar.ActionButton = p.NeedsRebase ? RebaseNowButton() : null;
         // Newest first, so the ones above the boundary are the ones that stay. The picked line is the
-        // last one going, which puts the selection right on the edge between the two halves.
+        // last one going, which puts the selection right on the edge between the two halves. A commit
+        // going on its own is the one line that goes, and every other line stays.
         var previousRows = _commitRows.ToDictionary(c => c.Sha, StringComparer.Ordinal);
+        var alone = p.Picked.Length > 0;
         _commitRows = p.Commits.Select((c, i) =>
         {
             var row = previousRows.GetValueOrDefault(c.Sha) ?? CommitRow.From(c, snapshot: false);
-            row.Staying = i < p.Commits.Count - p.Sending;
+            row.Staying = alone ? c.Sha != p.Picked : i < p.Commits.Count - p.Sending;
             return row;
         }).ToList();
-        _cut = _rangeMissing || _commitRows.Count == 0 ? -1 : p.Commits.Count - p.Sending;
-        _commitsTitle = p.Partial
+        _cut = _rangeMissing || _commitRows.Count == 0 ? -1
+            : alone ? p.Commits.FindIndex(c => c.Sha == p.Picked)
+            : p.Commits.Count - p.Sending;
+        _commitsTitle = alone
+            ? $"Commits on the branch, sending {Short(p.Picked)} on its own"
+            : p.Partial
             ? $"Commits on the branch, sending the oldest {p.Sending}"
             : "Commits on the branch";
         ShowCommits();
         AllCommitsButton.IsEnabled = _scope.Partial;
-        PartialBar.Message = p.Partial
+        PartialBar.Message = alone
+            ? $"Only {Short(p.Picked)} goes, cherry picked onto svn/{p.Checkout}: its own change and nothing the commits under it wrote. "
+              + $"The other {p.Commits.Count - 1} commit(s) stay on the branch, over the new snapshot, ready for the next push."
+            : p.Partial
             ? $"{p.Commits.Count - p.Sending} commit(s) stay on the branch, over the new snapshot, ready for the next push."
             : "";
         PartialBar.IsOpen = p.Partial;
@@ -373,6 +406,7 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     void Commits_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        CommitActionsButton.IsEnabled = Commits.SelectedItem is CommitRow;
         if (_binding || Commits.SelectedItem is not CommitRow picked) return;
         // Against every commit, not against the list on screen: with a filter on, the line under the
         // picked one may be ten commits down the branch, and all ten go with it.
@@ -406,6 +440,7 @@ public sealed partial class PushPage : SgPage
         if (Commits.ItemsSource is not IReadOnlyList<CommitRow> current || !current.SequenceEqual(shown)) Commits.ItemsSource = shown;
         Commits.SelectedItem = cut != null && shown.Contains(cut) ? cut : null;
         _binding = false;
+        CommitActionsButton.IsEnabled = Commits.SelectedItem is CommitRow;
         CommitsHeader.Text = _commitFilter.Active
             ? _commitsTitle + ", " + CommitFilter.Showing(shown.Count, _commitRows.Count)
             : _commitsTitle;
@@ -469,6 +504,12 @@ public sealed partial class PushPage : SgPage
                     row.ActionGlyph = "";
                     row.ActionTip = "Open the resolver and finish or abort the rebase that stopped, then read the push again.";
                     break;
+                case PushChecks.Alone:
+                    row.Fix = PushFix.WithUnder;
+                    row.ActionText = "Send it with them";
+                    row.ActionGlyph = "\uE898";
+                    row.ActionTip = "Send this commit together with every commit under it, the oldest first, so what it builds on goes too. The commits above it stay.";
+                    break;
                 case PushChecks.Collisions:
                     row.Paths = c.Paths;
                     row.Fix = PushFix.Shelve;
@@ -506,6 +547,7 @@ public sealed partial class PushPage : SgPage
             : _preview == null ? "Wait for the push preview to load."
             : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first."
             : _preview.Problems.Count > 0 ? string.Join("\n", _preview.Problems)
+            : _preview.Checks.FirstOrDefault(c => !c.Ok) is { } failing ? failing.Name + ": " + failing.Detail
             : "No eligible changes to push. Review the checks above.";
         ActionHint.SetHelp(PushButton, help);
         // The same checks gate both: what stops a push from writing stops an apply from writing too.
@@ -542,7 +584,8 @@ public sealed partial class PushPage : SgPage
         var gen = _generation;
         var scope = _scope;
         var where = string.Join(", ", p.Groups.Select(g => g.Wc.Length == 0 ? "root" : g.Wc));
-        var what = p.Partial ? $"the oldest {p.Sending} of {p.Commits.Count} commits" : "the branch";
+        var what = p.Picked.Length > 0 ? $"only {Short(p.Picked)}, cherry picked onto the snapshot,"
+            : p.Partial ? $"the oldest {p.Sending} of {p.Commits.Count} commits" : "the branch";
         if (!await Dialogs.Confirm(this, "Apply without committing",
             $"Write {what} into {p.Checkout} ({where}) and stop there? Nothing goes to the server, and {p.Branch} does not move. "
             + "They land as local changes to read and commit yourself.", "Apply")) return;
@@ -554,25 +597,33 @@ public sealed partial class PushPage : SgPage
             ResultBar.IsOpen = false;
             var r = await Runner.Run(Pane, "apply",
                 () => Push.Run(root, _worktree, null, interactive: true, scope: scope, finish: PushFinish.LeaveInCheckout));
-            if (r == null)
-            {
-                ResultBar.Severity = InfoBarSeverity.Error;
-                ResultBar.Message = "Nothing was applied. See the log.";
-                ResultBar.IsOpen = true;
-                SyncPushButton();
-                return;
-            }
-            foreach (var g in r.Groups)
-                Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State}" + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
-            var ok = r.Groups.All(g => g.State == "applied");
-            ResultBar.Severity = ok ? InfoBarSeverity.Success : InfoBarSeverity.Error;
-            ResultBar.Message = ok
-                ? $"Written into {r.Checkout}. Nothing went to the server and {r.BranchState}."
-                : "Nothing was applied: a working copy refused it, and what had been written was put back.";
-            ResultBar.ActionButton = ok ? ChangesButton() : null;
-            ResultBar.IsOpen = true;
+            ShowApplied(r);
+            if (r == null) return;
             await LoadAsync();
         }, restoreEnabled: false);
+    }
+
+    /// <summary>What an apply did, on the bar: written and where to read it, or nothing written and why.</summary>
+    void ShowApplied(PushResult? r)
+    {
+        if (r == null)
+        {
+            ResultBar.Severity = InfoBarSeverity.Error;
+            ResultBar.Message = "Nothing was applied. See the log.";
+            ResultBar.ActionButton = null;
+            ResultBar.IsOpen = true;
+            SyncPushButton();
+            return;
+        }
+        foreach (var g in r.Groups)
+            Pane.Append($"  {(g.Wc.Length == 0 ? "root" : g.Wc),-30} {g.State}" + (g.Error != null ? "  " + g.Error.Split('\n')[0] : ""));
+        var ok = r.Groups.All(g => g.State == "applied");
+        ResultBar.Severity = ok ? InfoBarSeverity.Success : InfoBarSeverity.Error;
+        ResultBar.Message = ok
+            ? $"Written into {r.Checkout}. Nothing went to the server and {r.BranchState}."
+            : "Nothing was applied: a working copy refused it, and what had been written was put back.";
+        ResultBar.ActionButton = ok ? ChangesButton() : null;
+        ResultBar.IsOpen = true;
     }
 
     /// <summary>Where what was written is read and sent: the same window an edit made by hand goes out through.</summary>
@@ -633,6 +684,21 @@ public sealed partial class PushPage : SgPage
             case PushFix.Shelve:
                 await Busy.During(sender, () => ShelveCollisionsAsync(row.Paths));
                 break;
+            case PushFix.WithUnder:
+            {
+                // The commit picked to go alone, and every commit under it: a cut at that commit.
+                var alone = _preview?.Picked ?? "";
+                var index = alone.Length == 0 ? -1 : _commitRows.FindIndex(c => c.Sha == alone);
+                if (index < 0) break;
+                var sending = _commitRows.Count - index;
+                _scope = sending >= _commitRows.Count ? PushScope.Whole : PushScope.First(sending);
+                _through = _scope.Partial ? alone : null;
+                _rangeMissing = false;
+                _cut = index;
+                ShowCommits();
+                await LoadAsync();
+                break;
+            }
         }
     }
 
@@ -651,12 +717,116 @@ public sealed partial class PushPage : SgPage
             : $"Put the checkout's own edits to {paths.Count} file(s) aside, so this push can write them.";
         var r = await ShelfActions.SaveAsync(this, Pane, co.Path, paths, what, "before pushing " + Branch);
         if (r == null) return;
+        ResultBar.ActionButton = null;
         ResultBar.Severity = r.LeftBehind.Count > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
         ResultBar.Message = $"{r.Shelf.Count} file(s) are on the shelf as \"{r.Shelf.Title}\". "
                             + "Push now, then put them back from Shelved changes on the checkout card." + ShelfActions.LeftBehindNote(r);
         ResultBar.IsOpen = true;
         await LoadAsync();
     }
+
+    // ---- one commit out of the middle ----
+
+    /// <summary>The commit row a right click landed on, walking up from whatever part of it was hit.</summary>
+    static CommitRow? RowUnder(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is FrameworkElement { DataContext: CommitRow row }) return row;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source);
+        }
+        return null;
+    }
+
+    /// <summary>"This commit": the menu for the picked line, under the button.</summary>
+    void CommitActions_Click(object sender, RoutedEventArgs e)
+    {
+        if (Commits.SelectedItem is CommitRow row && sender is FrameworkElement button) CommitMenu(row).ShowAt(button);
+    }
+
+    /// <summary>
+    /// What can be done with one commit alone, wherever it sits on the branch: send it on its own, write
+    /// only it into the checkout, put it on the shelf, or throw it away. The first changes what this page
+    /// sends and reads the preview again; the others run at once and read the branch again after.
+    /// </summary>
+    MenuFlyout CommitMenu(CommitRow row)
+    {
+        var target = _co != null ? ServerWords.Target(_co) : "SVN";
+        var menu = new MenuFlyout();
+        Item(menu, $"Push only {row.ShortSha}", "\uE898",
+            $"Send this commit to {target} on its own, cherry picked onto the snapshot: its own change and nothing the commits under it wrote. "
+            + "The commits under and over it stay on the branch. The page shows what would go before anything is sent.",
+            () => PickOnly(row));
+        Item(menu, $"Apply only {row.ShortSha} to the checkout", "\uE8DE",
+            "Write this commit's own change into the checkout as local changes, and nothing under or over it. Nothing is committed and the branch does not move.",
+            () => _ = ApplyOnlyAsync(row));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        Item(menu, "Shelve this commit", "\uE7B8",
+            "Take this commit off the branch and put what it changed on the shelf, like git stash. The commits over it are replayed. Put it back later from Shelved changes.",
+            () => _ = TakeOutAsync(row, shelve: true));
+        Item(menu, "Discard this commit", "\uE74D",
+            "Take this commit out of the branch. The commits over it are replayed. Activity keeps the branch as it was, and the bar offers Undo.",
+            () => _ = TakeOutAsync(row, shelve: false));
+        return menu;
+
+        static void Item(MenuFlyout into, string text, string glyph, string tip, Action run)
+        {
+            var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph } };
+            ToolTipService.SetToolTip(item, tip);
+            item.Click += (_, _) => run();
+            into.Items.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Narrows the push to one commit on its own. The preview is read again with that commit cherry picked
+    /// onto the snapshot, so the files, the diff and the checks are what the server would get, and a
+    /// commit that needs the ones under it says so before the button is pressed.
+    /// </summary>
+    void PickOnly(CommitRow row)
+    {
+        if (_scope.Picked == row.Sha && !_rangeMissing) return;
+        _scope = PushScope.Only(row.Sha);
+        _through = null;
+        _rangeMissing = false;
+        _cut = _commitRows.IndexOf(row);
+        ShowCommits();
+        _ = LoadAsync();
+    }
+
+    /// <summary>The same write as Apply without committing, for one commit alone, straight from the menu.</summary>
+    async Task ApplyOnlyAsync(CommitRow row)
+    {
+        var co = Checkout ?? _preview?.Checkout ?? "the checkout";
+        if (!await Dialogs.Confirm(this, "Apply only this commit",
+            $"Write {row.ShortSha} \"{row.Subject}\" into {co} on its own and stop there? Only what this commit changed is written, cherry picked onto the snapshot, "
+            + $"and nothing under or over it. Nothing goes to the server, and {Branch ?? "the branch"} does not move. It lands as local changes to read and commit yourself.",
+            "Apply")) return;
+        var root = Session.Require();
+        ResultBar.IsOpen = false;
+        var r = await Runner.Run(Pane, "apply",
+            () => Push.Run(root, _worktree, null, interactive: true, scope: PushScope.Only(row.Sha), finish: PushFinish.LeaveInCheckout));
+        ShowApplied(r);
+        await LoadAsync();
+    }
+
+    /// <summary>
+    /// Shelves or discards one commit. Every commit over it gets a new sha, so a cut or a pick that named
+    /// one of them would name nothing: the page starts again from the whole branch.
+    /// </summary>
+    async Task TakeOutAsync(CommitRow row, bool shelve)
+    {
+        ResultBar.IsOpen = false;
+        var r = await CommitTakeOut.RunAsync(this, Pane, _worktree, row, Branch ?? _preview?.Branch, shelve);
+        if (r == null) return;
+        _scope = PushScope.Whole;
+        _through = null;
+        _rangeMissing = false;
+        CommitTakeOut.Show(ResultBar, Pane, _worktree, r, _co != null ? ServerWords.Target(_co) : "SVN", LoadAsync);
+        await LoadAsync();
+    }
+
+    static string Short(string sha) => sha.Length >= 8 ? sha[..8] : sha;
 
     async void Push_Click(object sender, RoutedEventArgs e) => await PushAsync();
 
@@ -689,6 +859,7 @@ public sealed partial class PushPage : SgPage
             // Three outcomes, not two: everything went, the part that was picked went and the rest is
             // waiting on purpose, or something failed. Only the last of those is an error.
             var onPurpose = scope.Partial && r.Groups.All(g => g.State == "committed");
+            ResultBar.ActionButton = null;
             ResultBar.Severity = r.AllCommitted || onPurpose ? InfoBarSeverity.Success : InfoBarSeverity.Error;
             ResultBar.Message = r.AllCommitted
                 ? $"Pushed. {r.Branch} now equals svn/{r.Checkout} at {r.Label}."

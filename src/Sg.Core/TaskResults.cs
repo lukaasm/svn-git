@@ -15,9 +15,14 @@ public static class TaskResults
         BackupResult r => (r.Error != null ? TaskState.Failed : !r.Ok || r.Behind > 0 ? TaskState.NeedsAttention : TaskState.Succeeded,
             (r.Worktree == null ? "" : r.Worktree + ": ") + $"{r.Pushed} sent, {r.Rejected} rejected, {r.Behind} newer on backup, {r.Items.Count(i => i.Failed)} failed." + Note(r.Error)
             + string.Concat(r.Items.Where(i => i.Failed || i.Rejected || i.Behind).Select(i => Note(i.Name + ": " + i.Why)))),
-        PushResult r => (r.AllCommitted && r.Warnings.Count == 0 || r.AppliedOnly ? TaskState.Succeeded : TaskState.NeedsAttention,
+        PushResult r => ((r.AllCommitted || r.OnPurpose) && r.Warnings.Count == 0 || r.AppliedOnly ? TaskState.Succeeded : TaskState.NeedsAttention,
             r.AppliedOnly ? "Changes applied to the checkout; nothing committed to SVN."
-            : (r.AllCommitted ? $"{r.Branch}: committed to SVN at r{r.Revision}." : $"{r.Branch}: push stopped before every commit was sent. Review Push before continuing.") + Note(r.BranchState) + Note(string.Join("\n", r.Warnings))),
+            : (r.AllCommitted ? $"{r.Branch}: committed to SVN at r{r.Revision}."
+                : r.OnPurpose ? $"{r.Branch}: the commits picked are committed at {r.Label}; the rest stays on the branch."
+                : $"{r.Branch}: push stopped before every commit was sent. Review Push before continuing.") + Note(r.BranchState) + Note(string.Join("\n", r.Warnings))),
+        Ops.TakeOutResult r => (TaskState.Succeeded, r.Shelf != null
+            ? $"{r.Branch}: {Short(r.Commit)} \"{r.Subject}\" is on shelf {r.Shelf}."
+            : $"{r.Branch}: {Short(r.Commit)} \"{r.Subject}\" discarded. Activity keeps the branch as it was."),
         SyncResult r => (r.Conflicts + r.Warnings.Count > 0 ? TaskState.NeedsAttention : TaskState.Succeeded,
             $"{r.Checkout}: r{r.Revision}, {r.Conflicts} conflicts." + Note(string.Join("\n", r.Warnings))),
         BranchResult r => (TaskState.Succeeded, $"Worktree {r.Branch} is ready.\n{r.Path}"),
@@ -103,6 +108,8 @@ public static class TaskResults
         if (r.Shelves.Count > 0) lines.Add("Shelves recovered: " + string.Join(", ", r.Shelves) + ".");
         return (complete ? TaskState.Succeeded : TaskState.NeedsAttention, string.Join("\n", lines));
     }
+
+    static string Short(string sha) => sha.Length >= 8 ? sha[..8] : sha;
 
     static string Note(string? text) => string.IsNullOrWhiteSpace(text) ? "" : "\n" + text.Trim();
 }

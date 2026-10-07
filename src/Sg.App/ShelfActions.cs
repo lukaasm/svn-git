@@ -57,7 +57,7 @@ public static class ShelfActions
     /// The one question a shelf asks. A name, because a shelf is found again by reading a list of them,
     /// and a list of "shelf, shelf, shelf" is no list at all. Empty is allowed; it becomes "shelf".
     /// </summary>
-    static async Task<string?> AskName(object owner, string what, string suggested)
+    internal static async Task<string?> AskName(object owner, string what, string suggested)
     {
         var box = new TextBox
         {

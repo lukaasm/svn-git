@@ -107,7 +107,7 @@ Pull previews use labeled status colors for revisions and saved edits, with link
 
 **Code review** lets you leave file and line comments in a worktree, reply, resolve, or reopen them, and copy instructions for an agent. Comments and saved code context follow that worktree's backup and restore. **Review readiness** runs explicitly configured local checks and records the exact branch and feedback version reviewed; open comments prevent marking ready. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
 
-`sg mcp` exposes all 23 public CLI command families and eight typed code review tools through a local stdio MCP server, plus command help. **Review inbox** collects feedback across local worktrees, with status/worktree filters, search, live updates, and links straight to the annotated code. See [MCP setup, review workflow, and backup details](MCP.md).
+`sg mcp` exposes all 26 public CLI command families and eight typed code review tools through a local stdio MCP server, plus command help. **Review inbox** collects feedback across local worktrees, with status/worktree filters, search, live updates, and links straight to the annotated code. See [MCP setup, review workflow, and backup details](MCP.md).
 
 **Storage** previews conservative worktree archives and manual temporary-data cleanup. Loading and error states retain useful content, navigation, and retry actions. Ignored and linked content blocks archive; commit checkpoints are recoverable through Activity. Archive and cleanup confirmations list what will be changed. Reclaimable physical space is shown as unknown. `scripts/test-storage-feedback.ps1 -FixtureRoot <disposable-root>` verifies loading under a held repository lock and recovery from a read error on a private desktop.
 
@@ -233,6 +233,10 @@ cd D:\work\my-feature             # work with plain git, or let an agent work he
 sg rebase                         # put the branch on the latest SVN state
 sg resolve                        # when a rebase or an import stops: see it, pick a side, continue
 sg push -m "what and why"         # one svn commit per repository, then the branch resets to the snapshot
+sg push --only 1a2b3c4d           # one commit from anywhere on the branch, on its own; the others stay
+sg push --only 1a2b3c4d --apply   # the same commit written into the checkout, not committed
+sg shelve --commit 1a2b3c4d       # stash one commit: off the branch and onto the shelf
+sg discard 1a2b3c4d               # take one commit out of the branch; Activity keeps the branch as it was
 sg rm my-feature                  # when done
 sg sync                           # svn update the checkout and refresh svn/monorepo
 sg status --json                  # for agents and the GUI
@@ -266,7 +270,7 @@ when its state changes (its badges, what to do next, the button that does it, an
 Commit, Log, Push to SVN, Rebase, Open, Remove). Every action opens as a page under a breadcrumb, `monorepo > feature-x > Commit`, with back
 and forward over it (Alt+Left, Alt+Right, the mouse thumb buttons, Esc). The Explorer menu opens the same page in a window of its own.
 
-Pages: Commit (pick files, diff, message, discard), Push to SVN (commits, files per repository, checks, message), Log (branch commits and
+Pages: Commit (pick files, diff, message, discard), Push to SVN (commits, one commit on its own, files per repository, checks, message), Log (branch commits and
 snapshots, details, files, diffs), Resolve conflicts (whatever stopped, a rebase or an import: keep one side per file, continue, skip that one, abort), Changes in the checkout (edits made
 directly in the checkout: diff, revert, commit per working copy), SVN log and Incoming changes (per working copy, server diffs),
 New server branch (dry run, then create), Edit checkout, Add checkout, New root, Project monitor, Settings (every setting writes itself
@@ -343,6 +347,18 @@ nothing until the last step, and a cancelled `checkout add` unregisters itself a
 Push shows its six pre-checks before you press the button: worktree clean, no rebase in progress, something to push,
 change types SVN takes, paths sg may write, and no local edit in the checkout on the same file. All passing is one line;
 any failing one names the paths. `sg push --check` prints the same list and exits 10 when one fails.
+
+One commit from the middle of the branch can go on its own. On Push to SVN, pick it and press **This commit**, or right
+click any commit: **Push only** narrows the push to that commit, cherry picked onto the snapshot, so the files, the diff
+and the checks are exactly what the server gets, and the commits under and over it stay on the branch, still the
+commits they were, over the new snapshot. A seventh check, "Goes without the commits under it", names the files when
+the commit changes lines a commit under it wrote, and offers **Send it with them**. **Apply only** writes that one
+commit into the checkout as local changes and stops. **Shelve** takes the commit off the branch and onto the shelf, the
+way git stash puts work aside; putting the shelf back merges it into the worktree as uncommitted changes. **Discard**
+takes it out of the branch. Both replay the commits above it onto the one under it, refuse with nothing changed when
+one of those builds on it, keep the branch as it was in Activity, and offer Undo on the bar while nothing else has
+happened on the branch. Log offers the same three, **Push alone**, **Shelve** and **Discard**, beside Squash, Reword and
+Revert. `sg push --only <commit> [--apply]`, `sg shelve --commit <commit>` and `sg discard <commit>` do the same.
 
 Keyboard: `Ctrl+K` go to any checkout, worktree or page by name, `Ctrl+F` filter the files, `Ctrl+Shift+F` filter the commits on Log and Push, `Ctrl+Enter` commit or push, `F7` and `Shift+F7` next and previous change in the diff,
 `F5` refresh the overview, `Esc` close the window unless you are typing. The list is in Settings.

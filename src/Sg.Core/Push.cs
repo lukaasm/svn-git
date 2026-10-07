@@ -573,6 +573,18 @@ public static class Push
 
     // ---- one commit on its own ----
 
+    /// <summary>
+    /// Whether a commit is still one of the branch's own, the ones a push of one commit can name. A push or
+    /// a rewrite since it was picked can have sent it or renamed it, and a window asks before it previews.
+    /// </summary>
+    public static bool IsOwnCommit(SgRoot root, string worktree, string commit)
+    {
+        var git = root.Git;
+        worktree = git.Toplevel(worktree);
+        var snapRef = root.SnapshotRef(Ops.BaseCheckout(root, git.CurrentBranch(worktree)));
+        return git.ResolveCommit(worktree, commit) is { } sha && OwnCommits(git, worktree, snapRef).Contains(sha, StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>The branch's own commits, oldest first: everything between the snapshot and HEAD.</summary>
     static List<string> OwnCommits(Git git, string worktree, string snapRef)
     {

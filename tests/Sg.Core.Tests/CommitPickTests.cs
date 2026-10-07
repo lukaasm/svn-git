@@ -308,6 +308,18 @@ public sealed class CommitPickTests : IDisposable
     }
 
     [Fact]
+    public void A_commit_picked_before_a_rewrite_is_no_longer_the_branch_s_own()
+    {
+        Branch();
+        var three = Sha("the third commit");
+        Assert.True(Push.IsOwnCommit(f.Root, _wt, three[..10]));
+        Ops.Discard(f.Root, _wt, Sha("the second commit"));
+        Assert.False(Push.IsOwnCommit(f.Root, _wt, three));
+        Assert.True(Push.IsOwnCommit(f.Root, _wt, Sha("the third commit")));
+        Assert.False(Push.IsOwnCommit(f.Root, _wt, Git.RefSha(f.Root.SnapshotRef(f.Co))!));
+    }
+
+    [Fact]
     public void A_commit_that_is_not_the_branch_s_own_is_refused()
     {
         Branch();

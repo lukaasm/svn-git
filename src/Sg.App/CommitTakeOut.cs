@@ -55,12 +55,19 @@ public static class CommitTakeOut
         {
             undo.IsEnabled = false;
             var ok = await Runner.Run(pane, "undo", () => Ops.PutBack(Session.Require(), worktree, r));
-            bar.ActionButton = null;
-            bar.Severity = ok ? InfoBarSeverity.Success : InfoBarSeverity.Error;
-            bar.Message = ok
-                ? $"{what} is back on {r.Branch}, where it was."
-                : $"{what} was not put back. See the log; Activity still keeps the branch as it was.";
-            bar.IsOpen = true;
+            // The bar may be saying something newer by now; that is not this button's to overwrite.
+            if (ReferenceEquals(bar.ActionButton, undo))
+            {
+                bar.Severity = ok ? InfoBarSeverity.Success : InfoBarSeverity.Error;
+                bar.Message = ok
+                    ? $"{what} is back on {r.Branch}, where it was."
+                    : $"{what} was not put back. See the log; Activity still keeps the branch as it was.";
+                bar.IsOpen = true;
+                // A refusal can pass, a task holding the root for one, and PutBack checks the tip again,
+                // so the button stays for another try. Once it worked there is nothing left to undo.
+                if (ok) bar.ActionButton = null;
+                else undo.IsEnabled = true;
+            }
             await reload();
         };
         bar.ActionButton = undo;

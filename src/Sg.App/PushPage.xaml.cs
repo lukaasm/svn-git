@@ -235,12 +235,12 @@ public sealed partial class PushPage : SgPage
         {
             PushPreview preview;
             var missing = false;
-            if (scope.Picked != null)
+            if (scope.Picked != null && !Push.IsOwnCommit(root, _worktree, scope.Picked))
             {
-                // One commit on its own. A push or a rewrite since may have taken it off the branch, or
-                // given it a new sha; then the whole branch is shown and a commit has to be picked again.
-                try { preview = Push.Preview(root, _worktree, scope); }
-                catch (SgException) { preview = Push.Preview(root, _worktree); missing = true; }
+                // One commit on its own, which a push or a rewrite since has taken off the branch or given
+                // a new sha: the whole branch is shown, and a commit has to be picked again.
+                preview = Push.Preview(root, _worktree);
+                missing = true;
             }
             else preview = Push.Preview(root, _worktree, scope);
             if (through != null)
@@ -822,7 +822,14 @@ public sealed partial class PushPage : SgPage
         _scope = PushScope.Whole;
         _through = null;
         _rangeMissing = false;
-        CommitTakeOut.Show(ResultBar, Pane, _worktree, r, _co != null ? ServerWords.Target(_co) : "SVN", LoadAsync);
+        // Undo renames the same commits back, so a cut or a pick made in between names nothing either.
+        CommitTakeOut.Show(ResultBar, Pane, _worktree, r, _co != null ? ServerWords.Target(_co) : "SVN", () =>
+        {
+            _scope = PushScope.Whole;
+            _through = null;
+            _rangeMissing = false;
+            return LoadAsync();
+        });
         await LoadAsync();
     }
 
@@ -847,6 +854,7 @@ public sealed partial class PushPage : SgPage
             var r = await Runner.Run(Pane, "push", () => Push.Run(root, _worktree, msg, interactive: true, messageFor: own, scope: scope));
             if (r == null)
             {
+                ResultBar.ActionButton = null;
                 ResultBar.Severity = InfoBarSeverity.Error;
                 ResultBar.Message = "The push did not run. See the log.";
                 ResultBar.IsOpen = true;

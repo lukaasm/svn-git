@@ -52,8 +52,8 @@
                     </local:TaskGate>
                     <!-- One commit from anywhere on the branch, alone: sent to the server on its own, put on
                          the shelf, or thrown away. The commits under and over it stay on the branch. -->
-                    <local:IconButton x:Name="PushAloneButton" Text="Push alone" Glyph="&#xE898;" Click="PushAlone_Click" IsEnabled="False"
-                            ToolTipService.ToolTip="Open Push to SVN with only the picked commit going, cherry picked onto the snapshot. The commits under and over it stay on the branch." />
+                    <local:ActionHint><local:IconButton x:Name="PushAloneButton" Text="Push alone" Glyph="&#xE898;" Click="PushAlone_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Open Push to SVN with only the picked commit going, cherry picked onto the snapshot. The commits under and over it stay on the branch." /></local:ActionHint>
                     <local:TaskGate>
                     <local:IconButton x:Name="ShelveCommitButton" Text="Shelve" Glyph="&#xE7B8;" Click="ShelveCommit_Click" IsEnabled="False"
                             ToolTipService.ToolTip="Take the picked commit off the branch and put what it changed on the shelf, like git stash. The commits over it are replayed." />

@@ -86,7 +86,8 @@
             <local:DestinationAction x:Name="ExistingDestination" />
             <local:WrapRow Spacing="8">
                 <!-- Only after an import stopped. It is the way on from there, so it stands next to the
-                     sentence that says it stopped rather than somewhere the reader has to go and find. -->
+                     sentence that says it stopped rather than somewhere the reader has to go and find,
+                     and Import steps aside while it does: the branch is made, and one accent is enough. -->
                 <local:IconButton x:Name="ResolveButton" Glyph="&#xE8A5;" Text="Resume import" Visibility="Collapsed"
                                   Style="{StaticResource AccentButtonStyle}" Click="Resolve_Click"
                                   ToolTipService.ToolTip="Open the page that finishes it: pick a version per file, then continue. The commits after this one are still waiting behind it." />
@@ -101,7 +102,6 @@
                     </Button>
                 </local:TaskGate>
                 <local:IconButton x:Name="PickButton" Glyph="&#xED25;" Text="Another file" Click="Pick_Click" ToolTipService.ToolTip="Read a different export file." />
-                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             </local:WrapRow>
         </StackPanel>
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />

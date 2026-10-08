@@ -18,29 +18,23 @@
         </local:EmptyState>
 
         <Grid x:Name="Filled" RowDefinitions="Auto,*">
-        <CommandBar Grid.Row="0" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" OverflowButtonVisibility="Collapsed" Margin="-8,0,0,0">
-            <AppBarButton Label="Add repository" Click="Add_Click" ToolTipService.ToolTip="Watch an SVN URL: a trunk, a branch, or any folder in a repository.">
-                <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
-            </AppBarButton>
-            <AppBarButton Label="Add my checkouts" Click="AddCheckouts_Click" ToolTipService.ToolTip="Watch the root and every external of each registered checkout, one category per checkout.">
-                <AppBarButton.Icon><FontIcon Glyph="&#xE8B7;" /></AppBarButton.Icon>
-            </AppBarButton>
-            <AppBarButton Label="Edit" Click="Edit_Click" ToolTipService.ToolTip="Change the name, URL, category, interval, or notification of the selected repository.">
-                <AppBarButton.Icon><FontIcon Glyph="&#xE70F;" /></AppBarButton.Icon>
-            </AppBarButton>
-            <AppBarButton Label="Remove" Click="Remove_Click" ToolTipService.ToolTip="Stop watching the selected repository. Asks first.">
-                <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
-            </AppBarButton>
-            <AppBarSeparator />
+        <!-- What every repository shares stays in view; adding one is rarer, behind "...". What one
+             repository can do is on its row's right click. -->
+        <CommandBar x:Name="Actions" Grid.Row="0" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,0,0,0">
             <AppBarButton x:Name="CheckNowButton" Label="Check now" Click="CheckNow_Click" ToolTipService.ToolTip="Ask the server about every watched repository right now.">
                 <AppBarButton.Icon><FontIcon Glyph="&#xE72C;" /></AppBarButton.Icon>
-            </AppBarButton>
-            <AppBarButton Label="Mark read" Click="MarkRead_Click" ToolTipService.ToolTip="You have seen the new commits of the selected repository. The badge goes away. Clicking a commit marks it and the older ones read too.">
-                <AppBarButton.Icon><FontIcon Glyph="&#xE73E;" /></AppBarButton.Icon>
             </AppBarButton>
             <AppBarButton Label="Mark all read" Click="MarkAllRead_Click" ToolTipService.ToolTip="Clear every badge.">
                 <AppBarButton.Icon><FontIcon Glyph="&#xE8FB;" /></AppBarButton.Icon>
             </AppBarButton>
+            <CommandBar.SecondaryCommands>
+                <AppBarButton Label="Add repository" Click="Add_Click" ToolTipService.ToolTip="Watch an SVN URL: a trunk, a branch, or any folder in a repository.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Add my checkouts" Click="AddCheckouts_Click" ToolTipService.ToolTip="Watch the root and every external of each registered checkout, one category per checkout.">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE8B7;" /></AppBarButton.Icon>
+                </AppBarButton>
+            </CommandBar.SecondaryCommands>
         </CommandBar>
 
         <Grid x:Name="Body" Grid.Row="1" Padding="0,8,0,0">

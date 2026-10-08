@@ -78,6 +78,7 @@ public sealed partial class MonitorPage : SgPage
         _paths = new ListFilter(PathsFilter, Paths, PathsHeader, r => ((SvnPathRow)r).Display);
         _paths.Picked += OnPicked;
         _paths.ExpectStats = true;
+        RowMenu.Attach(Tree, RepositoryMenu);
         MonitorService.Changed += OnChanged;
         Unloaded += (_, _) => MonitorService.Changed -= OnChanged;
         // Lists must not be filled or selected before the content is on screen. That crashes inside XAML.
@@ -375,6 +376,41 @@ public sealed partial class MonitorPage : SgPage
     }
 
     // ---- commands ----
+
+    /// <summary>
+    /// What one repository can do, on its row's right click and Shift+F10. The row is picked first, so
+    /// the menu acts on the repository whose details are on screen, as the commands always did. A
+    /// category is no repository of its own and has no menu.
+    /// </summary>
+    MenuFlyout? RepositoryMenu(DependencyObject source)
+    {
+        if (NodeOf(source) is not { Item: { } item } node) return null;
+        if (!ReferenceEquals(Tree.SelectedItem, node)) Tree.SelectedItem = node;
+        var menu = new MenuFlyout();
+        menu.Items.Add(MenuItem("Edit…", "\uE70F", Edit_Click, "Change the name, URL, category, interval, or notification of this repository."));
+        menu.Items.Add(MenuItem("Mark read", "\uE73E", MarkRead_Click,
+            "You have seen the new commits of this repository. The badge goes away. Clicking a commit marks it and the older ones read too."));
+        menu.Items.Add(MenuItem("Check this one", "\uE72C", (_, _) => _ = MonitorService.CheckOneAsync(item), "Ask the server about this repository right now."));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MenuItem("Remove…", "\uE74D", Remove_Click, "Stop watching this repository. Asks first."));
+        return menu;
+    }
+
+    /// <summary>The row the gesture came from: the row itself on the keyboard, something inside it under the pointer.</summary>
+    MonitorNode? NodeOf(DependencyObject? source)
+    {
+        for (; source != null && !ReferenceEquals(source, Tree); source = VisualTreeHelper.GetParent(source))
+            if (source is ListViewItem row) return Tree.ItemFromContainer(row) as MonitorNode;
+        return null;
+    }
+
+    static MenuFlyoutItem MenuItem(string text, string glyph, RoutedEventHandler click, string tip)
+    {
+        var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph } };
+        ToolTipService.SetToolTip(item, tip);
+        item.Click += click;
+        return item;
+    }
 
     async void Add_Click(object sender, RoutedEventArgs e)
     {

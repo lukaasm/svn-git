@@ -63,11 +63,86 @@ public sealed partial class EditCheckoutPage : SgPage
         JunctionPick.Paths = co.Junctions;
         OptionalPick.Paths = co.Optional;
         SharedBox.Mode = co.Shared;
-        _ = SharedBox.DetectAsync(co.Path, Session.Root?.Config.WorktreeRoot ?? Session.Root?.RootPath);
+        SkipPick.Changed += ShowFolders;
+        JunctionPick.Changed += ShowFolders;
+        OptionalPick.Changed += ShowFolders;
+        SharedBox.Changed += () => { _cloneFellBack = false; ShowFolders(); };
+        FoldersSection.Expanded += (_, _) => ShowFolders();
+        FoldersSection.Collapsed += (_, _) => ShowFolders();
+        _ = DetectSharingAsync(co.Path, Session.Root?.Config.WorktreeRoot ?? Session.Root?.RootPath);
+        ShowFolders();
         var path = co.Path;
         _ = PathPicker.OfferFoldersOf(path, SkipPick, JunctionPick, OptionalPick);
+        _git = co.IsGit;
         if (co.IsGit) SayGit();
+        RowMenu.Attach(Externals, source => RowUnder(source) is { } row ? ExternalMenu(row) : null);
         _ = LoadExternalsAsync();
+    }
+
+    /// <summary>The saved choice was a clone and the volumes said it cannot be made, so the box went back to a junction.</summary>
+    bool _cloneFellBack;
+
+    /// <summary>
+    /// The closed Folders section's description: what is set, in the words the add page uses, and what the
+    /// volumes said about cloning. A saved clone that fell back to a junction is said even while it is open:
+    /// pressing Save then writes the junction, and the box alone only shows where it landed.
+    /// </summary>
+    void ShowFolders()
+    {
+        var text = CheckoutFields.FoldersText(SkipPick.Paths.Count, JunctionPick.Paths.Count, SharedBox.Mode, OptionalPick.Paths.Count);
+        var note = SharedBox.Note;
+        if (_cloneFellBack) note = "The saved ReFS clone cannot be made here, so new worktrees would get junctions." + (note != null ? " " + note : "");
+        if (note != null && (_cloneFellBack || !FoldersSection.IsExpanded)) text += "\n" + note;
+        FoldersSection.Description = text;
+    }
+
+    async Task DetectSharingAsync(string checkoutPath, string? worktreeRoot)
+    {
+        var wasClone = SharedBox.Mode == SharedMode.Clone;
+        var detecting = SharedBox.DetectAsync(checkoutPath, worktreeRoot);
+        ShowFolders();
+        await detecting;
+        if (wasClone && SharedBox.Mode != SharedMode.Clone) _cloneFellBack = true;
+        ShowFolders();
+    }
+
+    /// <summary>A git clone, whose externals are its submodules: the menu's words follow.</summary>
+    bool _git;
+
+    /// <summary>The external a right click or the menu key landed on, from any element inside its row.</summary>
+    static ExternalRow? RowUnder(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is FrameworkElement { DataContext: ExternalRow row }) return row;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The menu on an external's row. Back to declared acts on one row, so it is on that row rather than a
+    /// button under the list; it is offered on a switched row only, and says why when it is greyed, because
+    /// a disabled menu item shows no tooltip.
+    /// </summary>
+    MenuFlyout ExternalMenu(ExternalRow row)
+    {
+        // The branch box and Switch follow the selection, so the row the menu is on becomes the selected one.
+        if (!ReferenceEquals(Externals.SelectedItem, row)) Externals.SelectedItem = row;
+        var can = row is { Switched: true, Declared.Length: > 0 };
+        var label = _git ? "Back to the pin" : "Back to declared";
+        var revert = new MenuFlyoutItem
+        {
+            Text = can ? label : label + (!row.Switched ? (_git ? " (already on it)" : " (not switched)") : " (nothing declared)"),
+            Icon = new FontIcon { Glyph = "" },
+            IsEnabled = can,
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(revert, "RevertButton");
+        ToolTipService.SetToolTip(revert, _git
+            ? "Check out the commit the parent pins again, which is what everyone else has."
+            : "Switch it back to the URL svn:externals declares, which is what everyone else has.");
+        revert.Click += Revert_Click;
+        return new MenuFlyout { Items = { revert } };
     }
 
     /// <summary>The section's words for a git clone, whose externals are its submodules.</summary>
@@ -82,8 +157,6 @@ public sealed partial class EditCheckoutPage : SgPage
         BranchBox.Header = "Put the selected submodule on";
         BranchBox.PlaceholderText = "pick a branch";
         ToolTipService.SetToolTip(BranchBox, "The branches of this submodule's repository, read from the server.");
-        RevertButton.Content = "Back to the pin";
-        ToolTipService.SetToolTip(RevertButton, "Check out the commit the parent pins again, which is what everyone else has.");
         ToolTipService.SetToolTip(SwitchButton, "Checks the branch out in this submodule only, following its remote branch. The parent's pin and the server are left alone.");
     }
 
@@ -178,7 +251,6 @@ public sealed partial class EditCheckoutPage : SgPage
         var row = Externals.SelectedItem as ExternalRow;
         BranchBox.IsEnabled = row != null;
         SwitchButton.IsEnabled = row != null;
-        RevertButton.IsEnabled = row is { Switched: true, Declared.Length: > 0 };
         BranchBox.ItemsSource = null;
         BranchBox.Text = row?.Url ?? "";
         if (row == null) return;
@@ -263,6 +335,4 @@ public sealed partial class EditCheckoutPage : SgPage
         Result.Text = $"{rel} is now at {url}";
         await LoadExternalsAsync();
     }
-
-    void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

@@ -40,7 +40,9 @@
                     </StackPanel>
                     <!-- The words VS Code and the git tools use. Which versions current and incoming are
                          depends on what stopped, so the tooltips are written from the page. The row
-                         wraps rather than cutting a button in half in a narrow column. -->
+                         wraps rather than cutting a button in half in a narrow column. A file in conflict
+                         is edited and marked resolved from its own right-click menu; a file a forced apply
+                         left for a hand has no side to accept, so for those the two stay here. -->
                     <local:WrapRow Grid.Row="1" Spacing="6" LineSpacing="6">
                         <local:TaskGate>
                             <local:IconButton x:Name="TakeOurs" Glyph="&#xE753;" Text="Accept current" Click="TakeOurs_Click" />
@@ -48,10 +50,10 @@
                         <local:TaskGate>
                             <local:IconButton x:Name="TakeTheirs" Glyph="&#xE8A5;" Text="Accept incoming" Click="TakeTheirs_Click" />
                         </local:TaskGate>
-                        <local:IconButton Glyph="&#xE70F;" Text="Open in editor" Click="OpenFile_Click"
-                            ToolTipService.ToolTip="Open the ticked files, or the one selected, in their default editor. Each holds both versions between conflict markers: edit it, save, then mark it resolved." />
+                        <local:IconButton x:Name="OpenFileButton" Glyph="&#xE70F;" Text="Open in editor" Click="OpenFile_Click" Visibility="Collapsed"
+                            ToolTipService.ToolTip="Open the ticked files, or the one selected, in their default editor. Put in the hunks a .rej file holds, delete the .rej, save, then mark the file resolved." />
                         <local:TaskGate>
-                            <local:IconButton Glyph="&#xE73E;" Text="Mark as resolved" Click="MarkResolved_Click"
+                            <local:IconButton x:Name="MarkResolvedButton" Glyph="&#xE73E;" Text="Mark as resolved" Click="MarkResolved_Click" Visibility="Collapsed"
                                 ToolTipService.ToolTip="Tell git the ticked files, or the one selected, are done, after you edited them." />
                         </local:TaskGate>
                         <local:TaskGate>
@@ -89,8 +91,9 @@
              the diff, until Back to conflicts. -->
         <local:DiffView x:Name="PatchPreview" Grid.Row="1" Visibility="Collapsed" />
 
-        <!-- Continue first and accented, as every page puts its one thing to do; Skip and Abort next,
-             the other two ways out; what is only ever looked at, in More; Close last. -->
+        <!-- Continue first and accented, as every page puts its one thing to do; Skip next, the other way
+             on; what is only ever looked at, and Abort, the way back that drops the work, in More; Close
+             last. -->
         <local:WrapRow x:Name="Actions" Grid.Row="2" Spacing="8" LineSpacing="6">
             <local:TaskGate>
                 <local:IconButton x:Name="ContinueButton" Glyph="&#xE768;" Text="Continue"
@@ -101,12 +104,9 @@
             <local:TaskGate>
                 <local:IconButton x:Name="SkipButton" Glyph="&#xE72A;" Text="Skip commit" Click="Skip_Click" />
             </local:TaskGate>
-            <local:TaskGate>
-                <local:IconButton x:Name="AbortButton" Glyph="&#xE711;" Text="Abort" Click="Abort_Click" />
-            </local:TaskGate>
             <local:IconButton x:Name="MoreButton" Glyph="&#xE712;" Text="More" AutomationProperties.Name="More actions">
                 <Button.Flyout>
-                    <MenuFlyout Placement="TopEdgeAlignedLeft">
+                    <MenuFlyout Placement="TopEdgeAlignedLeft" local:MenuGate.Watch="True">
                         <MenuFlyoutItem x:Name="InspectButton" Text="View commit" Click="Inspect_Click">
                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
                         </MenuFlyoutItem>
@@ -121,6 +121,10 @@
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="Refresh" Click="Refresh_Click">
                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72C;" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem x:Name="AbortButton" Text="Abort" Click="Abort_Click" local:MenuGate.Gated="True">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE711;" /></MenuFlyoutItem.Icon>
                         </MenuFlyoutItem>
                     </MenuFlyout>
                 </Button.Flyout>

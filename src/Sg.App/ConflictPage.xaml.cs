@@ -33,9 +33,30 @@ public sealed partial class ConflictPage : SgPage
         Subtitle = worktree;
         _layout = new ReviewLayout(this, Body, FilesPane, DiffPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
-        FileActions.Attach(Files, n => PathUtil.Join(_worktree, n.FullPath));
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display);
         _filter.Picked += OnPicked;
+        // A file in conflict is edited and marked resolved from its own menu: Edit file opens it where
+        // both versions sit between conflict markers. A file a forced apply left for a hand has the two
+        // on the toolbar instead, as the only way through.
+        FileActions.Attach(Files, n => PathUtil.Join(_worktree, n.FullPath), (menu, node) =>
+        {
+            if (_state.Conflicted.Count == 0) return;
+            foreach (var edit in menu.Items.OfType<MenuFlyoutItem>().Where(i => i.Text == "Edit file"))
+                ToolTipService.SetToolTip(edit, "Open the file in its default editor. It holds both versions between conflict markers: edit it, save, then mark it resolved.");
+            // Like the buttons over the list: the ticked files, or the one selected when none is.
+            var ticked = _filter.Rows<FileRow>().Count(r => r.Checked);
+            if (Picked().Count == 0) return;
+            var mark = new MenuFlyoutItem
+            {
+                Text = ticked > 0 ? $"Mark {ticked} ticked as resolved" : "Mark as resolved",
+                Icon = new FontIcon { Glyph = "\uE73E" },
+            };
+            ToolTipService.SetToolTip(mark, "Tell git the ticked files, or the one selected, are done, after you edited them.");
+            mark.Click += (_, _) => MarkResolved_Click(MarkResolvedButton, null!);
+            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(mark);
+            MenuGate.Gate(menu, mark);
+        });
         Session.Log.Sink = Pane;
         _ = LoadAsync();
     }
@@ -93,6 +114,9 @@ public sealed partial class ConflictPage : SgPage
         AutoButton.IsEnabled = state.Conflicted.Count > 0;
         AutoAllButton.Visibility = state.Conflicted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         AutoAllButton.IsEnabled = state.InProgress && !(state.Stuck && state.Kind == Replay.Import);
+        // Editing and marking a file in conflict is in its row's menu; files left for a hand have no
+        // sides, so these two are the only way through and stay in sight.
+        OpenFileButton.Visibility = MarkResolvedButton.Visibility = state.Conflicted.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         var at = At(state);
         if (!state.InProgress)
@@ -368,7 +392,7 @@ public sealed partial class ConflictPage : SgPage
                 "They are marked as resolved. Read them in the diff, then Continue.");
         else
             Say(InfoBarSeverity.Warning, $"The resolver settled {r.Resolved.Count} file(s) and left {r.Left.Count}",
-                string.Join("; ", r.Left.Select(l => l.Path + " - " + l.Why)) + ". Accept a side for those, or edit them and mark them as resolved.");
+                string.Join("; ", r.Left.Select(l => l.Path + " - " + l.Why)) + ". Accept a side for those, or edit them and mark them as resolved from their right-click menu.");
     }
 
     /// <summary>
@@ -563,7 +587,7 @@ public sealed partial class ConflictPage : SgPage
     {
         var s = _state;
         if (!await Dialogs.Confirm(this, $"Abort the {Verb(s)}", AbortCost(s).Replace(" Asks first.", ""), "Abort")) return;
-        await Busy.During(sender, async () =>
+        await Busy.During(MoreButton, async () =>
         {
             var root = Session.Require();
             await Runner.Run(Pane, "abort the " + Verb(s), () => Conflicts.Abort(root, _worktree));

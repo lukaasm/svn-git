@@ -34,6 +34,11 @@ function Wait-For([scriptblock]$read, [int]$seconds = 15) {
     do { $value = & $read; if ($value) { return $value }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Storage feedback assertion timed out.'
 }
+# Storage is an item of the root's More menu in the pane.
+function Open-Storage {
+    (Wait-For { Find 'RootMenu' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    (Wait-For { Find 'StorageItem' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
 $process = $null; $heldLock = $null; $window = $null
 Initialize-UiReport $ArtifactDirectory 'Storage'
 try {
@@ -43,7 +48,7 @@ try {
     $null = Wait-For { Find 'SyncButton' }
     Start-UiScenario 'Storage retains content while repository access is delayed'
     $heldLock = [IO.File]::Open((Join-Path $FixtureRoot '.sg/sg.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-    (Find 'StorageItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Open-Storage
     $null = Wait-For { Find 'StorageLoading' } 5
     Start-Sleep -Milliseconds 300
     try { Save-UiWindow $window (Join-Path $ArtifactDirectory 'storage-loading.png') } catch { Write-Host "Optional preview capture: $_" }
@@ -55,7 +60,7 @@ try {
     $brokenRecord = Join-Path $operationFolder ([Guid]::NewGuid().ToString('N') + '.json')
     '{ invalid fixture record' | Set-Content -LiteralPath $brokenRecord -Encoding utf8
     (Find 'SettingsItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-    (Find 'StorageItem').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Open-Storage
     $null = Wait-For { Find 'Could not read storage information. Retry the scan or open the error log for details.' -Name }
     $retry = Wait-For { Find 'Retry' -Name }
     try { Save-UiWindow $window (Join-Path $ArtifactDirectory 'storage-error.png') } catch { Write-Host "Optional preview capture: $_" }

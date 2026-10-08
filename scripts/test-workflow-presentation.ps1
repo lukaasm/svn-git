@@ -218,7 +218,8 @@ try {
     Invoke 'Open backup restore preview'
     $null = Wait-For { Find 'BackupActions' -Id }
     Start-UiScenario 'Storage previews and recovery navigation'
-    (Wait-For { Find 'StorageItem' -Id }).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Invoke 'RootMenu' -Id
+    Invoke 'StorageItem' -Id
     $archive = Wait-For { Find 'Archive options · source' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'storage.png')
     Expand $archive

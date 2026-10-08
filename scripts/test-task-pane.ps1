@@ -134,7 +134,8 @@ try {
         Remove-Item -LiteralPath $recoveryFile
         $recoveryFile = $null
         Start-Sleep -Milliseconds 400
-        Invoke-Element (By-Id 'RefreshButton')
+        Invoke-Element (By-Id 'RootMenu')
+        Invoke-Element (Wait-For 'refresh all in the root menu' { By-Name 'Refresh all' })
         $null = Wait-For 'recovery notice clears after reconciliation' { $b = By-Id 'RecoveryButton'; !$b -or $b.Current.IsOffscreen }
     }
     Start-Sleep -Milliseconds 400

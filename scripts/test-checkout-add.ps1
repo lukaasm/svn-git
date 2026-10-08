@@ -35,6 +35,11 @@ function Wait-For([scriptblock]$read, [string]$message = 'Checkout UI assertion 
 function Invoke-Control($control) { $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Enter-Value($control, [string]$value) { $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Add-Checkout { Invoke-Control (Wait-For { $b = Find 'Add the checkout' -Name; if ($b -and $b.Current.IsEnabled) { $b } }) }
+# Add checkout is an item of the pane's "+" menu.
+function Open-AddCheckout {
+    Invoke-Control (Wait-For { Find 'AddMenu' })
+    Invoke-Control (Wait-For { $b = Find 'AddCheckoutButton'; if ($b -and $b.Current.IsEnabled) { $b } })
+}
 function Wait-Checkout([string]$name) {
     $null = Wait-For { $c = Find 'CoName'; !(Find 'FolderBox') -and $c -and $c.Current.Name -eq $name } ('Checkout registered but did not open ' + $name)
 }
@@ -61,7 +66,7 @@ try {
     $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $fixture + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For { Get-TestAppWindow $process }
     Start-UiScenario 'Adding an existing checkout opens its overview without a false ownership error'
-    Invoke-Control (Wait-For { Find 'AddCheckoutButton' })
+    Open-AddCheckout
     Enter-Value (Wait-For { Find 'FolderBox' }) $checkout
     Enter-Value (Find 'NameBox') 'Dashboard'
     Add-Checkout
@@ -79,7 +84,7 @@ try {
     Complete-UiScenario
 
     Start-UiScenario 'A duplicate in this root has accurate inline guidance and cannot be submitted'
-    Invoke-Control (Find 'AddCheckoutButton')
+    Open-AddCheckout
     Enter-Value (Wait-For { Find 'FolderBox' }) $checkout
     $null = Wait-For { Find "Already registered in this root as 'Dashboard'." -Name }
     if ((Find 'Add the checkout' -Name).Current.IsEnabled) { throw 'Duplicate checkout submission was enabled.' }
@@ -99,7 +104,7 @@ try {
     $background = Join-Path $ArtifactDirectory 'background-checkout'
     & svn checkout "$url/trunk" $background | Out-File (Join-Path $ArtifactDirectory 'setup.txt') -Append
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare background checkout.' }
-    Invoke-Control (Find 'AddCheckoutButton')
+    Open-AddCheckout
     Enter-Value (Wait-For { Find 'FolderBox' }) $background
     Enter-Value (Find 'NameBox') 'Background'
     # Hold only this disposable root's repository lock to make navigation-before-completion deterministic.

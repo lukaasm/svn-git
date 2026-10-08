@@ -252,11 +252,11 @@ public sealed partial class MainWindow : Window
         SubtitleText.Visibility = string.IsNullOrEmpty(page?.Subtitle) ? Visibility.Collapsed : Visibility.Visible;
         Nav.IsBackEnabled = Host.CanGoBack;
         ForwardButton.Visibility = Host.CanGoForward ? Visibility.Visible : Visibility.Collapsed;
-        RefreshButton.Visibility = Session.Root != null ? Visibility.Visible : Visibility.Collapsed;
-        ActivityItem.IsEnabled = StorageItem.IsEnabled = ReviewInboxItem.IsEnabled = Session.Root != null;
+        ActivityItem.IsEnabled = ReviewInboxItem.IsEnabled = Session.Root != null;
         ShowRecovery();
 
-        // The pane highlights the checkout the page is about, the monitor, or the settings.
+        // The pane highlights the checkout the page is about, the monitor, or the settings. Storage is in
+        // the dots menu and has no row to light, so its page clears the selection like any other.
         var key = Host.CurrentKey ?? "";
         object? select = key switch
         {
@@ -264,7 +264,6 @@ public sealed partial class MainWindow : Window
             "monitor" => MonitorItem,
             "activity" => ActivityItem,
             "review-inbox" => ReviewInboxItem,
-            "storage" => StorageItem,
             _ when page?.Checkout != null => Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (i.Tag as CheckoutRow)?.Name == page.Checkout),
             _ => null,
         };
@@ -712,10 +711,10 @@ public sealed partial class MainWindow : Window
 
     // ---- reading the root ----
 
-    /// <summary>The Refresh button beside the path. F5 is the same thing without the ring on the button.</summary>
-    async void RefreshAll_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => RefreshAllAsync());
+    /// <summary>Refresh all in the pane's menu. The menu closes on the click, so the bar over the page shows the read, as it does for F5.</summary>
+    void RefreshAll_Click(object sender, RoutedEventArgs e) => _ = RefreshAllAsync();
 
-    /// <summary>F5 and the Refresh button: forget what the server said and read everything again.</summary>
+    /// <summary>F5 and Refresh all: forget what the server said and read everything again.</summary>
     internal Task RefreshAllAsync()
     {
         Remote.Clear();
@@ -744,18 +743,22 @@ public sealed partial class MainWindow : Window
         RecoveryNotice.IsOpen = false;
         AppTitleBar.Subtitle = Session.Root?.RootPath ?? "no root open";
         var checkouts = Session.Root?.Config.Checkouts.Count ?? 0;
-        // No root: the pane itself says so and offers the two ways in; the dots would only repeat them.
+        // No root: the pane says so with the roots opened before, and the page offers the two ways in; the
+        // dots would only repeat them.
         PaneEmpty.Visibility = Session.Root == null ? Visibility.Visible : Visibility.Collapsed;
         if (Session.Root == null) FillRecentRoots();
         RootMenu.Visibility = Session.Root == null ? Visibility.Collapsed : Visibility.Visible;
+        // A disabled menu item shows no tooltip, so what it waits for is part of its text.
         AddCheckoutButton.IsEnabled = Session.Root != null;
-        ToolTipService.SetToolTip(AddCheckoutTip, Session.Root != null
-            ? "Add checkout. A working copy already on disk, or one checked out from a URL first, joins this root and the list here."
-            : "Add checkout needs a root open. Use Open root, or New root.");
+        AddCheckoutButton.Text = Session.Root != null ? "Add checkout…" : "Add checkout… (needs a root)";
+        ToolTipService.SetToolTip(AddCheckoutButton, Session.Root != null
+            ? "A working copy already on disk, or one checked out from a URL first, joins this root and the list here."
+            : null);
         ServerCheckoutButton.IsEnabled = checkouts > 0;
-        ToolTipService.SetToolTip(ServerCheckoutTip, checkouts > 0
-            ? "New server checkout. Copies the nearest checkout on disk and runs svn switch, so only differences download."
-            : "New server checkout needs one checkout to copy from. Use New root, or register one with 'sg checkout add'.");
+        ServerCheckoutButton.Text = checkouts > 0 ? "New server checkout…" : "New server checkout… (needs one checkout)";
+        ToolTipService.SetToolTip(ServerCheckoutButton, checkouts > 0
+            ? "Copies the nearest checkout on disk and runs svn switch, so only differences download."
+            : null);
         if (Session.Root == null)
         {
             Nav.MenuItems.Clear();
@@ -936,7 +939,6 @@ public sealed partial class MainWindow : Window
         if (args.IsSettingsSelected) { ShowSettings(); return; }
         if (Session.Root != null && ReferenceEquals(args.SelectedItem, ReviewInboxItem)) { Host.Go(() => new ReviewInboxPage(), "review-inbox"); return; }
         if (Session.Root != null && ReferenceEquals(args.SelectedItem, ActivityItem)) { Host.Go(() => new ActivityPage(), "activity"); return; }
-        if (Session.Root != null && ReferenceEquals(args.SelectedItem, StorageItem)) { Host.Go(() => new StoragePage(), "storage"); return; }
         if (ReferenceEquals(args.SelectedItem, MonitorItem)) { ShowMonitor(null); return; }
         if ((args.SelectedItem as NavigationViewItem)?.Tag is not CheckoutRow row) return;
         _current = row;
@@ -1171,6 +1173,15 @@ public sealed partial class MainWindow : Window
         await RefreshAsync();
     }
 
+    /// <summary>The storage page, from the pane's menu: it is about the whole root, and it is opened rarely.</summary>
+    void Storage_Click(object sender, RoutedEventArgs e)
+    {
+        if (Session.Root != null) Host.Go(() => new StoragePage(), "storage");
+    }
+
+    /// <summary>Marks the menu's items for the roots opened before, which the menu rebuilds every time it opens.</summary>
+    const string RecentRootTag = "recent-root";
+
     /// <summary>
     /// The roots opened before, under Open root and New root in the pane's menu. Filled in as the menu
     /// opens, so a root opened a minute ago is on it. The one open is left off: it is the whole window.
@@ -1179,13 +1190,14 @@ public sealed partial class MainWindow : Window
     void RootFlyout_Opening(object sender, object e)
     {
         var flyout = (MenuFlyout)sender;
-        while (flyout.Items.Count > 3) flyout.Items.RemoveAt(flyout.Items.Count - 1);
+        for (var i = flyout.Items.Count - 1; i >= 0; i--)
+            if (flyout.Items[i].Tag is RecentRootTag) flyout.Items.RemoveAt(i);
         var others = RecentRootsToOffer();
         if (others.Count == 0) return;
-        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(new MenuFlyoutSeparator { Tag = RecentRootTag });
         foreach (var path in others)
         {
-            var item = new MenuFlyoutItem { Text = RootName(path), Icon = new FontIcon { Glyph = "" } };
+            var item = new MenuFlyoutItem { Text = RootName(path), Icon = new FontIcon { Glyph = "" }, Tag = RecentRootTag };
             ToolTipService.SetToolTip(item, "Open " + path);
             item.Click += async (_, _) => await OpenRootAtAsync(path);
             flyout.Items.Add(item);

@@ -18,31 +18,50 @@
                         IsBackButtonVisible="Visible" IsBackEnabled="False" BackRequested="Nav_BackRequested"
                         IsSettingsVisible="True" SelectionChanged="Nav_SelectionChanged"
                         ItemInvoked="Nav_ItemInvoked">
-            <!-- The pane title row, with the two ways to add a checkout on its right. Opening or making a
-                 root is done once, so both wait behind the dots while a root is open. -->
+            <!-- The pane title row: one button for the ways to add a checkout, and the root's own menu.
+                 Opening or making a root is done once, so both wait behind the dots while a root is open. -->
             <NavigationView.PaneHeader>
-                <Grid ColumnDefinitions="*,Auto,Auto,Auto" Padding="0,0,4,0">
+                <Grid ColumnDefinitions="*,Auto,Auto" Padding="0,0,4,0">
                     <TextBlock Text="Checkouts" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" />
-                    <!-- Registering a working copy that is already on disk. Without it the only ways in
-                         were making a root or copying one on the server, so a root looked like it held one. -->
-                    <Border x:Name="AddCheckoutTip" Grid.Column="1" Background="Transparent">
-                        <Button x:Name="AddCheckoutButton" Click="AddCheckout_Click" Style="{StaticResource QuietButton}"
-                                AutomationProperties.Name="Add checkout">
-                            <FontIcon Glyph="&#xE8F1;" FontSize="16" />
-                        </Button>
-                    </Border>
-                    <Border x:Name="ServerCheckoutTip" Grid.Column="2" Background="Transparent">
-                        <Button x:Name="ServerCheckoutButton" Click="ServerCheckout_Click" Style="{StaticResource QuietButton}"
-                                AutomationProperties.Name="New server checkout">
-                            <FontIcon Glyph="&#xE710;" FontSize="16" />
-                        </Button>
-                    </Border>
-                    <Button x:Name="RootMenu" Grid.Column="3" Style="{StaticResource QuietButton}"
-                            AutomationProperties.Name="More" ToolTipService.ToolTip="More: open another root, or make a new one.">
+                    <!-- Registering a working copy that is already on disk, or copying one on the server. Without
+                         the first the only ways in were making a root or copying one, so a root looked like it held
+                         one. A disabled item shows no tooltip, so the code writes the reason into its text. -->
+                    <Button x:Name="AddMenu" Grid.Column="1" Style="{StaticResource QuietButton}"
+                            AutomationProperties.Name="Add"
+                            ToolTipService.ToolTip="Add a checkout: a working copy already on disk, or a new server checkout copied from one you have.">
+                        <FontIcon Glyph="&#xE710;" FontSize="16" />
+                        <Button.Flyout>
+                            <MenuFlyout Placement="Bottom">
+                                <MenuFlyoutItem x:Name="AddCheckoutButton" Text="Add checkout…" Click="AddCheckout_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F1;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="ServerCheckoutButton" Text="New server checkout…" Click="ServerCheckout_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE753;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    <Button x:Name="RootMenu" Grid.Column="2" Style="{StaticResource QuietButton}"
+                            AutomationProperties.Name="More" ToolTipService.ToolTip="More: refresh, storage, go to, or another root.">
                         <FontIcon Glyph="&#xE712;" FontSize="16" />
                         <Button.Flyout>
-                            <!-- The roots opened before follow these two, filled in when the menu opens. -->
+                            <!-- The roots opened before follow Open root and New root, filled in when the menu opens. -->
                             <MenuFlyout x:Name="RootFlyout" Placement="Bottom" Opening="RootFlyout_Opening">
+                                <!-- Here rather than on a page's toolbar: reading everything again is about the root,
+                                     not about the page you happen to be on, and F5 does it from anywhere. -->
+                                <MenuFlyoutItem Text="Refresh all" Click="RefreshAll_Click" KeyboardAcceleratorTextOverride="F5"
+                                                ToolTipService.ToolTip="Read the state of every checkout and worktree again, and ask the server for new commits. F5 does the same.">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72C;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Go to" Click="GoTo_Click" KeyboardAcceleratorTextOverride="Ctrl+K"
+                                                ToolTipService.ToolTip="Any checkout, worktree or page, by typing part of its name.">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE721;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="StorageItem" Text="Storage" Click="Storage_Click"
+                                                ToolTipService.ToolTip="Worktree sizes, which ones can be archived, and the temporary data sg keeps.">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEDA2;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
                                 <MenuFlyoutItem Text="Open root" Click="OpenRoot_Click"
                                                 ToolTipService.ToolTip="Pick a folder that already holds .sg.">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xED25;" /></MenuFlyoutItem.Icon>
@@ -51,29 +70,20 @@
                                                 ToolTipService.ToolTip="Runs sg init on a folder, then offers to register the first SVN checkout.">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F4;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Go to" Click="GoTo_Click" KeyboardAcceleratorTextOverride="Ctrl+K"
-                                                ToolTipService.ToolTip="Any checkout, worktree or page, by typing part of its name.">
-                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE721;" /></MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
                 </Grid>
             </NavigationView.PaneHeader>
 
-            <!-- An empty pane says why, where the checkouts would be, and offers the two ways to fill it. -->
+            <!-- An empty pane says why, where the checkouts would be. Open root and New root are on the page
+                 beside it, so the pane offers only the roots opened before. -->
             <NavigationView.PaneCustomContent>
                 <local:EmptyState x:Name="PaneEmpty" Visibility="Collapsed" Glyph="&#xED25;" Title="No root open" Padding="8,24"
                                   Text="A root is the folder that holds .sg and your checkouts.">
                     <local:EmptyState.Action>
-                        <StackPanel Spacing="8">
-                            <local:IconButton Glyph="&#xED25;" Text="Open root" Click="OpenRoot_Click" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch"
-                                ToolTipService.ToolTip="Pick a folder that already holds .sg." />
-                            <local:IconButton Glyph="&#xE8F4;" Text="New root" Click="NewRoot_Click" HorizontalAlignment="Stretch"
-                                ToolTipService.ToolTip="Runs sg init on a folder, then offers to register the first SVN checkout." />
-                            <!-- The roots opened before, one button each, so the way back into one is one press. -->
-                            <StackPanel x:Name="RecentRoots" Spacing="4" Margin="0,8,0,0" />
-                        </StackPanel>
+                        <!-- The roots opened before, one button each, so the way back into one is one press. -->
+                        <StackPanel x:Name="RecentRoots" Spacing="4" />
                     </local:EmptyState.Action>
                 </local:EmptyState>
             </NavigationView.PaneCustomContent>
@@ -85,9 +95,6 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="ActivityItem" Content="Activity">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE81C;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="StorageItem" Content="Storage">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEDA2;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="MonitorItem"
                                     AutomationProperties.Name="Project monitor"
@@ -138,16 +145,8 @@
                         </BreadcrumbBar>
                         <TextBlock x:Name="SubtitleText" Style="{StaticResource Secondary}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <!-- Beside the path rather than on the checkout's own toolbar: reading everything again
-                         is about the root, not about the page you happen to be on, and F5 already did it
-                         from anywhere. It is here whenever a root is open, which is whenever it can work. -->
+                    <!-- Refresh all is in the pane's More menu, and F5 does it from anywhere. -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Top">
-                        <Button x:Name="RefreshButton" Visibility="Collapsed" Click="RefreshAll_Click"
-                                Style="{StaticResource QuietButton}"
-                                AutomationProperties.Name="Refresh"
-                                ToolTipService.ToolTip="Read the state of every checkout and worktree again, and ask the server for new commits. F5 does the same.">
-                            <FontIcon Glyph="&#xE72C;" FontSize="16" />
-                        </Button>
                         <Button x:Name="ForwardButton" Visibility="Collapsed" Click="Forward_Click"
                                 Style="{StaticResource QuietButton}"
                                 AutomationProperties.Name="Forward" ToolTipService.ToolTip="Forward (Alt+Right)">

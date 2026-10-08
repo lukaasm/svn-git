@@ -163,5 +163,8 @@ Select-Control (Find 'SettingsItem')
 Check-Exit 'fixture history replacement'
 Invoke-Control (Wait-For { Find 'NavigationViewBackButton' })
 $null = Wait-For { (Find 'TitleText').Current.Name -eq 'pick a commit to see what it changed' }
-if ((Find 'RewordButton').Current.IsEnabled -or (Find 'RevertButton').Current.IsEnabled -or (List-Rows 'Files').Count) { throw 'Missing commits left stale files or rewrite actions.' }
+# The commit actions are in the row menu; the line under the list says what the pick allows, and with
+# nothing picked it only says how to reach them.
+$hint = Wait-For { Find 'PickHint' }
+if ($hint.Current.Name -notlike 'Right-click a commit to *' -or (List-Rows 'Files').Count) { throw 'Missing commits left stale files or rewrite actions.' }
 Complete-UiScenario

@@ -47,7 +47,7 @@ public sealed partial class LogPage
             _rebuilding = true;
             foreach (var row in rows) Commits.SelectedItems.Add(row);
             _rebuilding = false;
-            SyncRewriteButtons();
+            SyncCommitActions();
             _commitsViewport.Restore(view.Scroll);
             if (rows.FirstOrDefault(r => r.Sha == view.Current) is { } current) await LoadCommitAsync(current);
         }

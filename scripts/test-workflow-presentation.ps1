@@ -99,10 +99,10 @@ try {
     Expand $branch
     $advanced = Wait-For { Scroll-Bottom; Find 'AdvancedWorktreeActions' -Id }
     Expand $advanced
+    # More actions opens a menu over the page; its items are not in the scrolled list.
     $button = Wait-For {
         $action = Find 'BackupCoverageAction' -Id
-        if ($action -and $action.Current.BoundingRectangle.Height -gt 0 -and $action.Current.BoundingRectangle.Top -ge $parent.Current.BoundingRectangle.Top) { return $action }
-        if ($scroll) { $scroll.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount, [System.Windows.Automation.ScrollAmount]::SmallDecrement) }
+        if ($action -and $action.Current.BoundingRectangle.Height -gt 0 -and $action.Current.BoundingRectangle.Top -ge $window.Current.BoundingRectangle.Top) { return $action }
     }
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-UiScenario 'Coverage check and restore distinction'

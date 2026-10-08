@@ -289,20 +289,19 @@ try {
     $expand = $branchControl.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
     $expand.Expand()
     if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
-    $advanced = Wait-For 'advanced worktree menu' { By-Id 'AdvancedWorktreeActions' }
+    $advanced = Wait-For 'more actions button' { By-Id 'AdvancedWorktreeActions' }
     $advancedControl = $advanced.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable)
     $advancedPattern = $advancedControl.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-    if ($advancedPattern.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { throw 'Advanced options must start collapsed.' }
+    if ($advancedPattern.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { throw 'More actions must start collapsed.' }
     $advancedPattern.Expand()
-    if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
-    $review = Wait-For 'visible review action in expanded menu' {
+    # The menu is a popup over the page, not part of the scrolled list: it only has to be inside the window.
+    $review = Wait-For 'visible review action in the open menu' {
         $action = By-Id 'ReviewReadinessAction'
         if ($action) {
             $bounds = $action.Current.BoundingRectangle
-            $viewport = $parent.Current.BoundingRectangle
+            $viewport = $script:window.Current.BoundingRectangle
             if ($bounds.Height -gt 0 -and $bounds.Top -ge $viewport.Top -and $bounds.Bottom -le $viewport.Bottom) { return $action }
         }
-        if ($scroll) { $scroll.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount, [System.Windows.Automation.ScrollAmount]::SmallDecrement) }
     }
     if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'advanced-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
     Invoke-Element $review
@@ -351,6 +350,7 @@ try {
     $null = Wait-For 'automatic backups disabled' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 0 }
     $null = Wait-For 'disabled status updates immediately' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' -and !(By-Id 'BackupNextRun').Current.HelpText }
     Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
+    Invoke-Element (Wait-For 'checkout More menu' { By-Id 'MoreButton' })
     Invoke-Element (Wait-For 'backup page action' { By-Id 'BackupButton' })
     $null = Wait-For 'same schedule status on Backup' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' }
     # The schedule sits under the worktree cards: with enough of them, and the task pane open, it is

@@ -42,6 +42,8 @@ function Wait-For([string]$description, [scriptblock]$read, [int]$seconds = 20) 
 }
 function Invoke-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Select-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() }
+# Backup is in the checkout toolbar's More menu.
+function More-Button { $bar = Find 'Actions'; if ($bar) { $bar.FindFirst([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'MoreButton')) } }
 function Set-Field([string]$id, [string]$value) { (Wait-For "$id input" { Find $id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
 function Entries {
     @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
@@ -191,6 +193,7 @@ try {
     Start-UiScenario 'Large backup catalogs render in batches and retain their filter and loaded cards'
     Invoke-Element (Find 'NavigationViewBackButton')
     $watch.Restart()
+    Invoke-Element (Wait-For 'checkout More menu' { More-Button })
     Invoke-Element (Wait-For 'backup action' { Find 'BackupButton' })
     $null = Wait-For 'backup entries loaded' { $field = Find 'BackupSearch'; if ($field -and !$field.Current.IsOffscreen) { $field } }
     $null = Wait-For 'bounded first backup page' { (Backup-Cards).Count -eq 20 }
@@ -314,6 +317,7 @@ try {
     $accept = $listener.AcceptTcpClientAsync()
     $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $FixtureRoot + '"')) -WindowStyle Hidden -PassThru
     $window = Wait-For 'restarted debug window' { Get-TestAppWindow $process }
+    Invoke-Element (Wait-For 'checkout More menu' { More-Button })
     Invoke-Element (Wait-For 'backup action for stalled read' { Find 'BackupButton' })
     $null = Wait-For 'local Git request reaches server' { $accept.IsCompleted }
     $client = $accept.GetAwaiter().GetResult()

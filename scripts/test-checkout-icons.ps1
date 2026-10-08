@@ -339,6 +339,7 @@ try {
 
     Start-UiScenario 'Restoring a backup explains and hydrates checkout appearance without restarting'
     Select-Checkout 'Dashboard'
+    Invoke-Control (Wait-For { $bar = Find 'Actions'; if ($bar) { Find 'MoreButton' -within $bar } })
     Invoke-Control (Wait-For { Find 'BackupButton' })
     Invoke-Control (Wait-For { Find 'BackupWorktreeOpen_icons' })
     $null = Wait-For { Find 'IntoBox' }

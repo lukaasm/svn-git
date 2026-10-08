@@ -54,7 +54,7 @@ Invoke-Control (Find 'TransferOpenWorktree')
 $null = Wait-For { Row 'Files' '*draft.txt*' }
 Complete-UiScenario
 
-Start-UiScenario 'Rename worktree and branch together through Advanced actions'
+Start-UiScenario 'Rename worktree and branch together through More actions'
 Stop-App
 Launch '' $fixture
 $card = Wait-For { Find 'feature' -Name }
@@ -70,7 +70,9 @@ Invoke-Control (Find 'PrimaryButton')
 $null = Wait-For { Find 'Rename worktree and branch?' -Name }
 Close-Dialog
 if (!(Test-Path -LiteralPath $worktree)) { throw 'Cancelling rename moved the folder.' }
-Invoke-Control (Find 'RenameWorktreeAction')
+# The menu closed when Rename was picked; open it again.
+Expand-Card (Wait-For { Find 'AdvancedWorktreeActions' })
+Invoke-Control (Wait-For { Find 'RenameWorktreeAction' })
 Enter-TransferValue 'RenameWorktreeName' 'renamed-feature'
 Invoke-Control (Find 'PrimaryButton')
 $null = Wait-For { Find 'Rename worktree and branch?' -Name }

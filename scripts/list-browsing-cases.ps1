@@ -103,6 +103,8 @@ Stop-App
 
 Start-UiScenario 'Backup comparison retains independent list positions away from the selected commit'
 Launch 'overview' $fixture
+# Backup is in the checkout toolbar's More menu.
+Invoke-Control (Wait-For { $bar = Find 'Actions'; if ($bar) { Find 'MoreButton' -within $bar } })
 Invoke-Control (Wait-For { Find 'BackupButton' })
 $card = Wait-For { Find 'BackupWorktree_feature' }
 $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)

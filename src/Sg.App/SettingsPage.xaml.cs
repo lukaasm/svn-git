@@ -44,6 +44,7 @@ public sealed partial class SettingsPage : SgPage
         ShowMenuState();
         ShowNotifyState();
         ShowBuild(null);
+        ShowAdvancedState();
         _filling = false;
         // One write per pause in the typing. Save writes both files whole, so writing it per letter is
         // what the debounce is for; waiting for the box to lose focus is what lost the text entirely.
@@ -118,26 +119,50 @@ public sealed partial class SettingsPage : SgPage
         ShowNotifyState();
     }
 
+    /// <summary>The menu points at this exe, so the one button removes it; otherwise it installs it here.</summary>
+    bool _menuHere;
+
     void ShowMenuState()
     {
-        if (!Shell.IsInstalled()) { MenuState.Description = "Not installed."; return; }
-        var exe = Shell.InstalledExe();
+        var installed = Shell.IsInstalled();
+        var exe = installed ? Shell.InstalledExe() : null;
+        _menuHere = exe != null && exe.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase);
+        MenuButton.Content = _menuHere ? "Remove" : "Install";
+        ToolTipService.SetToolTip(MenuButton, _menuHere ? "Take the sg menu out of the Explorer context menu."
+            : "Add the sg menu to the Explorer context menu for this user, pointing at this exe. Registry only, no admin rights.");
+        if (!installed) { MenuState.Description = "Not installed."; return; }
         MenuState.Description = "Installed, pointing at " + exe
-                                + (exe != null && !exe.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase) ? "\nThis exe is elsewhere: " + Environment.ProcessPath + ". Install again to update." : "");
+                                + (exe != null && !_menuHere ? "\nThis exe is elsewhere: " + Environment.ProcessPath + ". Install again to update." : "");
     }
 
-    void InstallMenu_Click(object sender, RoutedEventArgs e)
+    void MenuButton_Click(object sender, RoutedEventArgs e)
     {
-        try { Shell.Install(); Status.Text = "menu installed"; }
+        try
+        {
+            if (_menuHere) { Shell.Uninstall(); Status.Text = "menu removed"; }
+            else { Shell.Install(); Status.Text = "menu installed"; }
+        }
         catch (Exception ex) { Status.Text = "failed: " + ex.Message; }
         ShowMenuState();
     }
 
-    void RemoveMenu_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Advanced is closed, so its line names what in it is not at its default: a setting that changes
+    /// how sg behaves is never folded out of sight.
+    /// </summary>
+    void ShowAdvancedState()
     {
-        try { Shell.Uninstall(); Status.Text = "menu removed"; }
-        catch (Exception ex) { Status.Text = "failed: " + ex.Message; }
-        ShowMenuState();
+        var defaults = new AppSettings();
+        var changed = new List<string>();
+        if (AgentPush.IsOn) changed.Add("Agents may push");
+        if (ResolveCommand.Text.Trim().Length > 0) changed.Add("Conflict resolver");
+        if (BackupPrefix.Text.Trim().Trim('/').Length > 0) changed.Add("Folder on the remote");
+        if (!double.IsNaN(RemoteMinutes.Value) && (int)RemoteMinutes.Value != defaults.RemoteCheckMinutes) changed.Add("Server check interval");
+        if (!double.IsNaN(UpdateMinutes.Value) && (int)UpdateMinutes.Value != defaults.UpdateCheckMinutes) changed.Add("Update check interval");
+        if (MonacoUrl.Text.Trim() is { Length: > 0 } monaco && monaco != defaults.MonacoUrl) changed.Add("Monaco editor URL");
+        if (Verbose.IsOn) changed.Add("Verbose log");
+        AdvancedSettings.Description = changed.Count > 0 ? "Changed: " + string.Join(", ", changed)
+            : "Agent push, conflict resolver, folder on the remote, check intervals, Monaco URL and verbose log, all at their defaults.";
     }
 
     /// <summary>Asks the URL whether a git repository answers there, now rather than on the timer.</summary>
@@ -165,6 +190,7 @@ public sealed partial class SettingsPage : SgPage
     {
         if (_filling) return;
         _typing.Stop();
+        ShowAdvancedState();
         var root = _settingsRoot;
         if (root != null && Session.Tasks.Blocking(root.RootPath) is { } busy)
         {
@@ -207,6 +233,4 @@ public sealed partial class SettingsPage : SgPage
         catch (Exception ex) { Status.Text = "startup entry failed: " + ex.Message; return; }
         Status.Text = $"saved {DateTime.Now:HH:mm:ss}";
     }
-
-    void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

@@ -166,7 +166,18 @@ try {
     Select-Element (Wait-For 'settings navigation item' { By-Id 'SettingsItem' })
     $null = Wait-For 'progress survives navigation' { (By-Id 'TaskQueueSummary').Current.Name -like '*1 active*' }
     $null = Wait-For 'repository settings disabled' { $b = By-Id 'MinLength'; $b -and !$b.Current.IsEnabled }
-    if (!(By-Id 'Verbose').Current.IsEnabled) { throw 'Unrelated settings were disabled.' }
+    # Verbose log is one of the settings folded under Advanced, whose rows are made only on screen.
+    $advancedSettings = Wait-For 'advanced settings' { By-Id 'AdvancedSettings' }
+    $scroller = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($advancedSettings)
+    while ($scroller -and !$scroller.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsScrollPatternAvailableProperty)) {
+        $scroller = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scroller)
+    }
+    $settingsScroll = $scroller.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    $settingsScroll.SetScrollPercent(-1, 100)
+    $advancedSettings.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
+    ).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    if (!(Wait-For 'verbose log setting' { $settingsScroll.SetScrollPercent(-1, 100); By-Id 'Verbose' }).Current.IsEnabled) { throw 'Unrelated settings were disabled.' }
     Invoke-Element (Wait-For 'global task cancellation' { By-Name 'Cancel task' })
     Select-TaskFilter 0
     $null = Wait-For 'cancellation result retained' { Task-Buttons | Where-Object { $_.Current.Name -like 'Cancelled*' } }

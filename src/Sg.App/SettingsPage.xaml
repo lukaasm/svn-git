@@ -16,10 +16,9 @@
                     <controls:SettingsExpander.HeaderIcon>
                         <FontIcon Glyph="&#xE8B7;" />
                     </controls:SettingsExpander.HeaderIcon>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="Install" Click="InstallMenu_Click" ToolTipService.ToolTip="Add the sg menu to the Explorer context menu for this user. Registry only, no admin rights." />
-                        <Button Content="Remove" Click="RemoveMenu_Click" ToolTipService.ToolTip="Take the sg menu out of the Explorer context menu." />
-                    </StackPanel>
+                    <!-- Install or Remove, whichever the menu's state calls for: Install while it is missing or
+                         points at another exe, Remove once it points at this one. -->
+                    <Button x:Name="MenuButton" Click="MenuButton_Click" />
                     <controls:SettingsExpander.Items>
                         <controls:SettingsCard x:Name="MenuState" Header="Where the menu points" />
                     </controls:SettingsExpander.Items>
@@ -36,24 +35,6 @@
                         <NumberBox x:Name="MinLength" Minimum="0" Maximum="500" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
                     </local:TaskGate>
                 </controls:SettingsCard>
-                <controls:SettingsCard Header="Agents may push"
-                                       Description="Allow 'sg push' without an interactive terminal. Off means only a human pushes, from a terminal or from here.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE898;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <local:TaskGate>
-                        <ToggleSwitch x:Name="AgentPush" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
-                    </local:TaskGate>
-                </controls:SettingsCard>
-                <controls:SettingsCard Header="Conflict resolver"
-                                       Description="The command Auto-resolve runs when a rebase or an import stops. It runs in the worktree, gets the task on stdin and the files in SG_FILES, and edits them in place. Empty runs Claude Code in print mode, allowed to read and edit files and to ask git to show things.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE945;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <local:TaskGate>
-                        <TextBox x:Name="ResolveCommand" PlaceholderText="claude -p ..." Width="360" />
-                    </local:TaskGate>
-                </controls:SettingsCard>
 
                 <TextBlock Text="Backup" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
                 <controls:SettingsCard Header="Backup repository URL"
@@ -67,15 +48,6 @@
                         </local:TaskGate>
                         <Button x:Name="BackupCheck" Content="Check" Click="BackupCheck_Click" ToolTipService.ToolTip="Ask the URL whether a git repository answers there." />
                     </StackPanel>
-                </controls:SettingsCard>
-                <controls:SettingsCard Header="Folder on the remote"
-                                       Description="Every ref goes under this name, so two machines can back up into one repository without writing over each other. Empty is none.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE8B7;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <local:TaskGate>
-                        <TextBox x:Name="BackupPrefix" PlaceholderText="this-machine" Width="220" />
-                    </local:TaskGate>
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Uncommitted changes go too"
                                        Description="What is changed and not committed in a worktree, and the local edits of a checkout, go with each backup as one commit above the branch. Off sends committed work only.">
@@ -123,20 +95,6 @@
                         </controls:SettingsCard>
                     </controls:SettingsExpander.Items>
                 </controls:SettingsExpander>
-                <controls:SettingsCard Header="Server check every N minutes"
-                                       Description="The overview asks the SVN server for new commits on this schedule and shows a badge. 0 turns it off.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE895;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <NumberBox x:Name="RemoteMinutes" Minimum="0" Maximum="120" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
-                </controls:SettingsCard>
-                <controls:SettingsCard Header="Update check every N minutes"
-                                       Description="The overview asks GitHub for a newer sg build on this schedule and offers 'Update and restart'. 0 turns it off.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE896;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <NumberBox x:Name="UpdateMinutes" Minimum="0" Maximum="1440" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
-                </controls:SettingsCard>
 
                 <TextBlock Text="This app" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
                 <!-- Which build this is, said here because nowhere else in the app said it: the pane's
@@ -159,7 +117,7 @@
                         <FontIcon Glyph="&#xE70F;" />
                     </controls:SettingsCard.HeaderIcon>
                     <!-- Written as it is typed, on a pause. On LostFocus alone, leaving the page with the
-                         caret still in the box - Escape, the back arrow, the Close button - saved nothing. -->
+                         caret still in the box - Escape, the back arrow - saved nothing. -->
                     <TextBox x:Name="EditorCommand" PlaceholderText="code" Width="220" />
                 </controls:SettingsCard>
                 <controls:SettingsCard Header="Diff colours"
@@ -170,19 +128,70 @@
                     <ComboBox x:Name="ThemeBox" Width="220" SelectionChanged="Theme_Changed"
                               ToolTipService.ToolTip="sg's own, and the palettes you already have in your editor. A light one on a dark Windows leaves the rest of the app alone." />
                 </controls:SettingsCard>
-                <controls:SettingsCard Header="Monaco editor URL"
-                                       Description="The 'vs' folder of a Monaco build. The diff viewer loads it from here when no copy ships next to the exe. Plain unified diff text is the fallback.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE943;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <TextBox x:Name="MonacoUrl" Width="360" />
-                </controls:SettingsCard>
-                <controls:SettingsCard Header="Verbose log" Description="Show every git and svn command in the log.">
-                    <controls:SettingsCard.HeaderIcon>
-                        <FontIcon Glyph="&#xE9D9;" />
-                    </controls:SettingsCard.HeaderIcon>
-                    <ToggleSwitch x:Name="Verbose" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
-                </controls:SettingsCard>
+
+                <!-- The settings few people change, folded away. Its description names the ones that are not
+                     at their defaults, so a changed one is never out of sight. -->
+                <controls:SettingsExpander x:Name="AdvancedSettings" Header="Advanced" Margin="0,16,0,0">
+                    <controls:SettingsExpander.HeaderIcon>
+                        <FontIcon Glyph="&#xE713;" />
+                    </controls:SettingsExpander.HeaderIcon>
+                    <controls:SettingsExpander.Items>
+                        <controls:SettingsCard Header="Agents may push"
+                                               Description="Allow 'sg push' without an interactive terminal. Off means only a human pushes, from a terminal or from here.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE898;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <local:TaskGate>
+                                <ToggleSwitch x:Name="AgentPush" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                            </local:TaskGate>
+                        </controls:SettingsCard>
+                        <controls:SettingsCard Header="Conflict resolver"
+                                               Description="The command Auto-resolve runs when a rebase or an import stops. It runs in the worktree, gets the task on stdin and the files in SG_FILES, and edits them in place. Empty runs Claude Code in print mode, allowed to read and edit files and to ask git to show things.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE945;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <local:TaskGate>
+                                <TextBox x:Name="ResolveCommand" PlaceholderText="claude -p ..." Width="360" />
+                            </local:TaskGate>
+                        </controls:SettingsCard>
+                        <controls:SettingsCard Header="Folder on the remote"
+                                               Description="Every backup ref goes under this name, so two machines can back up into one repository without writing over each other. Empty is none.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE8B7;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <local:TaskGate>
+                                <TextBox x:Name="BackupPrefix" PlaceholderText="this-machine" Width="220" />
+                            </local:TaskGate>
+                        </controls:SettingsCard>
+                        <controls:SettingsCard Header="Server check every N minutes"
+                                               Description="The overview asks the SVN server for new commits on this schedule and shows a badge. 0 turns it off.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE895;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <NumberBox x:Name="RemoteMinutes" Minimum="0" Maximum="120" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
+                        </controls:SettingsCard>
+                        <controls:SettingsCard Header="Update check every N minutes"
+                                               Description="The overview asks GitHub for a newer sg build on this schedule and offers 'Update and restart'. 0 turns it off.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE896;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <NumberBox x:Name="UpdateMinutes" Minimum="0" Maximum="1440" SpinButtonPlacementMode="Compact" Width="140" ValueChanged="Number_Changed" />
+                        </controls:SettingsCard>
+                        <controls:SettingsCard Header="Monaco editor URL"
+                                               Description="The 'vs' folder of a Monaco build. The diff viewer loads it from here when no copy ships next to the exe. Plain unified diff text is the fallback.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE943;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <TextBox x:Name="MonacoUrl" Width="360" />
+                        </controls:SettingsCard>
+                        <controls:SettingsCard Header="Verbose log" Description="Show every git and svn command in the log.">
+                            <controls:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE9D9;" />
+                            </controls:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="Verbose" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                        </controls:SettingsCard>
+                    </controls:SettingsExpander.Items>
+                </controls:SettingsExpander>
 
                 <TextBlock Text="Keyboard" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,4" />
                 <controls:SettingsExpander Header="Shortcuts" Description="The keys that work on every page.">
@@ -203,9 +212,6 @@
             </StackPanel>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-            <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Every change here is already written." />
-            <TextBlock x:Name="Status" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
-        </StackPanel>
+        <TextBlock x:Name="Status" Grid.Row="1" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
     </Grid>
 </local:SgPage>

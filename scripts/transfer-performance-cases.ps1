@@ -17,6 +17,8 @@ for ($i = 0; $i -lt 512; $i++) {
 }
 function Set-PreviewName([string]$name) { (Find 'TransferBranchName').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($name) }
 function Preview-Running { $c = Find 'TransferCancelPreview'; if ($c -and !$c.Current.IsOffscreen) { $c } }
+# One button previews, then copies or moves what it previewed: its words say which it does now.
+function Transfer-Action([string]$name) { $b = Find 'TransferApply'; if ($b -and $b.Current.IsEnabled -and $b.Current.Name -eq $name) { $b } }
 Start-UiScenario 'Large preview keeps destination controls responsive and cancels stale options'
 Launch 'transfer' $checkout
 $null = Wait-For { Find 'TransferBranchName' }
@@ -24,7 +26,7 @@ $idleNameValue = (Find 'TransferBranchName').GetCurrentPattern([System.Windows.A
 $idleEditTime = [Diagnostics.Stopwatch]::StartNew()
 $idleNameValue.SetValue('large-first')
 $idleEditTime.Stop()
-Invoke-Control (Wait-For { $b = Find 'TransferPreview'; if ($b.Current.IsEnabled) { $b } })
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
 $null = Wait-For { Preview-Running } 'The large preview did not expose cancellation.'
 if (!(Find 'TransferBranchName').Current.IsEnabled -or !(Find 'TransferDestinationKind').Current.IsEnabled) { throw 'Preview disabled its destination controls.' }
 $nameValue = (Find 'TransferBranchName').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
@@ -33,18 +35,18 @@ $nameValue.SetValue('large-second')
 $editTime.Stop()
 # WinUI's UIA ValuePattern itself has an idle round-trip cost. Measure added delay during a read.
 if ($editTime.ElapsedMilliseconds - $idleEditTime.ElapsedMilliseconds -gt 1000) { throw "Editing during preview took $($editTime.ElapsedMilliseconds) ms (idle: $($idleEditTime.ElapsedMilliseconds) ms)." }
-$null = Wait-For { !(Preview-Running) -and (Find 'TransferPreview').Current.IsEnabled }
-if ((Find 'TransferApply').Current.IsEnabled) { throw 'An obsolete preview enabled apply after the destination changed.' }
+$null = Wait-For { !(Preview-Running) -and (Transfer-Action 'Preview transfer') }
+if ((Find 'TransferApply').Current.Name -like '* changes') { throw 'An obsolete preview enabled apply after the destination changed.' }
 Complete-UiScenario
 
 Start-UiScenario 'Large preview cancels explicitly, then shows all files with usable filtering'
-Invoke-Control (Find 'TransferPreview')
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
 Invoke-Control (Wait-For { Preview-Running })
-$null = Wait-For { !(Preview-Running) -and (Find 'TransferPreview').Current.IsEnabled }
-if ((Find 'TransferApply').Current.IsEnabled) { throw 'A cancelled preview enabled apply.' }
+$null = Wait-For { !(Preview-Running) -and (Transfer-Action 'Preview transfer') }
+if ((Find 'TransferApply').Current.Name -like '* changes') { throw 'A cancelled preview enabled apply.' }
 $previewTime = [Diagnostics.Stopwatch]::StartNew()
-Invoke-Control (Find 'TransferPreview')
-$null = Wait-For { (Find 'TransferApply').Current.IsEnabled } 'The 1,024-file preview did not finish in 20 seconds.'
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
+$null = Wait-For { Transfer-Action 'Copy changes' } 'The 1,024-file preview did not finish in 20 seconds.'
 $previewTime.Stop()
 $null = Wait-For { Find '1024 files · 0 conflicts · 0 left behind' -Name }
 $filter = Find 'TransferFileFilter'

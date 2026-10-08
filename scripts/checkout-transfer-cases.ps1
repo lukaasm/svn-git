@@ -1,6 +1,8 @@
 # Runs on the harness's private desktop, using only its disposable Git/SVN fixtures.
 $env:SG_UI_TEST_WINDOW_SIZE = '1100x1000'
 function Enter-TransferValue([string]$id, [string]$text) { (Find $id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text) }
+# One button previews, then copies or moves what it previewed: its words say which it does now.
+function Transfer-Action([string]$name) { $b = Find 'TransferApply'; if ($b -and $b.Current.IsEnabled -and $b.Current.Name -eq $name) { $b } }
 function Choose-Transfer([string]$id, [string]$text) {
     (Find $id).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     Select-Control (Wait-For { Find $text -Name })
@@ -12,8 +14,8 @@ Start-UiScenario 'Copy preview creates a new worktree and keeps checkout edits'
 Launch 'transfer' $checkout
 $null = Wait-For { Find 'TransferBranchName' }
 Enter-TransferValue 'TransferBranchName' 'received'
-Invoke-Control (Wait-For { $b=Find 'TransferPreview'; if ($b.Current.IsEnabled) { $b } })
-$null = Wait-For { (Find 'TransferApply').Current.IsEnabled }
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
+$null = Wait-For { Transfer-Action 'Copy changes' }
 if (!(Row 'TransferFiles' '*base.txt*') -or !(Row 'TransferFiles' '*draft.txt*')) { throw 'Transfer file tree is incomplete.' }
 Assert-Fits 'TransferApply'
 Invoke-Control (Find 'TransferApply')
@@ -27,10 +29,10 @@ Complete-UiScenario
 Start-UiScenario 'Conflicting destination blocks the transfer and changing options invalidates preview'
 Choose-Transfer 'TransferDestinationKind' 'Existing worktree'
 Choose-Transfer 'TransferExisting' 'feature'
-if ((Find 'TransferApply').Current.IsEnabled) { throw 'Changed destination retained a valid plan.' }
-Invoke-Control (Find 'TransferPreview')
+if ((Find 'TransferApply').Current.Name -like '* changes') { throw 'Changed destination retained a valid plan.' }
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
 $null = Wait-For { Find 'base.txt' -Name }
-if ((Find 'TransferApply').Current.IsEnabled) { throw 'Conflicts should block transfer.' }
+$null = Wait-For { $b = Find 'TransferApply'; $b -and !$b.Current.IsEnabled -and $b.Current.Name -eq 'Copy changes' } 'Conflicts should block transfer.'
 if ([IO.File]::ReadAllText((Join-Path $worktree 'base.txt')) -ne "Changed content`n") { throw 'Preview edited the destination.' }
 Complete-UiScenario
 
@@ -38,9 +40,8 @@ Start-UiScenario 'Move requires confirmation and preserves existing worktree edi
 & svn revert (Join-Path $checkout 'base.txt') | Out-File $setupLog -Append
 Check-Exit 'fixture source revert'
 (Find 'TransferMove').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-Invoke-Control (Find 'TransferPreview')
-$null = Wait-For { (Find 'TransferApply').Current.IsEnabled }
-Invoke-Control (Find 'TransferApply')
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
+Invoke-Control (Wait-For { Transfer-Action 'Move changes' })
 Close-Dialog
 if (![IO.File]::Exists((Join-Path $checkout 'notes/draft.txt'))) { throw 'Cancelling move changed source.' }
 Invoke-Control (Find 'TransferApply')

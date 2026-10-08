@@ -5,7 +5,11 @@ using Sg.Core;
 
 namespace Sg.App;
 
-/// <summary>The same preview handles new and existing worktrees; changing any option invalidates it.</summary>
+/// <summary>
+/// The same preview handles new and existing worktrees; changing any option invalidates it. One button
+/// walks the page: Preview transfer until there is a plan for the options on screen, then the copy or
+/// move that plan describes.
+/// </summary>
 public sealed class CheckoutTransferPage : WorkflowPage
 {
     readonly CheckoutConfig _co;
@@ -16,7 +20,7 @@ public sealed class CheckoutTransferPage : WorkflowPage
     readonly CheckBox _move = new() { Content = "Move changes out of the checkout" };
     readonly TextBlock _explain = new() { TextWrapping = TextWrapping.Wrap };
     readonly StackPanel _preview = new() { Spacing = 10 };
-    readonly IconButton _check, _apply, _cancel;
+    readonly IconButton _apply, _cancel;
     readonly ReportCard _report = new();
     CheckoutTransferPlan? _plan;
     bool _running;
@@ -39,17 +43,15 @@ public sealed class CheckoutTransferPage : WorkflowPage
         if (paths != null) Text($"Using {paths.Length} selected path(s) from Changes in the checkout.");
         Body.Children.Add(_kind); Body.Children.Add(_name); Body.Children.Add(_existing);
         Body.Children.Add(_move); Body.Children.Add(_explain);
-        _check = (IconButton)Action("Preview transfer", Preview, glyph: "\uE8A5");
-        _apply = (IconButton)Action("Copy changes", Apply, primary: true, enabled: false, mutates: true, glyph: "\uE8C8");
+        _apply = (IconButton)Action("Preview transfer", () => _plan == null ? Preview() : Apply(), primary: true, enabled: false, mutates: true, glyph: "\uE8A5");
         _cancel = (IconButton)Action("Cancel preview", () => { Invalidate(); return Task.CompletedTask; }, glyph: "\uE711");
         _cancel.Visibility = Visibility.Collapsed;
-        WrapActions(Body.Children.Count - 3);
+        WrapActions(Body.Children.Count - 2);
         Body.Children.Add(_preview); Body.Children.Add(_report);
         AutomationProperties.SetAutomationId(_kind, "TransferDestinationKind");
         AutomationProperties.SetAutomationId(_name, "TransferBranchName");
         AutomationProperties.SetAutomationId(_existing, "TransferExisting");
         AutomationProperties.SetAutomationId(_move, "TransferMove");
-        AutomationProperties.SetAutomationId(_check, "TransferPreview");
         AutomationProperties.SetAutomationId(_apply, "TransferApply");
         AutomationProperties.SetAutomationId(_cancel, "TransferCancelPreview");
         _kind.SelectionChanged += (_, _) => Invalidate(); _existing.SelectionChanged += (_, _) => Invalidate();
@@ -61,17 +63,35 @@ public sealed class CheckoutTransferPage : WorkflowPage
         ++_generation;
         if (_previewing) { _previewing = false; CancelRead(); }
         _cancel.Visibility = Visibility.Collapsed;
-        _plan = null; _apply.IsEnabled = false; _preview.Children.Clear(); _report.Hide();
+        _plan = null; _preview.Children.Clear(); _report.Hide();
         _name.Visibility = _kind.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         _existing.Visibility = _kind.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-        _apply.Text = _move.IsChecked == true ? "Move changes" : "Copy changes";
-        _apply.Glyph = _move.IsChecked == true ? "\uE8DE" : "\uE8C8";
         _explain.Text = _move.IsChecked == true
             ? "The worktree receives the files first. Then transferred edits are removed from the checkout. Recovery shelves keep the previous versions."
             : "The checkout keeps its edits. Existing worktree edits are merged where possible; overlapping changes block the transfer.";
-        TaskGate.SetHelp(_apply, "Preview the current destination and options first.");
-        _check.IsEnabled = !_running && (_kind.SelectedIndex == 0 ? _name.Text.Trim().Length > 0 : _existing.SelectedItem != null);
-        ActionHint.SetHelp(_check, _check.IsEnabled ? "Check files and conflicts without changing either folder." : "Choose a destination first.");
+        SyncAction();
+    }
+
+    /// <summary>
+    /// What the one button does now. Without a plan for these options it previews; with one it runs the
+    /// copy or the move the plan describes, or says why the plan cannot be applied.
+    /// </summary>
+    void SyncAction()
+    {
+        if (_plan == null)
+        {
+            var chosen = _kind.SelectedIndex == 0 ? _name.Text.Trim().Length > 0 : _existing.SelectedItem != null;
+            _apply.Text = "Preview transfer";
+            _apply.Glyph = "\uE8A5";
+            _apply.IsEnabled = !_running && !_previewing && chosen;
+            TaskGate.SetHelp(_apply, chosen ? "Check files and conflicts without changing either folder. Nothing moves until you press it again." : "Choose a destination first.");
+            return;
+        }
+        _apply.Text = _plan.Move ? "Move changes" : "Copy changes";
+        _apply.Glyph = _plan.Move ? "\uE8DE" : "\uE8C8";
+        _apply.IsEnabled = !_running && _plan.CanApply;
+        TaskGate.SetHelp(_apply, _plan.CanApply ? "Transfer the previewed files. Both folders are checked again before applying."
+            : "Choose transferable files and a destination without conflicts. Changing an option, or F5, previews again.");
     }
     protected override async Task Reload()
     {
@@ -96,7 +116,7 @@ public sealed class CheckoutTransferPage : WorkflowPage
         var target = _kind.SelectedIndex == 0 ? _name.Text.Trim() : _existing.SelectedItem as string;
         if (string.IsNullOrEmpty(target)) return;
         var create = _kind.SelectedIndex == 0; var move = _move.IsChecked == true;
-        _previewing = true; _cancel.Visibility = Visibility.Visible; _check.IsEnabled = false;
+        _previewing = true; _cancel.Visibility = Visibility.Visible; SyncAction();
         Reading.Show("Checking checkout changes…", placeholders: false);
         var plan = await read.Run(Pane, () => CheckoutTransfer.Preview(root, _co, target, create, move, _paths,
             progress: (done, total) => DispatcherQueue.TryEnqueue(() =>
@@ -105,10 +125,11 @@ public sealed class CheckoutTransferPage : WorkflowPage
             })));
         if (generation == _generation)
         {
-            _previewing = false; _cancel.Visibility = Visibility.Collapsed; _check.IsEnabled = true;
+            _previewing = false; _cancel.Visibility = Visibility.Collapsed; SyncAction();
         }
         if (!Current(read) || generation != _generation || plan == null) return;
         _plan = plan;
+        SyncAction();
         _preview.Children.Add(new StatusChip { Text = $"{plan.Files.Count} files · {plan.Conflicts.Count} conflicts · {plan.LeftBehind.Count} left behind",
             Severity = plan.Conflicts.Count > 0 ? ChipSeverity.Caution : ChipSeverity.Success, Glyph = "\uE8A5" });
         if (plan.Files.Count > 0)
@@ -129,8 +150,6 @@ public sealed class CheckoutTransferPage : WorkflowPage
             _preview.Children.Add(details);
         }
         if (plan.Files.Count == 0 && plan.Conflicts.Count == 0) Notice(new("No transferable changes", "The selected paths are clean or are listed under Left in the checkout."), InfoBarSeverity.Informational);
-        _apply.IsEnabled = plan.CanApply;
-        TaskGate.SetHelp(_apply, plan.CanApply ? "Transfer the previewed files. Both folders are checked again before applying." : "Choose transferable files and a destination without conflicts.");
     }
     void Notice(TransferNotice notice, InfoBarSeverity severity) => _preview.Children.Add(new InfoBar
         { IsOpen = true, IsClosable = false, Severity = severity, Title = notice.Path, Message = notice.Reason });
@@ -140,7 +159,7 @@ public sealed class CheckoutTransferPage : WorkflowPage
         if (plan.Move && !await Dialogs.Confirm(this, "Move checkout changes?",
             $"Transfer {plan.Files.Count} file(s) to {plan.Target}, then remove only those edits from {_co.Name}.\n\nRecovery shelves retain both previous versions. {plan.LeftBehind.Count} path(s) stay in the checkout.\n\n" +
             string.Join("\n", plan.Files.Take(12).Select(f => f.Action + ": " + f.Path)) + (plan.Files.Count > 12 ? "\n… See the preview for the full list." : ""), "Move changes")) return;
-        _running = true; _check.IsEnabled = _apply.IsEnabled = false; Scroll.IsEnabled = false;
+        _running = true; _apply.IsEnabled = false; Scroll.IsEnabled = false;
         var root = Session.Require();
         try
         {
@@ -160,6 +179,6 @@ public sealed class CheckoutTransferPage : WorkflowPage
                 _preview.Children.Add(shelves);
             }
         }
-        finally { _running = false; Scroll.IsEnabled = true; _check.IsEnabled = true; }
+        finally { _running = false; Scroll.IsEnabled = true; SyncAction(); }
     }
 }

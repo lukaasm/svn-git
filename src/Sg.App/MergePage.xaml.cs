@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Sg.Core;
 using Windows.System;
@@ -33,8 +34,50 @@ public sealed partial class MergePage : SgPage
         _layout = new ReviewLayout(this, Body, RevisionsPane, PreviewPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadTargetsAsync());
+        // The picked revisions' own menu: merge them, take them back out, or go back to merging
+        // everything. Each item is greyed by the same rules as the button it stands for, with the
+        // reason in its help text because a greyed item shows no tooltip.
+        RowMenu.Attach(Revisions, source =>
+        {
+            if (RowUnder(source) is not { IsFold: false } row) return null;
+            // Right clicking a revision outside the picked set picks it, so the menu is about what it is on.
+            if (!Revisions.SelectedItems.Contains(row)) Revisions.SelectedItem = row;
+            var menu = new MenuFlyout();
+            var merge = Add(menu, MergeLabel.Text, "\uE8AB", MergeButton,
+                "Bring the picked revisions into the checkout. They land as local changes there; nothing is committed until you commit them. Asks first.",
+                () => Merge_Click(MergeButton, null!));
+            var takeOut = Add(menu, "Take back out…", "\uE7A7", TakeOutButton,
+                "Reverse the picked revisions as local checkout changes. Asks before applying.",
+                () => TakeOut_Click(MergeButton, null!));
+            menu.Items.Add(new MenuFlyoutSeparator());
+            Add(menu, "Clear selection", "\uE8E6", ClearPickButton,
+                "Go back to merging everything this branch has not got yet, instead of named revisions.",
+                () => ClearPick_Click(ClearPickButton, null!));
+            return MenuGate.Gate(menu, merge, takeOut);
+        });
         Session.Log.Sink = Pane;
         Unloaded += (_, _) => OnHidden();
+
+        static MenuFlyoutItem Add(MenuFlyout menu, string text, string glyph, Control from, string tip, Action run)
+        {
+            var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph }, IsEnabled = from.IsEnabled };
+            ToolTipService.SetToolTip(item, tip);
+            AutomationProperties.SetHelpText(item, AutomationProperties.GetHelpText(from));
+            item.Click += (_, _) => run();
+            menu.Items.Add(item);
+            return item;
+        }
+    }
+
+    /// <summary>The revision row a right click landed on, walking up from whatever part of it was hit.</summary>
+    static SvnRevRow? RowUnder(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is FrameworkElement { DataContext: SvnRevRow row }) return row;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source);
+        }
+        return null;
     }
 
     MergeTarget? Target => TargetBox.SelectedItem as MergeTarget;
@@ -272,14 +315,19 @@ public sealed partial class MergePage : SgPage
         // A test merge writes nothing, so it stays available even while a problem blocks the real one.
         MergeButton.IsEnabled = ready && !_blocked;
         var picked = Picked();
-        ClearPickButton.IsEnabled = _planReady && !loading && !_running && (picked.Count > 0 || _missingSelection != null);
+        // Nothing to clear when nothing is picked. A saved pick that is missing keeps it on screen: it
+        // blocks the merge, and this is one of the two ways on.
+        ClearPickButton.Visibility = picked.Count > 0 || _missingSelection != null ? Visibility.Visible : Visibility.Collapsed;
+        ClearPickButton.IsEnabled = _planReady && !loading && !_running;
         ClearPickButton.Content = _missingSelection != null ? "Use all revisions" : "Clear selection";
         // Taking changes back out needs the revisions named: there is no "undo everything" to offer.
         TakeOutButton.IsEnabled = ready && !_blocked && picked.Count > 0;
         var reason = loading ? "Wait for the available revisions to load." : _running ? "A merge operation is in progress." : Target == null || Source == null ? "Choose both the source and target checkout." : !_planReady ? "Refresh the available revisions before merging." : _missingSelection != null ? "Choose revisions again: some saved selections are no longer available." : null;
         TaskGate.SetHelp(TestButton, reason ?? "Preview the merge without writing changes.");
         TaskGate.SetHelp(MergeButton, reason ?? (_blocked ? "Resolve the problems listed above before merging." : "Merge the selected revisions into the target checkout."));
-        TaskGate.SetHelp(TakeOutButton, reason ?? (_blocked ? "Resolve the problems listed above before reversing changes." : picked.Count == 0 ? "Select the revisions to reverse." : "Reverse the selected revisions in the target checkout."));
+        // A menu item: its tooltip keeps saying what it does, and the reason goes where a greyed item
+        // can still be read from.
+        AutomationProperties.SetHelpText(TakeOutButton, reason ?? (_blocked ? "Resolve the problems listed above before reversing changes." : picked.Count == 0 ? "Select the revisions to reverse." : "Reverse the selected revisions in the target checkout."));
         MergeLabel.Text = picked.Count == 0 ? "Merge" : picked.Count == 1 ? "Merge " + picked[0].Entry.Label : $"Merge {picked.Count} revisions";
     }
 
@@ -347,16 +395,16 @@ public sealed partial class MergePage : SgPage
     /// <summary>The same merge, run backwards: what TortoiseSVN calls reverting the changes of a revision.</summary>
     async void TakeOut_Click(object sender, RoutedEventArgs e)
     {
-        AdvancedFlyout.Hide();
         var target = Target;
         var picked = Picked();
         if (target == null || Source == null || picked.Count == 0) return;
         if (!await Dialogs.Confirm(this, "Take back out",
             $"Undo {picked.Count} revision(s) in {string.Join(", ", picked.Select(x => x.Pair.Label).Distinct())}? It lands as local changes in the checkout; nothing goes to the server until you commit them.", "Take back out")) return;
-        await Busy.During(sender, () => RunAsync(dryRun: false, reverse: true), restoreEnabled: false);
+        // The split button it hangs from shows the work, whichever menu it was started from.
+        await Busy.During(MergeButton, () => RunAsync(dryRun: false, reverse: true), restoreEnabled: false);
     }
 
-    async void Merge_Click(object sender, RoutedEventArgs e)
+    async void Merge_Click(SplitButton sender, SplitButtonClickEventArgs e)
     {
         var target = Target;
         var source = Source;
@@ -453,7 +501,5 @@ public sealed partial class MergePage : SgPage
         return string.Join("\n", lines);
     }
 
-    async void Refresh_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => LoadTargetsAsync());
-
-    void Close_Click(object sender, RoutedEventArgs e) => Close();
+    async void Refresh_Click(object sender, RoutedEventArgs e) => await Busy.During(MoreButton, () => LoadTargetsAsync());
 }

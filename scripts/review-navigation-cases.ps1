@@ -16,7 +16,7 @@ function Back-ToCommit {
     $null = Wait-For { $b = Find 'CommitButton'; $b -and $b.Current.HelpText -notlike 'Wait for*' }
 }
 function Open-CheckoutChanges {
-    Invoke-Control (Wait-For { Find 'AdvancedButton' }); Invoke-Control (Wait-For { Find 'CheckoutChangesButton' })
+    Invoke-Control (Wait-For { Find 'MoreButton' }); Invoke-Control (Wait-For { Find 'CheckoutChangesButton' })
     $null = Wait-For { !(Find 'TestButton') -and (Find 'PART_BackButton') }
 }
 function Back-ToMerge {

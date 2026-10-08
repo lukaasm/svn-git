@@ -263,12 +263,14 @@ try {
     Start-UiScenario 'Compact Merge keeps reverse operations advanced and retains selected revisions'
     Launch 'merge' $checkout
     $null = Wait-For { (Find 'TestButton').Current.IsEnabled }
-    foreach ($id in @('TargetBox', 'SourceBox', 'MergeButton', 'TestButton', 'AdvancedButton', 'RevisionsTab', 'PreviewTab')) { Assert-Fits $id }
-    if (Find 'TakeOutButton') { throw 'Reverse merge is exposed before opening Advanced.' }
-    Invoke-Control (Find 'AdvancedButton')
-    Assert-Disabled 'TakeOutButton' '*Select the revisions*'
-    # Opening the button's flyout again dismisses it without injected keyboard input.
-    Invoke-Control (Find 'AdvancedButton')
+    foreach ($id in @('TargetBox', 'SourceBox', 'MergeButton', 'TestButton', 'MoreButton', 'RevisionsTab', 'PreviewTab')) { Assert-Fits $id }
+    if (Find 'TakeOutButton') { throw 'Reverse merge is exposed before opening the Merge dropdown.' }
+    # Take back out is in the Merge split button's dropdown. A greyed menu item carries its reason as help text.
+    $mergeMenu = (Find 'MergeButton').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $mergeMenu.Expand()
+    $null = Wait-For { $t = Find 'TakeOutButton'; $t -and !$t.Current.IsEnabled -and $t.Current.HelpText -like '*Select the revisions*' } 'Take back out is not greyed with its reason.'
+    $mergeMenu.Collapse()
+    $null = Wait-For { !(Find 'TakeOutButton') } 'The Merge dropdown did not close.'
     Select-Control (Row 'Revisions' '*Second source change*')
     $null = Wait-For { (Find 'MergeLabel').Current.Name -eq 'Merge r4' }
     Select-Control (Find 'PreviewTab'); Assert-Fits 'TitleText'
@@ -292,7 +294,7 @@ try {
     Start-UiScenario 'Wide Merge confirms and applies only selected revisions without committing to SVN'
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $null = Wait-For { $t = Find 'PreviewTab'; !$t -or $t.Current.IsOffscreen }
-    foreach ($id in @('Revisions', 'TitleText', 'MergeButton', 'TestButton', 'AdvancedButton')) { Assert-Fits $id }
+    foreach ($id in @('Revisions', 'TitleText', 'MergeButton', 'TestButton', 'MoreButton')) { Assert-Fits $id }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'merge-wide.png')
     Invoke-Control (Find 'MergeButton')
     $null = Wait-For { Find 'PrimaryButton' }

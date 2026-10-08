@@ -64,7 +64,6 @@ public sealed partial class MergePage
 
     void CheckoutChanges_Click(object sender, RoutedEventArgs e)
     {
-        AdvancedFlyout.Hide();
         Go(() => new SvnCommitPage(_co) { Checkout = Checkout }, "changes:" + _co.Name);
     }
 }

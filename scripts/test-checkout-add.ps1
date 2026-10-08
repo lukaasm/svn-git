@@ -128,7 +128,11 @@ try {
     Invoke-Control (Wait-For { Find 'New root' -Name })
     $newRoot = Join-Path $ArtifactDirectory 'new-root'
     Enter-Value (Wait-For { Find 'RootBox' }) $newRoot
-    (Find 'FsMonitor').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    # FsMonitor waits in the closed Options section, whose header says when it is off.
+    $expandable = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
+    (Wait-For { Find 'RootOptions' }).FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    (Wait-For { Find 'FsMonitor' }).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    $null = Wait-For { Find 'fsmonitor off' -Name } 'The Options header does not say fsmonitor is off.'
     Invoke-Control (Find 'CreateRootButton')
     $null = Wait-For { $field = Find 'FolderBox'; $field -and $field.Current.IsEnabled }
     $first = Join-Path $ArtifactDirectory 'first-checkout'

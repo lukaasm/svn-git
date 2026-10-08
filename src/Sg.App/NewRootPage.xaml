@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Sg.App">
-    <Grid RowDefinitions="*,Auto,Auto" RowSpacing="8">
+    <Grid RowDefinitions="*,Auto" RowSpacing="8">
         <ScrollViewer Grid.Row="0">
             <StackPanel Spacing="12" MaxWidth="1000" Padding="0,0,0,16">
 
@@ -23,11 +23,24 @@
                             <Button Grid.Column="1" Content="Browse" Click="BrowseRoot_Click" VerticalAlignment="Bottom"
                                     ToolTipService.ToolTip="Pick the folder that will hold .sg. Usually the folder that already holds your SVN checkout or git clone." />
                         </Grid>
-                        <CheckBox x:Name="FsMonitor" Content="Use git fsmonitor" IsChecked="True"
-                                  ToolTipService.ToolTip="A background service that makes git status fast on a big worktree. Turn it off if your machine forbids it." />
+                        <!-- How the root runs git, which nearly nobody changes: closed, with a word on the header
+                             when it is not the default. -->
+                        <Expander x:Name="RootOptions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                  AutomationProperties.Name="Options">
+                            <Expander.Header>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Options" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="OptionsHint" Text="fsmonitor off" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" />
+                                </StackPanel>
+                            </Expander.Header>
+                            <CheckBox x:Name="FsMonitor" Content="Use git fsmonitor" IsChecked="True"
+                                      Checked="FsMonitor_Changed" Unchecked="FsMonitor_Changed"
+                                      ToolTipService.ToolTip="A background service that makes git status fast on a big worktree. Turn it off if your machine forbids it." />
+                        </Expander>
                         <local:TaskGate>
                             <local:IconButton Glyph="&#xE8F4;" Text="Create the root"
-                                x:Name="CreateRootButton" Style="{StaticResource AccentButtonStyle}" Click="CreateRoot_Click" ToolTipService.ToolTip="Same as 'sg init &lt;folder&gt;'. Fast, and it touches nothing outside .sg." />
+                                x:Name="CreateRootButton" Click="CreateRoot_Click" ToolTipService.ToolTip="Same as 'sg init &lt;folder&gt;'. Fast, and it touches nothing outside .sg." />
                         </local:TaskGate>
                     </StackPanel>
                 </Border>
@@ -45,20 +58,17 @@
                         <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
                                    Text="An SVN working copy or a git clone already on disk, or one checked out or cloned from a URL first. An SVN working copy is hashed once into the store and gets one file: .git, a one-line pointer back to the root; a 16 GB checkout takes minutes. A git clone keeps its own .git, and the branch's history is copied into the store once. You can go back and do it later instead." />
                         <local:CheckoutFields x:Name="Fields" />
+                        <!-- The accent is the step to take now: Sync moves it here from Create the root once the root exists. -->
                         <local:TaskGate>
                             <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
-                                x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="AddCheckout_Click" ToolTipService.ToolTip="Same as 'sg checkout add'. This is the long step: it reads and hashes every versioned file once." />
+                                x:Name="AddButton" Click="AddCheckout_Click" ToolTipService.ToolTip="Same as 'sg checkout add'. This is the long step: it reads and hashes every versioned file once." />
                         </local:TaskGate>
                     </StackPanel>
                 </Border>
             </StackPanel>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-            <Button x:Name="FinishButton" Content="Finish" Click="Close_Click"
-                    ToolTipService.ToolTip="Back to the overview, which opens the new root." />
-        </StackPanel>
-
-        <local:StatusStrip x:Name="Pane" Grid.Row="2" />
+        <!-- No Finish: the back button over the page leaves it, as it leaves every other page. -->
+        <local:StatusStrip x:Name="Pane" Grid.Row="1" />
     </Grid>
 </local:SgPage>

@@ -22,13 +22,30 @@
 
         <TextBox x:Name="NameBox" Header="Name (optional)" PlaceholderText="same as the folder name"
                  ToolTipService.ToolTip="The snapshot ref becomes svn/&lt;name&gt;. It has to be a valid git branch name." />
-        <local:PathPicker x:Name="SkipPick" Header="Never store these folders"
-                          ToolTipService.ToolTip="Big build output belongs here: it never enters the git store." />
-        <local:PathPicker x:Name="JunctionPick" Header="Share these folders with every worktree"
-                          ToolTipService.ToolTip="A worktree gets them from the checkout instead of from git: as a junction, a ReFS clone, or a full copy. The box below says which." />
-        <local:SharedModeBox x:Name="SharedBox" Header="Worktrees get those folders as"
-                             ToolTipService.ToolTip="A junction shares one folder with every worktree. A ReFS clone or a full copy gives each worktree its own. The clone costs nothing until it is written, and needs the checkout and the worktrees on one ReFS volume." />
-        <local:PathPicker x:Name="OptionalPick" Header="Folders a minimal branch leaves out"
-                          ToolTipService.ToolTip="'sg branch x --minimal' skips these, which makes a much smaller worktree." />
+        <!-- The folders sg treats apart. Most checkouts need none of them, so they wait closed, and the
+             header says what is set: a closed section that hid a choice would be a choice nobody sees. What
+             the volumes say about cloning is written under the header too, while the section is closed. -->
+        <Expander x:Name="FoldersSection" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                  AutomationProperties.Name="Folders" Expanding="Folders_Expanding" Collapsed="Folders_Collapsed">
+            <Expander.Header>
+                <StackPanel Spacing="2" Padding="0,8">
+                    <TextBlock Text="Folders" />
+                    <TextBlock x:Name="FoldersSummary" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="SharingNote" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="Wrap" Visibility="Collapsed"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Expander.Header>
+            <StackPanel Spacing="10">
+                <local:PathPicker x:Name="SkipPick" Header="Never store these folders"
+                                  ToolTipService.ToolTip="Big build output belongs here: it never enters the git store." />
+                <local:PathPicker x:Name="JunctionPick" Header="Share these folders with every worktree"
+                                  ToolTipService.ToolTip="A worktree gets them from the checkout instead of from git: as a junction, a ReFS clone, or a full copy. The box below says which." />
+                <local:SharedModeBox x:Name="SharedBox" Header="Worktrees get those folders as"
+                                     ToolTipService.ToolTip="A junction shares one folder with every worktree. A ReFS clone or a full copy gives each worktree its own. The clone costs nothing until it is written, and needs the checkout and the worktrees on one ReFS volume." />
+                <local:PathPicker x:Name="OptionalPick" Header="Folders a minimal branch leaves out"
+                                  ToolTipService.ToolTip="'sg branch x --minimal' skips these, which makes a much smaller worktree." />
+            </StackPanel>
+        </Expander>
     </StackPanel>
 </UserControl>

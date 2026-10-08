@@ -44,9 +44,51 @@ public sealed partial class CheckoutFields : UserControl
         };
         UrlBox.TextChanged += (_, _) => { AutoFillFolder(); Later(); };
         NameBox.TextChanged += (_, _) => { AutoFillFolder(); Later(); };
-        SharedBox.Changed += () => Changed?.Invoke();
+        SharedBox.Changed += () => { _cloneFellBack = false; ShowFolders(); Changed?.Invoke(); };
+        SkipPick.Changed += ShowFolders;
+        JunctionPick.Changed += ShowFolders;
+        OptionalPick.Changed += ShowFolders;
         Loaded += (_, _) => { if (base.IsEnabled) Revalidate(); };
         Unloaded += (_, _) => { _check.Stop(); ++_validation; };
+        ShowFolders();
+    }
+
+    /// <summary>A clone was chosen and the volumes said it cannot be made, so the box went back to a junction.</summary>
+    bool _cloneFellBack;
+
+    /// <summary>
+    /// What the closed Folders section holds, on its header, and what the volumes said about cloning under
+    /// it. Open, the box says that itself; a clone that fell back to a junction is said either way, because
+    /// the box only shows where it landed.
+    /// </summary>
+    void ShowFolders()
+    {
+        FoldersSummary.Text = FoldersText(SkipPick.Paths.Count, JunctionPick.Paths.Count, SharedBox.Mode, OptionalPick.Paths.Count);
+        var note = SharedBox.Note;
+        if (_cloneFellBack) note = "A ReFS clone cannot be made here, so shared folders are junctions again." + (note != null ? " " + note : "");
+        SharingNote.Text = note ?? "";
+        SharingNote.Visibility = note != null && (_cloneFellBack || !FoldersSection.IsExpanded) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void Folders_Expanding(Expander sender, ExpanderExpandingEventArgs args) => ShowFolders();
+    void Folders_Collapsed(Expander sender, ExpanderCollapsedEventArgs args) => ShowFolders();
+
+    /// <summary>
+    /// The three folder lists in one line, "2 never stored · 1 junction", for a section that is closed. The
+    /// edit page's section says the same in the same words.
+    /// </summary>
+    internal static string FoldersText(int skip, int shared, SharedMode mode, int optional)
+    {
+        var parts = new List<string>();
+        if (skip > 0) parts.Add($"{skip} never stored");
+        if (shared > 0) parts.Add(mode switch
+        {
+            SharedMode.Clone => shared == 1 ? "1 ReFS clone" : $"{shared} ReFS clones",
+            SharedMode.Copy => shared == 1 ? "1 full copy" : $"{shared} full copies",
+            _ => shared == 1 ? "1 junction" : $"{shared} junctions",
+        });
+        if (optional > 0) parts.Add($"{optional} left out of a minimal branch");
+        return parts.Count > 0 ? string.Join(" · ", parts) : "None: every folder is stored, and none is shared with worktrees.";
     }
 
     readonly Microsoft.UI.Xaml.DispatcherTimer _check = new() { Interval = TimeSpan.FromMilliseconds(200) };
@@ -154,7 +196,10 @@ public sealed partial class CheckoutFields : UserControl
             var result = await Task.Run(() => (Validation: Problem(fromUrl, url, folder, name, checkouts, rootPath), Sharing: SharedModeBox.Check(folder, worktreeRoot)));
             if (request != _validation) return;
             var (problem, severity) = result.Validation;
+            var wasClone = SharedBox.Mode == SharedMode.Clone;
             SharedBox.Apply(result.Sharing);
+            if (wasClone && SharedBox.Mode != SharedMode.Clone) _cloneFellBack = true;
+            ShowFolders();
             Ok = problem == null; _checking = false;
             // A git clone or a git URL is said so, while it is good: the reader learns which server this is before the long step.
             var note = problem == null ? GitNote(fromUrl, url, folder) : null;

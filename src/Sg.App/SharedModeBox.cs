@@ -61,6 +61,9 @@ public sealed class SharedModeBox : UserControl
     /// <summary>Why a clone is off the table here. Null when it is on, or when the paths are not known yet.</summary>
     public string? Problem { get; private set; }
 
+    /// <summary>The line under the box, or null while it says nothing. A host that folds the box away writes it where it is read.</summary>
+    public string? Note => _note.Visibility == Visibility.Visible ? _note.Text : null;
+
     /// <summary>
     /// Asks the volumes whether a clone from the checkout into a worktree under worktreeRoot can work,
     /// and sets the clone item and the line under the box from the answer. A blank path means the

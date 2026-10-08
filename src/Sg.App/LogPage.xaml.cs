@@ -39,9 +39,9 @@ public sealed partial class LogPage : SgPage
         // The same actions the buttons under the list offer, on the rows they act on. The buttons say what
         // is possible and stay where the eye can find them; the menu is for the hand that is already on
         // the commit. Both run exactly the same code, and the menu is greyed by the same rules.
-        Commits.RightTapped += (_, e) =>
+        RowMenu.Attach(Commits, source =>
         {
-            if (RowUnder(e.OriginalSource as DependencyObject) is not { } row) return;
+            if (RowUnder(source) is not { } row) return null;
             // Right clicking a commit outside the picked set picks it, so the menu is about what it is on.
             if (!Picked().Any(p => p.Sha == row.Sha)) Commits.SelectedItem = row;
             var menu = new MenuFlyout();
@@ -64,9 +64,8 @@ public sealed partial class LogPage : SgPage
             Add(menu, "Discard this commit", "\uE74D", DiscardCommitButton.IsEnabled, "Discard this commit",
                 "Take this commit out of the branch. The commits over it are replayed, and Activity keeps the branch as it was.",
                 () => DiscardCommit_Click(this, null!));
-            menu.ShowAt(Commits, new FlyoutShowOptions { Position = e.GetPosition(Commits) });
-            e.Handled = true;
-        };
+            return menu;
+        });
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display);
         _filter.Picked += OnPicked;
         _filter.ExpectStats = true;

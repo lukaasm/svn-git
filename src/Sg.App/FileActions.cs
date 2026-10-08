@@ -17,10 +17,10 @@ public static class FileActions
     /// </summary>
     public static void Attach(ListView tree, Func<TreeNode, string?> absolutePathOf, Action<MenuFlyout, TreeNode>? extend = null)
     {
-        tree.RightTapped += (_, e) =>
+        RowMenu.Attach(tree, source =>
         {
-            var node = NodeUnder(e.OriginalSource as DependencyObject);
-            if (node == null) return;
+            var node = NodeUnder(source);
+            if (node == null) return null;
             // Right clicking a line also selects it, so the diff follows the menu.
             if (tree.SelectionMode != ListViewSelectionMode.None && !ReferenceEquals(tree.SelectedItem, node))
                 tree.SelectedItem = node;
@@ -29,9 +29,8 @@ public static class FileActions
             catch (Exception) { path = null; }
             var menu = Menu(path);
             extend?.Invoke(menu, node);
-            menu.ShowAt(tree, new FlyoutShowOptions { Position = e.GetPosition(tree) });
-            e.Handled = true;
-        };
+            return menu;
+        });
     }
 
     static MenuFlyout Menu(string? path)

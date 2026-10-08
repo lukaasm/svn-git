@@ -92,12 +92,7 @@ public sealed partial class PushPage : SgPage
         _scopeDebounce.Tick += (_, _) => { _scopeDebounce.Stop(); _ = LoadAsync(); };
         // The menu is about the line under the pointer, and opening it moves nothing: the cut stays where
         // it was, so reading the menu never starts a new preview.
-        Commits.RightTapped += (_, e) =>
-        {
-            if (RowUnder(e.OriginalSource as DependencyObject) is not { } row) return;
-            CommitMenu(row).ShowAt(Commits, new FlyoutShowOptions { Position = e.GetPosition(Commits) });
-            e.Handled = true;
-        };
+        RowMenu.Attach(Commits, source => RowUnder(source) is { } row ? CommitMenu(row) : null);
         Message.Minimum = Session.Root?.Config.MinMessageLength ?? 10;
         // The shared text is needed while any working copy still uses it, and each own text has the same rule.
         Message.Needed = () => _repos.Count == 0 || _repos.Any(r => !r.Custom);

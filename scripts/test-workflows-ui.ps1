@@ -78,13 +78,6 @@ function Invoke-Ui([string]$value, [switch]$Name) {
 function Set-Ui([string]$id, [string]$value) {
     (Wait-For $id { Find-Ui $id }).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
 }
-function Expand-Worktree([string]$name) {
-    $card = Wait-For 'worktree card' { Find-Ui ('BackupWorktree_' + $name) -IncludeOffscreen }
-    $expander = $card.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true))
-    if (!$expander) { throw "Worktree card has no accessible expander: $name" }
-    $expander.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-}
 function Assert-BackupStatus([string]$name, [string]$status, [bool]$confirmed = $false) {
     $null = Wait-For "$name status: $status" {
         $card = Find-Ui ('BackupWorktree_' + $name) -IncludeOffscreen
@@ -421,12 +414,15 @@ try {
     Set-Ui 'BackupSearch' 'scoped-local'
     $null = Wait-For 'local worktree search finishes' { (Find-Ui 'BackupMatches').Current.Name -like '1 of *' }
     Assert-BackupStatus 'scoped-local' 'Local only'
-    Expand-Worktree 'scoped-local'
-    $null = Wait-For 'local-only restore is unavailable' { $b = Find-Ui 'BackupWorktreeRestore_scoped-local' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
-    Invoke-Ui 'BackupWorktreeSend_scoped-local'
+    # The card's own menu is a right click; the worktree's page offers its backup in view.
+    Invoke-Ui 'BackupWorktreeOpen_scoped-local'
+    # No remote copy means nothing to restore: the first backup takes Restore's place.
+    $null = Wait-For 'local-only restore is unavailable' { (Find-Ui 'FirstBackupButton') -and !(Find-Ui 'RestoreButton' -IncludeOffscreen) }
+    Invoke-Ui 'FirstBackupButton'
     Wait-Receipt
     if ((Run 'git' @('--git-dir', $backup, 'show', 'refs/heads/scoped-local:scoped.txt')).Trim() -ne 'selected worktree') { throw 'Scoped backup did not publish its worktree.' }
     if ((Run 'git' @('--git-dir', $backup, 'rev-parse', 'refs/heads/imported')).Trim() -ne $beforeOther) { throw 'Scoped backup sent unrelated work.' }
+    Invoke-Ui 'NavigationViewBackButton'
     Assert-BackupStatus 'scoped-local' 'Commits saved' $true
     if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'worktree-backups.png') }
     Invoke-Ui 'TaskQueueToggle'
@@ -447,9 +443,12 @@ try {
     Start-App 'backup' $root
     Set-Ui 'BackupSearch' 'remote-selected'
     $null = Wait-For 'remote worktree search finishes' { (Find-Ui 'BackupMatches').Current.Name -like '1 of *' }
-    Expand-Worktree 'remote-selected'
-    $null = Wait-For 'remote-only backup is unavailable' { $b = Find-Ui 'BackupWorktreeSend_remote-selected' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
-    Invoke-Ui 'BackupWorktreePrune_remote-selected'
+    # The card's own menu is a right click; the worktree's page has the same actions behind its "...".
+    Invoke-Ui 'BackupWorktreeOpen_remote-selected'
+    $null = Wait-For 'restore offered for the remote copy' { Find-Ui 'RestoreButton' }
+    Invoke-Ui 'MoreButton'
+    $null = Wait-For 'remote-only backup is unavailable' { $b = Find-Ui 'BackupNowButton' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
+    Invoke-Ui 'PruneButton'
     $null = Wait-For 'selected prune confirmation' { Find-Ui 'PrimaryButton' }
     $texts = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
         Where-Object { !$_.Current.IsOffscreen -and $_.Current.Name -like 'Delete these*' } | ForEach-Object { $_.Current.Name }

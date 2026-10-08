@@ -24,16 +24,25 @@ public sealed partial class BackupPage
                 // A copy with no folder here has the cloud where the folder is, which says it already.
                 BadgeVisibility = worktree.Path == null ? Visibility.Collapsed : Visibility.Visible,
             };
-            var card = new SettingsExpander { Header = header, HorizontalAlignment = HorizontalAlignment.Stretch };
+            // One line of what is where: the folder here, and what the backup holds of it.
+            var remote = worktree.Remote == null ? "No remote copy yet"
+                : (worktree.Remote.HasWip ? "The backup holds commits and saved edits." : "The backup holds commits.")
+                    + (worktree.Remote.HasReview ? " Code review comments and context are included." : "")
+                    + (worktree.Remote.HasAppearance ? " Checkout appearance is included." : "");
+            var card = new SettingsCard
+            {
+                Header = header, Description = (worktree.Path ?? "No local worktree folder") + "\n" + remote,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
             AutomationProperties.SetAutomationId(card, "BackupWorktree_" + worktree.Name);
             AutomationProperties.SetName(card, worktree.Name);
             // The card's button opens the worktree's backup page, named for what it is there for: a copy
             // with nothing here is restored; anything else is managed - backed up, compared, restored.
-            var open = worktree.Path == null
-                ? WorktreeButton("Restore…", "\uE896", "BackupWorktreeOpen_" + worktree.Name,
-                    () => { OpenWorktree(worktree.Name); return Task.CompletedTask; }, help: "Choose a checkout and a branch name to restore " + worktree.Name + " here.")
-                : WorktreeButton("Manage", "\uE713", "BackupWorktreeOpen_" + worktree.Name,
-                    () => { OpenWorktree(worktree.Name); return Task.CompletedTask; }, help: "Open backup and restore options for " + worktree.Name);
+            var (openText, openGlyph, openHelp) = worktree.Path == null
+                ? ("Restore…", "\uE896", "Choose a checkout and a branch name to restore " + worktree.Name + " here.")
+                : ("Manage", "\uE713", "Open backup and restore options for " + worktree.Name);
+            var open = WorktreeButton(openText, openGlyph, "BackupWorktreeOpen_" + worktree.Name,
+                () => { OpenWorktree(worktree.Name); return Task.CompletedTask; }, help: openHelp);
             open.MinWidth = (double)Application.Current.Resources["CardActionWidth"];
             var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (worktree.Remote?.HasReview == true)
@@ -45,58 +54,47 @@ public sealed partial class BackupPage
             }
             right.Children.Add(open);
             card.Content = right;
-            var populated = false;
-            void Populate()
-            {
-                if (populated) return;
-                populated = true;
-                var backup = WorktreeButton("Back up", "\uE74E", "BackupWorktreeSend_" + worktree.Name,
-                    () => BackUpAsync(worktree.Name), worktree.CanBackUp,
-                    worktree.Excluded ? "Include this worktree in its backup settings first." : worktree.Path == null
-                        ? "Restore this remote copy to a local worktree before backing it up." : "Back up only " + worktree.Name);
-                card.Items.Add(new SettingsCard
-                {
-                    Header = "Local worktree", Description = worktree.Path ?? "No local worktree folder",
-                    HeaderIcon = new FontIcon { Glyph = "\uE8B7" }, Content = new TaskGate { Content = backup },
-                });
-                var restore = WorktreeButton("Restore…", "\uE896", "BackupWorktreeRestore_" + worktree.Name,
-                    () => { OpenWorktree(worktree.Name); return Task.CompletedTask; }, worktree.Remote != null,
-                    worktree.Remote == null ? "Back up this worktree to create its first remote copy." : "Choose a checkout, branch name, saved edits, and replacement options for " + worktree.Name);
-                card.Items.Add(new SettingsCard
-                {
-                    Header = "Remote backup", Description = worktree.Remote == null ? "No remote copy yet"
-                        : (worktree.Remote.HasWip ? "Contains commits and saved edits." : "Contains commits.")
-                            + (worktree.Remote.HasReview ? " Code review comments and context are included." : "")
-                            + (worktree.Remote.HasAppearance ? " Checkout appearance is included." : "") + " Open to review their version.",
-                    HeaderIcon = new FontIcon { Glyph = "\uE753" }, Content = restore,
-                });
-                var catalog = _catalog;
-                var compare = WorktreeButton("Compare…", "\uE8A5", "BackupWorktreeCompare_" + worktree.Name,
-                    () => { Go(() => new BackupComparePage(worktree.Name, catalog), "backup-compare:" + worktree.Name); return Task.CompletedTask; },
-                    worktree.Remote != null, "Compare local and saved commit histories; read a patch only when selected.");
-                card.Items.Add(new SettingsCard
-                {
-                    Header = "Compare histories", Description = "Review local and saved commits side by side, with their SVN bases and patches.",
-                    HeaderIcon = new FontIcon { Glyph = "\uE8A5" }, Content = compare,
-                });
-                var prune = WorktreeButton("Prune…", "\uE74D", "BackupWorktreePrune_" + worktree.Name,
-                    () => PruneAsync(worktree.Name), help: "Preview stale refs belonging only to " + worktree.Name);
-                card.Items.Add(new SettingsCard
-                {
-                    Header = "Prune this worktree's backup", Description = "Review stale commits, saved edits, shelves, and metadata before deleting them from the remote.",
-                    HeaderIcon = new FontIcon { Glyph = "\uE74D" }, Content = new TaskGate { Content = prune },
-                });
-            }
-            card.RegisterPropertyChangedCallback(SettingsExpander.IsExpandedProperty, (_, _) =>
-            {
-                // Remember immediately, before the expansion animation finishes or search rebuilds the cards.
-                if (!Branches.Children.Contains(card)) return;
-                if (card.IsExpanded) { _expanded.Add(worktree.Name); Populate(); }
-                else _expanded.Remove(worktree.Name);
-            });
-            if (_expanded.Contains(worktree.Name)) { Populate(); card.IsExpanded = true; }
+            card.ContextFlyout = WorktreeMenu(worktree, openText, openGlyph, openHelp);
+            // A card that is not a button is no tab stop, and Shift+F10 needs the card itself focused.
+            // The template turns it off again when it is applied, so this comes after that.
+            card.Loaded += (_, _) => { card.ApplyTemplate(); card.IsTabStop = true; };
             Branches.Children.Add(card);
         }
+    }
+
+    /// <summary>
+    /// The rest of what a worktree card can do, on its right click and Shift+F10: the card's own button
+    /// first, then the backup, the comparison and the prune that used to fill the card when it opened.
+    /// </summary>
+    MenuFlyout WorktreeMenu(BackupWorktree worktree, string openText, string openGlyph, string openHelp)
+    {
+        var menu = new MenuFlyout();
+        menu.Items.Add(MenuItem(openText, openGlyph, null, () => { OpenWorktree(worktree.Name); return Task.CompletedTask; }, help: openHelp));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var backup = MenuItem("Back up", "\uE74E", "BackupWorktreeSend_" + worktree.Name,
+            () => BackUpAsync(worktree.Name), worktree.CanBackUp,
+            worktree.Excluded ? "Include this worktree in its backup settings first." : worktree.Path == null
+                ? "Restore this remote copy to a local worktree before backing it up." : "Back up only " + worktree.Name);
+        menu.Items.Add(backup);
+        var catalog = _catalog;
+        menu.Items.Add(MenuItem("Compare histories…", "\uE8A5", "BackupWorktreeCompare_" + worktree.Name,
+            () => { Go(() => new BackupComparePage(worktree.Name, catalog), "backup-compare:" + worktree.Name); return Task.CompletedTask; },
+            worktree.Remote != null, worktree.Remote == null ? "Back up this worktree to create its first remote copy."
+                : "Compare local and saved commit histories; read a patch only when selected."));
+        var prune = MenuItem("Prune…", "\uE74D", "BackupWorktreePrune_" + worktree.Name,
+            () => PruneAsync(worktree.Name), help: "Preview stale refs belonging only to " + worktree.Name + ". Confirm the exact list before deleting.");
+        menu.Items.Add(prune);
+        // Backing up and pruning take the repository; the menu greys them while a task holds it.
+        return MenuGate.Gate(menu, backup, prune);
+    }
+
+    static MenuFlyoutItem MenuItem(string label, string glyph, string? id, Func<Task> run, bool enabled = true, string help = "")
+    {
+        var item = new MenuFlyoutItem { Text = label, Icon = new FontIcon { Glyph = glyph }, IsEnabled = enabled };
+        if (id != null) AutomationProperties.SetAutomationId(item, id);
+        TaskGate.SetHelp(item, help);
+        item.Click += async (_, _) => await Busy.During(item, run);
+        return item;
     }
 
     /// <summary>

@@ -230,10 +230,7 @@ try {
     $null = Wait-For 'backup results retain search' { $count = Find 'BackupMatches'; $count -and $count.Current.Name -like 'No matching*' }
     Set-Field 'BackupSearch' ''
     $null = Wait-For 'backup search cleared' { (Find 'BackupMatches').Current.Name -like '*worktrees*saved edits*' }
-    $card = Find 'BackupWorktree_source'
-    $expandable = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
-    $card.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-    $null = Wait-For 'worktree actions expand' { Find 'BackupWorktreeSend_source' }
+    $null = Wait-For 'source worktree listed' { Find 'BackupWorktree_source' }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-search.png')
     $backupScroll = (Find 'ContentScroll').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     $null = Wait-For 'backup scrolled before leaving' { $backupScroll.SetScrollPercent(-1, 50); $backupScroll.Current.VerticalScrollPercent -gt 40 }
@@ -243,10 +240,13 @@ try {
         $scroller = Find 'ContentScroll'
         $scroller -and $scroller.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).Current.VerticalScrollPercent -gt 40
     }
-    $null = Wait-For 'expanded backup worktree retained' { Find 'BackupWorktreeSend_source' }
+    $null = Wait-For 'backup worktree retained' { Find 'BackupWorktree_source' }
 
     Start-UiScenario 'Compare selected histories, inspect patches, and retain search and selection'
-    Invoke-Element (Find 'BackupWorktreeCompare_source')
+    # The card's own menu is a right click; the worktree's page has Compare behind its "...".
+    Invoke-Element (Find 'BackupWorktreeOpen_source')
+    Invoke-Element (Wait-For 'worktree page actions' { Find 'MoreButton' })
+    Invoke-Element (Wait-For 'compare histories action' { $b = Find 'CompareButton'; if ($b -and $b.Current.IsEnabled) { $b } })
     $null = Wait-For 'comparison loaded' { $label = Find 'ComparedAt'; $label -and $label.Current.Name -like 'source*Compared*' }
     $listItem = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty, $true)
     $localCommit = (Find 'BackupCompareLocal').FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listItem)
@@ -269,6 +269,8 @@ try {
     $null = Wait-For 'comparison selection restored on return' { $title = Find 'TitleText'; $title -and $title.Current.Name -eq $selectedTitle }
     Start-Sleep -Milliseconds 500
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'backup-comparison.png')
+    Invoke-Element (Find 'NavigationViewBackButton')
+    $null = Wait-For 'return to the worktree page' { !(Find 'ComparedAt') -and (Find 'BackupActions') }
     Invoke-Element (Find 'NavigationViewBackButton')
     $null = Wait-For 'return to backup worktrees' { Find 'BackupSearch' }
 

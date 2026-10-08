@@ -59,14 +59,27 @@
                                 <TextBlock x:Name="UrlText" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                             </StackPanel>
                             <!-- What reaches every worktree at once sits behind the same "..." the checkout's own
-                                 toolbar has: each card already backs up its own, so these are the rare ones. -->
+                                 toolbar has: each card already backs up its own, so these are the rare ones. A
+                                 worktree's own page keeps its rare ones here too, so Restore is its one button. -->
                             <CommandBar x:Name="BackupActions" Grid.Column="2" Background="Transparent" VerticalAlignment="Center"
-                                        DefaultLabelPosition="Right" AutomationProperties.Name="all worktrees">
+                                        DefaultLabelPosition="Right" AutomationProperties.Name="all worktrees" local:MenuGate.Watch="True">
                                 <CommandBar.SecondaryCommands>
                                     <AppBarButton x:Name="BackupAllButton" Label="Back up all worktrees" AutomationProperties.AutomationId="BackupAll" Click="BackupAll_Click">
                                         <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
                                     </AppBarButton>
                                     <AppBarButton x:Name="PruneAllButton" Label="Prune all stale backups…" AutomationProperties.AutomationId="PruneAll" Click="PruneAll_Click">
+                                        <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
+                                    </AppBarButton>
+                                    <AppBarButton x:Name="BackupNowButton" Label="Back up this worktree" Click="BackupNow_Click" local:MenuGate.Gated="True"
+                                                  ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings.">
+                                        <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
+                                    </AppBarButton>
+                                    <AppBarButton x:Name="CompareButton" Label="Compare histories…" Click="Compare_Click"
+                                                  ToolTipService.ToolTip="Compare local and saved commit histories; read a patch only when selected.">
+                                        <AppBarButton.Icon><FontIcon Glyph="&#xE8A5;" /></AppBarButton.Icon>
+                                    </AppBarButton>
+                                    <AppBarButton x:Name="PruneButton" Label="Prune this worktree's backup…" Click="Prune_Click" local:MenuGate.Gated="True"
+                                                  ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting.">
                                         <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
                                     </AppBarButton>
                                 </CommandBar.SecondaryCommands>
@@ -177,8 +190,8 @@
                              ToolTipService.ToolTip="The name the branch and worktree get here. You can choose a different name." />
                 </StackPanel>
             </local:FormColumns>
-            <Expander x:Name="AdvancedOptions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-                      AutomationProperties.AutomationId="RestoreAdvanced" AutomationProperties.Name="Advanced restore options and cleanup">
+            <Expander x:Name="AdvancedOptions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="Collapsed"
+                      AutomationProperties.AutomationId="RestoreAdvanced" AutomationProperties.Name="Advanced restore options">
                 <Expander.Header>
                     <local:WrapRow Spacing="12" LineSpacing="4">
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -189,22 +202,16 @@
                         <local:StatusChip x:Name="ReplaceNotice" Severity="Caution" Glyph="&#xE7BA;" Text="Replacement enabled" Visibility="Collapsed" />
                     </local:WrapRow>
                 </Expander.Header>
-                <StackPanel Spacing="8">
-                    <local:WrapRow x:Name="RestoreOptions" Spacing="24" LineSpacing="4" Visibility="Collapsed">
-                        <!-- An input, not an action: the hint explains why it is off, and a running restore
-                             locks it with the rest of the form, so no task gate talks over that lock. -->
-                        <local:ActionHint>
-                            <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
-                                      ToolTipService.ToolTip="Restore saved uncommitted changes through a shelf. Changes that do not merge remain on the shelf." />
-                        </local:ActionHint>
-                        <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
-                                  ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name." />
-                    </local:WrapRow>
-                    <local:TaskGate HorizontalAlignment="Left">
-                        <local:IconButton Glyph="&#xE74D;" Text="Prune worktree" Click="Prune_Click" x:Name="PruneButton"
-                                          ToolTipService.ToolTip="Preview stale backup refs belonging to this worktree. Confirm the exact list before deleting." />
-                    </local:TaskGate>
-                </StackPanel>
+                <local:WrapRow x:Name="RestoreOptions" Spacing="24" LineSpacing="4" Visibility="Collapsed">
+                    <!-- An input, not an action: the hint explains why it is off, and a running restore
+                         locks it with the rest of the form, so no task gate talks over that lock. -->
+                    <local:ActionHint>
+                        <CheckBox x:Name="WipBox" Content="With its uncommitted changes" IsChecked="True" Checked="Force_Changed" Unchecked="Force_Changed"
+                                  ToolTipService.ToolTip="Restore saved uncommitted changes through a shelf. Changes that do not merge remain on the shelf." />
+                    </local:ActionHint>
+                    <CheckBox x:Name="ForceBox" Content="Replace if it exists here" Checked="Force_Changed" Unchecked="Force_Changed"
+                              ToolTipService.ToolTip="Preserve the existing branch and worktree under a recovery name, then restore the backup under this name." />
+                </local:WrapRow>
             </Expander>
         </StackPanel>
 
@@ -222,11 +229,13 @@
                         </StackPanel>
                     </Button>
                 </local:TaskGate>
+                <!-- A worktree with no remote copy has nothing to restore, so its first backup takes
+                     Restore's place and the page still has its main action in view. -->
                 <local:TaskGate>
-                    <local:IconButton Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click" x:Name="BackupNowButton"
+                    <local:IconButton x:Name="FirstBackupButton" Glyph="&#xE74E;" Text="Back up worktree" Click="BackupNow_Click"
+                                      Style="{StaticResource AccentButtonStyle}" Visibility="Collapsed"
                                       ToolTipService.ToolTip="Back up this worktree, its saved shelves, and its uncommitted changes when enabled in Settings." />
                 </local:TaskGate>
-                <Button x:Name="LeaveButton" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is written by leaving." />
             </local:WrapRow>
         </StackPanel>
         <local:StatusStrip x:Name="Pane" Grid.Row="4" Margin="0,8,0,0" />

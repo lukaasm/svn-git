@@ -106,10 +106,10 @@ Launch 'overview' $fixture
 # Backup is in the checkout toolbar's More menu.
 Invoke-Control (Wait-For { $bar = Find 'Actions'; if ($bar) { Find 'MoreButton' -within $bar } })
 Invoke-Control (Wait-For { Find 'BackupButton' })
-$card = Wait-For { Find 'BackupWorktree_feature' }
-$condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
-$card.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-Invoke-Control (Wait-For { Find 'BackupWorktreeCompare_feature' })
+# The card's own menu is a right click; the worktree's page has Compare behind its "...".
+Invoke-Control (Wait-For { Find 'BackupWorktreeOpen_feature' })
+Invoke-Control (Wait-For { Find 'MoreButton' })
+Invoke-Control (Wait-For { $b = Find 'CompareButton'; if ($b -and $b.Current.IsEnabled) { $b } })
 $null = Wait-For { (Find 'ComparedAt').Current.Name -like 'feature*Compared*' }
 Select-Control (List-Rows 'BackupCompareRemote' | Select-Object -First 1)
 $null = Wait-For { (Find 'TitleText').Current.Name -like 'Backup*' }

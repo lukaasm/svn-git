@@ -68,19 +68,21 @@ function Assert-Layout([bool]$narrow, [string]$action, [bool]$advanced = $false)
     }
     $bounds = $window.Current.BoundingRectangle
     $ids = @('IntoBox', 'NameBox', 'Summary', $action)
-    if ($action -eq 'RestoreButton') { $ids += @('BackupNowButton', 'RestoreAdvanced') }
-    if ($advanced) { $ids += @('WipBox', 'ForceBox', 'PruneButton') }
+    if ($action -eq 'RestoreButton') { $ids += @('MoreButton', 'RestoreAdvanced') }
+    if ($advanced) { $ids += @('WipBox', 'ForceBox') }
     foreach ($id in $ids) {
         $control = Find $id; $r = $control.Current.BoundingRectangle
         if (!$control -or $control.Current.IsOffscreen -or $r.Width -lt 20 -or $r.Height -lt 16 -or $r.Left -lt $bounds.Left -or $r.Right -gt $bounds.Right -or $r.Bottom -gt $bounds.Bottom) {
             throw "Clipped destination control: $id ($r), window $bounds"
         }
     }
-    $primary = (Find $action).Current.BoundingRectangle
-    $secondaryId = if ($action -eq 'RestoreButton') { 'BackupNowButton' } else { 'PickButton' }
-    $secondary = (Find $secondaryId).Current.BoundingRectangle
-    if ($primary.Top -gt $secondary.Top + 2 -or ([Math]::Abs($primary.Top - $secondary.Top) -le 2 -and $primary.Left -gt $secondary.Left)) {
-        throw 'The primary import/restore action is not first.'
+    # Restore is alone in its row: the worktree's backup, comparison and prune are behind its page's "...".
+    if ($action -ne 'RestoreButton') {
+        $primary = (Find $action).Current.BoundingRectangle
+        $secondary = (Find 'PickButton').Current.BoundingRectangle
+        if ($primary.Top -gt $secondary.Top + 2 -or ([Math]::Abs($primary.Top - $secondary.Top) -le 2 -and $primary.Left -gt $secondary.Left)) {
+            throw 'The primary import action is not first.'
+        }
     }
     if ($narrow -and $action -eq 'RestoreButton' -and (Find 'CheckoutNav_Fort').Current.BoundingRectangle.Width -gt $bounds.Width * 0.15) {
         throw 'The sidebar did not collapse to an icon rail at narrow width.'
@@ -170,6 +172,11 @@ try {
                     $control = Find $id
                     if ($control -and !$control.Current.IsOffscreen) { throw "$id is exposed before opening Advanced." }
                 }
+                # Back up, Compare and Prune are this worktree's rare actions, behind the page's "...".
+                Invoke-Control (Find 'MoreButton')
+                foreach ($id in @('BackupNowButton', 'CompareButton', 'PruneButton')) { $null = Wait-For { $c = Find $id; $c -and !$c.Current.IsOffscreen } "$id is not in the page's More menu." }
+                Invoke-Control (Find 'MoreButton')
+                $null = Wait-For { $c = Find 'PruneButton'; !$c -or $c.Current.IsOffscreen } 'The More menu did not close.'
                 (Find 'RestoreAdvanced').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
                 $null = Wait-For { (Find 'ForceBox') -and !(Find 'ForceBox').Current.IsOffscreen }
                 Assert-Layout ($width -eq 600) $action $true

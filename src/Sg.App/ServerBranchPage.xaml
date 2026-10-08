@@ -6,23 +6,44 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
     <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
         <StackPanel Grid.Row="0" Spacing="10">
-            <TextBlock x:Name="Intro" Style="{StaticResource Secondary}"
-                       Text="Copies the branch on the server, one revision per repository, and rewrites every svn:externals. Each external can get a branch name of its own, or stay on the branch it points at now. Then it makes a checkout by copying the source checkout and svn switch. Run the dry run first." />
+            <!-- One line; the whole of what it does is a hover away, and the plan spells it out. -->
+            <TextBlock x:Name="Intro" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis"
+                       Text="Copies the branch on the server, one revision per repository, and rewrites every svn:externals." />
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <TextBox x:Name="NameBox" Header="Branch name" Width="240" PlaceholderText="rel-1" TextChanged="Name_TextChanged" />
                 <ComboBox x:Name="FromBox" Header="From checkout" Width="220" SelectionChanged="From_SelectionChanged" />
-                <TextBox x:Name="MessageBox" Header="Commit message" Width="340" PlaceholderText="- Creating branch: name" />
             </StackPanel>
+            <!-- The message has a default every branch gets; a written one is said in the header. -->
+            <Expander x:Name="Options" Width="472" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Branch options">
+                <Expander.Header>
+                    <local:WrapRow Spacing="12" LineSpacing="4">
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" FontSize="16" /><TextBlock Text="Options" /></StackPanel>
+                        <TextBlock x:Name="OptionsNotice" Style="{StaticResource Secondary}" Text="custom message" Visibility="Collapsed" VerticalAlignment="Center" />
+                    </local:WrapRow>
+                </Expander.Header>
+                <TextBox x:Name="MessageBox" Header="Commit message" PlaceholderText="- Creating branch: name" TextChanged="Message_TextChanged" />
+            </Expander>
+            <!-- The accent moves with the state: Dry run until there is a plan, then Create. -->
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <local:IconButton Glyph="&#xE9D9;" Text="Dry run"
+                <local:IconButton x:Name="DryRunButton" Glyph="&#xE9D9;" Text="Dry run" Style="{StaticResource AccentButtonStyle}"
                     Click="DryRun_Click" ToolTipService.ToolTip="Work out the plan and show it below. Reads from the server, changes nothing." />
                 <local:TaskGate>
-                    <local:IconButton Glyph="&#xE753;" Text="Create the branch and check it out"
-                        x:Name="CreateButton" Style="{StaticResource AccentButtonStyle}" Click="Create_Click" IsEnabled="False" ToolTipService.ToolTip="Run the plan: one revision per repository on the server, everyone sees them. Then make the checkout. Asks first. Needs a dry run first." />
+                    <local:AccentSplitButton x:Name="CreateButton" Click="Create_Click" IsEnabled="False" AutomationProperties.Name="Create the branch and check it out"
+                        ToolTipService.ToolTip="Run the plan: one revision per repository on the server, everyone sees them. Then make the checkout. Asks first. Needs a dry run first.">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE753;" FontSize="14" />
+                            <TextBlock Text="Create the branch and check it out" />
+                        </StackPanel>
+                        <local:AccentSplitButton.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft" local:MenuGate.Watch="True">
+                                <MenuFlyoutItem x:Name="NoCheckout" Text="Create branch only" Click="CreateBranchOnly_Click" local:MenuGate.Gated="True"
+                                                ToolTipService.ToolTip="Make the branch on the server but no local checkout. You can add one later with New server checkout.">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE753;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </local:AccentSplitButton.Flyout>
+                    </local:AccentSplitButton>
                 </local:TaskGate>
-                <CheckBox x:Name="NoCheckout" Content="Branch only, no checkout" VerticalAlignment="Center"
-                          ToolTipService.ToolTip="Make the branch on the server but no local checkout. You can add one later with New server checkout." />
-                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
             </StackPanel>
         </StackPanel>
 

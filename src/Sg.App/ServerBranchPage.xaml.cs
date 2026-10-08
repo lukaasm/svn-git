@@ -123,8 +123,19 @@ public sealed partial class ServerBranchPage : SgPage
         _generation++;
         _plan = null;
         ShowPlan("");
-        CreateButton.IsEnabled = false;
+        SyncActions();
     }
+
+    /// <summary>One accent at a time: Dry run until there is a plan to run, then Create.</summary>
+    void SyncActions()
+    {
+        CreateButton.IsEnabled = _plan != null;
+        DryRunButton.Style = _plan == null ? (Style)Application.Current.Resources["AccentButtonStyle"] : null;
+    }
+
+    /// <summary>The message sits in a closed Options box, so its header says when one is written.</summary>
+    void Message_TextChanged(object sender, TextChangedEventArgs e) =>
+        OptionsNotice.Visibility = MessageBox.Text.Trim().Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
     void Name_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -165,18 +176,21 @@ public sealed partial class ServerBranchPage : SgPage
     /// <summary>The page's words for the picked checkout: SVN copies and externals, or git branches and submodules.</summary>
     void SayServer(CheckoutConfig co)
     {
+        // One line each, with the whole of it on hover.
         if (co.IsGit)
         {
-            Intro.Text = "Pushes a new branch to the remote at the newest commit of the server branch, and one to each submodule's own repository "
+            Intro.Text = "Pushes a new branch to the remote, and one to each submodule's repository unless it is kept.";
+            ToolTipService.SetToolTip(Intro, "Pushes a new branch to the remote at the newest commit of the server branch, and one to each submodule's own repository "
                          + "unless it is kept; the new branch names them in .gitmodules. Each submodule can get a branch name of its own. "
-                         + "Then it clones the new branch beside the source checkout. Run the dry run first.";
+                         + "Then it clones the new branch beside the source checkout. Run the dry run first.");
             NoParts.Title = "No submodules";
             NoParts.Text = "This clone has no submodules checked out. The branch is one branch of it.";
         }
         else
         {
-            Intro.Text = "Copies the branch on the server, one revision per repository, and rewrites every svn:externals. Each external can get a branch name "
-                         + "of its own, or stay on the branch it points at now. Then it makes a checkout by copying the source checkout and svn switch. Run the dry run first.";
+            Intro.Text = "Copies the branch on the server, one revision per repository, and rewrites every svn:externals.";
+            ToolTipService.SetToolTip(Intro, "Copies the branch on the server, one revision per repository, and rewrites every svn:externals. Each external can get a branch name "
+                         + "of its own, or stay on the branch it points at now. Then it makes a checkout by copying the source checkout and svn switch. Run the dry run first.");
             NoParts.Title = "No externals";
             NoParts.Text = "This checkout is one working copy. The branch is one copy of it.";
         }
@@ -222,10 +236,15 @@ public sealed partial class ServerBranchPage : SgPage
         if (gen != _generation) return;
         _plan = plan;
         ShowPlan(_plan?.Describe() ?? "");
-        CreateButton.IsEnabled = _plan != null;
+        SyncActions();
     }
 
-    async void Create_Click(object sender, RoutedEventArgs e)
+    async void Create_Click(SplitButton sender, SplitButtonClickEventArgs e) => await CreateAsync(branchOnly: false);
+
+    /// <summary>The split button's dropdown: the same plan, and no local checkout after it.</summary>
+    async void CreateBranchOnly_Click(object sender, RoutedEventArgs e) => await CreateAsync(branchOnly: true);
+
+    async Task CreateAsync(bool branchOnly)
     {
         var root = Session.Require();
         var co = Source();
@@ -240,7 +259,7 @@ public sealed partial class ServerBranchPage : SgPage
             var ok = await Runner.Run(Pane, "server branch " + plan.Name, () => Server.ExecuteBranch(root, plan));
             ShowPlan(plan.Describe() + "\n\n" + string.Join("\n", plan.Repos.Select(r => $"{r.ReposRoot}: {r.State}" + (r.Label.Length > 0 ? " " + r.Label : ""))));
             if (!ok) return;
-            if (NoCheckout.IsChecked == true)
+            if (branchOnly)
             {
                 Pane.Append("branch made. Make a checkout later with: New server checkout");
                 return;
@@ -249,6 +268,4 @@ public sealed partial class ServerBranchPage : SgPage
             if (res != null) Pane.Append($"checkout {res.Checkout.Name}: {res.Checkout.Path}, {Rev.Label(res.Snapshot.Revision, res.Snapshot.Commit)}");
         }, restoreEnabled: false);
     }
-
-    void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

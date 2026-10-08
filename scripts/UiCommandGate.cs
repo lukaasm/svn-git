@@ -40,15 +40,33 @@ internal static class UiCommandGate
         var start = new ProcessStartInfo(executable)
         {
             UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
         };
         foreach (var argument in args) start.ArgumentList.Add(argument);
         using var child = Process.Start(start)!;
-        var output = child.StandardOutput.ReadToEndAsync();
-        var error = child.StandardError.ReadToEndAsync();
+        // Both ways, as the bytes arrive: git cat-file --batch-command lives as long as the app does and
+        // answers each request on its own, so holding its output until it exits holds every read with it.
+        _ = Pump(Console.OpenStandardInput(), child.StandardInput.BaseStream, closeTarget: true);
+        var output = Pump(child.StandardOutput.BaseStream, Console.OpenStandardOutput());
+        var error = Pump(child.StandardError.BaseStream, Console.OpenStandardError());
         await child.WaitForExitAsync();
-        Console.Out.Write(await output);
-        Console.Error.Write(await error);
+        await Task.WhenAll(output, error);
         return child.ExitCode;
+    }
+
+    static async Task Pump(Stream from, Stream to, bool closeTarget = false)
+    {
+        var buffer = new byte[81920];
+        try
+        {
+            int read;
+            while ((read = await from.ReadAsync(buffer)) > 0)
+            {
+                await to.WriteAsync(buffer.AsMemory(0, read));
+                await to.FlushAsync();
+            }
+        }
+        catch (IOException) { }
+        finally { if (closeTarget) to.Close(); }
     }
 }

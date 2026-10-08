@@ -155,6 +155,8 @@ try {
     }
     $env:SG_UI_COMMAND_GATE = (New-Item -ItemType Directory -Path (Join-Path $ArtifactDirectory 'command-gate')).FullName
     [IO.File]::WriteAllText((Join-Path $env:SG_UI_COMMAND_GATE 'executable.txt'), (Get-Command git).Source)
+# The worktree's status is read on every preview; the top level is read once and remembered.
+[IO.File]::WriteAllText((Join-Path $env:SG_UI_COMMAND_GATE 'match.txt'), 'status')
     $source = [Security.SecurityElement]::Escape((Join-Path $PSScriptRoot 'UiCommandGate.cs'))
     $project = Join-Path $env:SG_UI_COMMAND_GATE 'UiCommandGate.csproj'
     [IO.File]::WriteAllText($project, "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Include=`"$source`" /></ItemGroup></Project>")

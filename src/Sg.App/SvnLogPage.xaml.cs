@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Sg.Core;
+using Windows.System;
 
 namespace Sg.App;
 
@@ -32,6 +33,7 @@ public sealed partial class SvnLogPage : SgPage
         SyncButton.Visibility = EmptySync.Visibility = incoming ? Visibility.Visible : Visibility.Collapsed;
         ColumnSplitter.Attach(Splitter);
         Shortcuts.DiffNavigation(this, Diff);
+        Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync());
         // The one file list in the app that had no right click at all. Reading a revision is exactly when
         // "open the folder this is in" and "who wrote this line" come up, and both were three pages away.
         FileActions.Attach(Paths, LocalOf, (menu, node) =>
@@ -88,6 +90,9 @@ public sealed partial class SvnLogPage : SgPage
 
     async void Reload_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => LoadAsync());
 
+    /// <summary>What the Options box holds when nobody touched it, in the XAML too.</summary>
+    const int DefaultLimit = 100;
+
     /// <summary>No revision to show: the sentence is the whole page, with the sync it still offers.</summary>
     void ShowEmpty(bool empty)
     {
@@ -111,9 +116,11 @@ public sealed partial class SvnLogPage : SgPage
     {
         if (_wcs.Count == 0) return;
         var root = Session.Require();
-        var limit = double.IsNaN(Limit.Value) ? 100 : (int)Limit.Value;
+        var limit = double.IsNaN(Limit.Value) ? DefaultLimit : (int)Limit.Value;
         var wcs = _wcs;
-        WcState.Text = $"{wcs.Count} working copies, reading the server...";
+        // The limit sits in a closed Options box, so the line says when it is not the usual one.
+        var reading = limit == DefaultLimit ? "" : $" Reading {limit} per working copy.";
+        WcState.Text = $"{wcs.Count} working copies, reading the server...{reading}";
         if (Revisions.ItemsSource == null) RevisionsSkeleton.Show();
         ShowEmpty(false);
         // The URL, not the working copy path: a working copy path only shows history up to its own revision.
@@ -177,6 +184,7 @@ public sealed partial class SvnLogPage : SgPage
                 ? $"{wcs.Count} working copies, nothing to bring in. Sync still takes a fresh snapshot."
                 : $"{wcs.Count} working copies, all up to date with the server.")
             : $"{wcs.Count} working copies, newer on the server: {string.Join(", ", behind)}.";
+        WcState.Text += reading;
         SyncButton.IsEnabled = true;
         _paths.Clear("Changed paths");
         UserColors.Plain(DetailHead, "");

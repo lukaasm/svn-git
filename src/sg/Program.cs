@@ -148,6 +148,9 @@ static class Cli
                                                       --shared says how worktrees get the --junction folders:
                                                       a junction, a ReFS clone (copy-on-write), or a full copy.
                                                       --kind overrides what the folder or the URL looks like
+            sg checkout remove <name>                 preview forgetting a checkout: every worktree and branch born from it
+                                                      goes too. The folder stays; only sg's .git pointer or marker leaves it
+                 --yes --version <preview-token>     apply that preview
             sg sync [<checkout>] [--ignores]          svn update or git fetch and fast-forward, new snapshot, move svn/<checkout>
             sg branch <name> [--from <checkout>]      new branch and worktree from svn/<checkout>
                  [--without p]... [--minimal] [--shared junction|clone|copy]
@@ -361,9 +364,12 @@ static class Cli
 
     static int Checkout(Args a, ILog log)
     {
-        if (a.Arg(0, "subcommand") != "add")
+        var sub = a.Arg(0, "subcommand");
+        if (sub == "remove") return CheckoutRemove(a, log);
+        if (sub != "add")
             throw new SgException("usage: sg checkout add <folder> [--name n] [--skip p]... [--junction p]... [--optional p]... [--shared junction|clone|copy]\n"
-                                  + "       sg checkout add --url <url> [<folder>] [--name n] [--skip p]... [--junction p]... [--optional p]... [--shared junction|clone|copy]");
+                                  + "       sg checkout add --url <url> [<folder>] [--name n] [--skip p]... [--junction p]... [--optional p]... [--shared junction|clone|copy]\n"
+                                  + "       sg checkout remove <name> [--yes --version <preview-token>]");
         var url = a.Get("--url");
         var folder = a.Pos.Count > 1 ? Path.GetFullPath(a.Pos[1]) : url != null ? null : Path.GetFullPath(a.Arg(1, "folder"));
         // A folder that is still to be checked out is no place to look for the root from; its parent is.
@@ -384,6 +390,16 @@ static class Cli
                                   : $", {res.Snapshot.Externals.Count} externals"));
             Warn(res.Snapshot.Warnings);
         }
+        return 0;
+    }
+
+    static int CheckoutRemove(Args a, ILog log)
+    {
+        var root = FindRoot(a, log);
+        var plan = CheckoutRemoval.Preview(root, a.Arg(1, "checkout name"));
+        if (!a.Has("--yes")) { Json(plan); return plan.Ready ? 0 : 10; }
+        if (a.Get("--version") != plan.Token) throw new SgException("Preview first, then pass its token using --yes --version. A branch, a commit or an edit may have changed.");
+        Json(CheckoutRemoval.Apply(root, plan));
         return 0;
     }
 

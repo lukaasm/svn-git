@@ -903,7 +903,10 @@ public static class Ops
     {
         using var _ = root.Lock();
         var git = root.Git;
-        var wt = git.WorktreeList().FirstOrDefault(w => w.Branch == branch);
+        // A rebase detaches HEAD, so a worktree in the middle of one is found by the branch it is rebasing.
+        // Missed, the branch went alone, or git refused it as checked out there.
+        var wt = git.WorktreeList().FirstOrDefault(w => w.Branch == branch)
+                 ?? git.WorktreeList().FirstOrDefault(w => !w.Bare && w.Branch == null && Directory.Exists(w.Path) && git.RebaseHeadName(w.Path) == branch);
         if (wt == null && git.RefSha("refs/heads/" + branch) == null) throw new SgException("no such branch: " + branch);
         if (wt != null)
         {

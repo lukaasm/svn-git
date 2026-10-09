@@ -19,7 +19,7 @@ The clone stays yours: its remotes, config and identity are used as they are, an
 
 Push keeps commit selection, files, and the primary action visible. At narrow widths, **Changes** and **Diff** share the available space; selecting a file opens its diff. **Advanced** contains readiness, applying without committing, and shelved changes. The message dialog starts with one shared message and a destination summary; separate repository messages are under an expander and reopen automatically when overrides are active. Pull puts readiness, local edits, and its primary action first, with revision details and recovery tools collapsed below. Expanded Pull sections survive navigation and refresh.
 
-Checkout toolbars show **New worktree**, **Open folder**, **SVN log**, and **Backup**; import, merge, server branching, and checkout settings are in **More**. Narrow windows automatically use the checkout icon rail. Backup restore keeps destination fields and primary actions visible, with replacement, saved-edit options, and pruning under **Advanced**. Enabled replacement stays visible in the collapsed header.
+Checkout toolbars show **New worktree**, **Open folder**, **SVN log**, and **Backup**; import, merge, server branching, checkout settings, and **Remove checkout…** are in **More**. Narrow windows automatically use the checkout icon rail. Backup restore keeps destination fields and primary actions visible, with replacement, saved-edit options, and pruning under **Advanced**. Enabled replacement stays visible in the collapsed header.
 
 **More → Copy or move checkout changes** transfers checkout edits to a new or existing worktree belonging to that checkout. For a git clone they cross as the clone's git would commit them, line endings included, and a submodule's edits come along with the rest. The same flow is linked from **New worktree** and the selected-file menu in **Changes in the checkout**. Copy keeps the source; Move asks for confirmation and cleans transferred source files only after they reach the destination. Preview lists additions, edits, deletions, conflicts, and paths left behind. Non-overlapping edits merge; conflicts block the transfer. Recovery shelves retain both previous versions, and the destination's staged selection is preserved. SVN properties, directory scheduling, shared/excluded content, and linked files stay in place; sparse destinations are refused.
 
@@ -224,6 +224,12 @@ sg checkout add --url https://svn.example.com/svn/monorepo/branches/main --skip 
 The first `checkout add` hashes about 16 GB once. Expect minutes.
 It writes one file into the checkout: `D:\work\monorepo\.git` (a one-line pointer to `D:\work\.sg`).
 Delete that file and `D:\work\.sg` to undo everything. SVN never notices either of them.
+
+`sg checkout remove monorepo` undoes one checkout and leaves the rest of the root alone. Without `--yes` it previews: every
+worktree and branch born from the checkout, with its commits not on the server and its uncommitted edits, because they go with it.
+`--yes --version <token>` applies that preview. The folder stays with every file in it; only the `.git` pointer (or, in a git clone,
+the `sg-root` marker in its `.git`) leaves it. Shelves stay in the store and come back when the folder is added again under the same
+name. An unfinished operation in Activity blocks it. In the app it is **More → Remove checkout…**, or right click the checkout in the pane.
 
 ## Daily loop
 

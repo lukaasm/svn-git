@@ -898,6 +898,9 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Open folder", "", () => Session.OpenInExplorer(row.Path),
             "Open the checkout folder in your file manager."));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(Item("Remove checkout…", "", () => _ = RemoveCheckoutAsync(row),
+            "sg forgets this checkout, with every worktree and branch born from it. The folder stays on disk. Asks first."));
         return menu;
     }
 
@@ -1041,6 +1044,76 @@ public sealed partial class MainWindow : Window
         EditCheckoutPage? page = null;
         GoUnder(row, () => page = new EditCheckoutPage(row.Config), "edit:" + row.Name,
             () => { if (page is { Changed: true }) { Remote.Clear(); RemoteErrors.Clear(); } });
+    }
+
+    bool _removingCheckout;
+
+    /// <summary>
+    /// Forgets a checkout, with every worktree and branch born from it, after one question that names what
+    /// goes. The folder stays on disk. The checkout's More menu and its row in the pane both come here.
+    /// </summary>
+    internal async Task RemoveCheckoutAsync(CheckoutRow row, object? busySender = null)
+    {
+        // The preview is read before the question: a second press in that gap opened a second
+        // ContentDialog, which WinUI refuses with an exception out of an async void handler.
+        if (_removingCheckout || Session.Root is not { } root) return;
+        _removingCheckout = true;
+        try
+        {
+            var name = row.Name;
+            var plan = await Runner.Quiet(Pane, () => CheckoutRemoval.Preview(root, name));
+            if (plan == null || Session.Root != root) return;
+            if (!plan.Ready)
+            {
+                await Dialogs.Info(this, "Remove " + name, string.Join("\n", plan.Blockers));
+                return;
+            }
+            var server = ServerWords.Target(row.Config);
+            static string Names(IEnumerable<CheckoutRemovalBranch> bs)
+            {
+                var names = bs.Select(b => b.Branch).ToList();
+                return string.Join(", ", names.Take(3)) + (names.Count > 3 ? $" and {names.Count - 3} more" : "");
+            }
+            var losses = new List<Dialogs.Loss>();
+            if (plan.Branches.Where(b => b.Ahead > 0).ToList() is { Count: > 0 } ahead)
+            {
+                var n = ahead.Sum(b => b.Ahead);
+                losses.Add(new(ChipSeverity.Critical, "", $"{(n == 1 ? "1 commit" : $"{n} commits")} not in {server}, on {Names(ahead)}"));
+            }
+            if (plan.Branches.Where(b => b.HalfPushed).ToList() is { Count: > 0 } half)
+                losses.Add(new(ChipSeverity.Critical, "", $"a push that stopped half way, on {Names(half)}"));
+            if (plan.Branches.Where(b => b.DirtyFiles > 0).ToList() is { Count: > 0 } dirty)
+            {
+                var n = dirty.Sum(b => b.DirtyFiles);
+                losses.Add(new(ChipSeverity.Attention, "", $"{(n == 1 ? "1 uncommitted change" : $"{n} uncommitted changes")}, in {Names(dirty)}"));
+            }
+            var what = $"sg forgets this checkout. The folder stays on disk with its files; only sg's "
+                       + (plan.Kind == CheckoutKind.Git ? "marker in its .git folder" : ".git pointer") + $" leaves it.\n{plan.Path}";
+            if (plan.Branches.Count > 0)
+                what += "\n\n" + (plan.Branches.Count == 1 ? "This worktree and branch go with it:" : $"These {plan.Branches.Count} worktrees and branches go with it:")
+                        + "\n" + string.Join("\n", plan.Branches.Select(b => "• " + b.Branch));
+            var kept = $"Anything already committed stays in {server}."
+                       + (plan.Shelves == 0 ? "" : $" Its {(plan.Shelves == 1 ? "shelf stays" : $"{plan.Shelves} shelves stay")} in the store, and adding the folder again under this name brings {(plan.Shelves == 1 ? "it" : "them")} back.");
+            if (!await Dialogs.ConfirmLoss(this, "Remove " + name, what, losses, kept, "Remove") || Session.Root != root) return;
+
+            // A page about the checkout, or about one of its worktrees, has nothing to show once it is gone.
+            // The overview takes its place and reports there; enqueued, the way a sync does it.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (Host.Current is not CheckoutPage && string.Equals(Host.Current?.Checkout, name, StringComparison.OrdinalIgnoreCase)) ShowOverview(row);
+            });
+            var r = await Busy.During(busySender, () => Reports.Run(Overview.Report, Pane, "remove checkout " + name,
+                () => CheckoutRemoval.Apply(root, plan),
+                (card, x) => card.Show(ChipSeverity.Success, "", $"{name} is removed", TaskResults.Describe(x).Detail)));
+            if (r == null) { await RefreshAsync(); return; }
+            Remote.Remove(name);
+            RemoteErrors.Remove(name);
+            LocalEdits.Remove(name);
+            var gone = plan.Branches.Where(b => b.Path != null).Select(b => ":" + b.Path).Append(":" + name).ToList();
+            await RefreshAsync();
+            Host.Forget(key => gone.Any(g => key.EndsWith(g, StringComparison.OrdinalIgnoreCase)));
+        }
+        finally { _removingCheckout = false; }
     }
 
     CheckoutRow? RowOf(CheckoutConfig co) =>

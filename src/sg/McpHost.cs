@@ -12,7 +12,7 @@ static class McpHost
     internal static readonly (string Command, string Description, bool ReadOnly)[] Commands =
     [
         ("init", "Create an SG root and shared store. arguments: [root].", false),
-        ("checkout", "Register or download an SVN checkout or a git clone. arguments: add folder, or add --url URL (a git URL names its branch after #: repo.git#main); supports --name, --skip, --junction, --optional, --shared, --kind svn|git.", false),
+        ("checkout", "Register or download an SVN checkout or a git clone. arguments: add folder, or add --url URL (a git URL names its branch after #: repo.git#main); supports --name, --skip, --junction, --optional, --shared, --kind svn|git. Or remove name: a preview of the worktrees and branches that go with it; apply with --yes --version token. The folder stays on disk.", false),
         ("sync", "Bring a checkout up to its server (svn update, or git fetch and fast-forward) and create a snapshot. arguments: optional checkout, --ignores.", false),
         ("branch", "Create a branch and worktree. arguments: name, --from checkout, --without path, --minimal, --shared junction|clone|copy.", false),
         ("transfer", "Preview copying checkout edits into a worktree. arguments: target --from checkout [--new] [--move] [--file path]... . Apply with --yes --version token from the preview. Conflicts block writes; move cleans source only after successful transfer. Recovery shelves retain both versions.", false),

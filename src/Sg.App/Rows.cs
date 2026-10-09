@@ -623,6 +623,18 @@ public abstract class CheckableRow : StatusRow
             Raise(nameof(Checked));
         }
     }
+
+    /// <summary>
+    /// What a row menu acts on, the way Explorer acts on a selection: right click something checked and the
+    /// action takes every checked row, the same rows the buttons above the list take; right click something
+    /// unchecked and it takes only that. The label names the count when it is the checked rows.
+    /// </summary>
+    public static (List<T> Rows, string Label) MenuTarget<T>(IReadOnlyList<T> clicked, IEnumerable<T> all) where T : CheckableRow
+    {
+        if (!clicked.Any(r => r.Checked)) return (clicked.ToList(), "");
+        var picked = all.Where(r => r.Checked).ToList();
+        return (picked, picked.Count == 1 ? "1 checked change" : $"{picked.Count} checked changes");
+    }
 }
 
 /// <summary>A file in the git commit window, with a checkbox.</summary>

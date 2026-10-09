@@ -83,18 +83,23 @@ public sealed partial class CommitPage : SgPage
     /// <summary>Right click on a line: the file actions, then what can be done to these changes.</summary>
     void ExtendMenu(MenuFlyout menu, TreeNode node)
     {
-        var entries = node.Rows().OfType<ChangeRow>().Select(r => r.Entry).ToList();
+        var clicked = node.Rows().OfType<ChangeRow>().ToList();
+        var entries = clicked.Select(r => r.Entry).ToList();
         if (entries.Count == 0) return;
         menu.Items.Add(new MenuFlyoutSeparator());
+        // Discard and shelve take every checked change when the click lands on one, as the Changes in the checkout page does.
+        var (target, count) = CheckableRow.MenuTarget(clicked, _rows);
+        var picked = target.Select(r => r.Entry).ToList();
+        var these = count.Length > 0 ? "every checked file" : "these files";
 
         Add("Stage changes", "\uE710", "Put the whole of these files in the index. A commit then takes exactly that.",
             () => StageAsync(entries.Select(e => e.Path).ToList()));
         Add("Unstage changes", "\uE738", "Take these files out of the index again. The files on disk are untouched.",
             () => UnstageAsync(entries.Select(e => e.Path).ToList()));
-        Add("Discard changes", "\uE7A7", "Put these files back the way the last commit has them; an untracked one is deleted. Asks first, and Undo on the bar brings them back.",
-            () => DiscardAsync(entries));
-        Add("Shelve", "\uE7B8", "Take these out of the worktree and keep them, to put back later. Nothing is lost and the branch is left clean.",
-            () => ShelveAsync(entries.Select(e => e.Path).ToList()));
+        Add(count.Length > 0 ? "Discard " + count : "Discard changes", "\uE7A7", $"Put {these} back the way the last commit has them; an untracked one is deleted. Asks first, and Undo on the bar brings them back.",
+            () => DiscardAsync(picked));
+        Add(count.Length > 0 ? "Shelve " + count : "Shelve", "\uE7B8", $"Take {these} out of the worktree and keep them, to put back later. Nothing is lost and the branch is left clean.",
+            () => ShelveAsync(picked.Select(e => e.Path).ToList()));
         Add("Delete file", "\uE74D", "Delete these files from disk and stage the deletion. Asks first.",
             () => DeleteAsync(entries));
         if (entries.Count == 1 && !entries[0].Untracked)

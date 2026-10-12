@@ -177,7 +177,7 @@ try {
                 foreach ($id in @('BackupNowButton', 'CompareButton', 'PruneButton')) { $null = Wait-For { $c = Find $id; $c -and !$c.Current.IsOffscreen } "$id is not in the page's More menu." }
                 Invoke-Control (Find 'MoreButton')
                 $null = Wait-For { $c = Find 'PruneButton'; !$c -or $c.Current.IsOffscreen } 'The More menu did not close.'
-                (Find 'RestoreAdvanced').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+                (Wait-For { Find 'RestoreAdvanced' } 'Advanced options are missing.').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
                 $null = Wait-For { (Find 'ForceBox') -and !(Find 'ForceBox').Current.IsOffscreen }
                 Assert-Layout ($width -eq 600) $action $true
                 if ((Find 'WipBox').Current.IsEnabled) { throw 'A backup without saved edits offers to restore them.' }

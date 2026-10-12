@@ -450,9 +450,15 @@ try {
     $null = Wait-For 'remote-only backup is unavailable' { $b = Find-Ui 'BackupNowButton' -IncludeOffscreen; $b -and !$b.Current.IsEnabled }
     Invoke-Ui 'PruneButton'
     $null = Wait-For 'selected prune confirmation' { Find-Ui 'PrimaryButton' }
-    $texts = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
-        Where-Object { !$_.Current.IsOffscreen -and $_.Current.Name -like 'Delete these*' } | ForEach-Object { $_.Current.Name }
-    if (($texts -join '') -notlike '*refs/heads/remote-selected*' -or ($texts -join '') -like '*refs/heads/remote-untouched*') { throw 'Prune confirmation does not isolate the selected backup.' }
+    # The More menu is still closing while the dialog opens, and a walk that meets one of its items as it goes throws.
+    $texts = Wait-For 'prune confirmation text' {
+        try {
+            ($script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+                Where-Object { !$_.Current.IsOffscreen -and $_.Current.Name -like 'Delete these*' } | ForEach-Object { $_.Current.Name }) -join ''
+        }
+        catch { $null }
+    }
+    if ($texts -notlike '*refs/heads/remote-selected*' -or $texts -like '*refs/heads/remote-untouched*') { throw 'Prune confirmation does not isolate the selected backup.' }
     if ($ReportDirectory) { Save-UiWindow $script:window (Join-Path $ReportDirectory 'selected-prune.png') }
     Invoke-Ui 'PrimaryButton'
     Wait-Receipt

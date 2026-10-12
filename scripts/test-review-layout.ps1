@@ -14,7 +14,8 @@ if (!$Worker) {
     if ($TransferPerformanceOnly) { $command += ' -TransferPerformanceOnly' }
     $desktop = [UiTestDesktop]::new((Join-Path $PSHOME 'pwsh.exe'), [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)), $PSScriptRoot, ('sg-review-layout-' + [Guid]::NewGuid().ToString('N')))
     try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(240)
+        # Navigation builds its fixtures and then walks More menus on both pages; on a busy machine that passed 240 s.
+        $deadline = [DateTime]::UtcNow.AddSeconds(360)
         while (!$desktop.Wait(200)) { if ([DateTime]::UtcNow -ge $deadline) { throw 'Review layout UI test timed out.' } }
         if ($desktop.ExitCode -ne 0) { throw "Review layout UI failed. See $ArtifactDirectory/probe-error.txt" }
         Write-Output "PASS: Review layout UI. Artifacts: $ArtifactDirectory"

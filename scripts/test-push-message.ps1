@@ -59,7 +59,7 @@ function Select-Range([int]$count) {
     $null = Wait-For { (Find 'Header').Current.Name -like "Sending $count of $script:fixtureCommits commit*" }
 }
 function Open-Readiness {
-    Invoke-Control (Wait-For { Find 'MoreButton' -within (Find 'Actions') })
+    Invoke-Control (Wait-For { $bar = Find 'Actions'; if ($bar) { Find 'MoreButton' -within $bar } })
     Invoke-Control (Wait-For { Find 'ReadinessButton' })
     $null = Wait-For { !(Find 'ReadinessButton') }
 }

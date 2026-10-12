@@ -91,7 +91,7 @@
             <!-- Everyday actions stay visible. The backup, the folder, import, history maintenance, and
                  configuration stay in More even on wide windows; dynamic overflow also accommodates narrower windows. -->
             <CommandBar x:Name="Actions" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,2,0,0"
-                        IsDynamicOverflowEnabled="True">
+                        IsDynamicOverflowEnabled="True" local:MenuGate.Watch="True">
                 <!-- First, and so the last one the bar ever folds away: a checkout is opened to start work
                      in a worktree, and every other button here is about one that already exists. -->
                 <AppBarButton x:Name="NewWorktreeButton" Label="New worktree" Click="NewBranch_Click"
@@ -130,7 +130,7 @@
                                   ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
                     </AppBarButton>
-                    <AppBarButton x:Name="RemoveCheckoutButton" Label="Remove checkout…" Click="RemoveCheckout_Click"
+                    <AppBarButton x:Name="RemoveCheckoutButton" Label="Remove checkout…" Click="RemoveCheckout_Click" local:MenuGate.Gated="True"
                                   ToolTipService.ToolTip="sg forgets this checkout, with every worktree and branch born from it. The folder stays on disk. Asks first.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
                     </AppBarButton>

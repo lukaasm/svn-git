@@ -17,13 +17,13 @@ The clone stays yours: its remotes, config and identity are used as they are, an
 
 ## Guided workflows
 
-Push keeps commit selection, files, and the primary action visible. At narrow widths, **Changes** and **Diff** share the available space; selecting a file opens its diff. **Advanced** contains readiness, applying without committing, and shelved changes. The message dialog starts with one shared message and a destination summary; separate repository messages are under an expander and reopen automatically when overrides are active. Pull puts readiness, local edits, and its primary action first, with revision details and recovery tools collapsed below. Expanded Pull sections survive navigation and refresh.
+Push keeps commit selection, files, and the primary action visible. At narrow widths, **Changes** and **Diff** share the available space; selecting a file opens its diff. Push's dropdown applies without committing, and **More** holds readiness and shelved changes. The message dialog starts with one shared message and a destination summary; separate repository messages are under an expander and reopen automatically when overrides are active. Pull puts readiness, local edits, and its primary action first, with revision details and recovery tools collapsed below. Expanded Pull sections survive navigation and refresh.
 
-Checkout toolbars show **New worktree**, **Open folder**, **SVN log**, and **Backup**; import, merge, server branching, and checkout settings are in **More**. Narrow windows automatically use the checkout icon rail. Backup restore keeps destination fields and primary actions visible, with replacement, saved-edit options, and pruning under **Advanced**. Enabled replacement stays visible in the collapsed header.
+Checkout toolbars show **New worktree** and **SVN log**; **Open folder**, **Backup**, shelved changes, import, merge, server branching, and checkout settings are in **More**. Narrow windows automatically use the checkout icon rail. Backup restore keeps destination fields and primary actions visible, with replacement and saved-edit options under **Advanced**, and backing up, comparing and pruning that worktree under **More**. Enabled replacement stays visible in the collapsed header.
 
-**More → Copy or move checkout changes** transfers checkout edits to a new or existing worktree belonging to that checkout. For a git clone they cross as the clone's git would commit them, line endings included, and a submodule's edits come along with the rest. The same flow is linked from **New worktree** and the selected-file menu in **Changes in the checkout**. Copy keeps the source; Move asks for confirmation and cleans transferred source files only after they reach the destination. Preview lists additions, edits, deletions, conflicts, and paths left behind. Non-overlapping edits merge; conflicts block the transfer. Recovery shelves retain both previous versions, and the destination's staged selection is preserved. SVN properties, directory scheduling, shared/excluded content, and linked files stay in place; sparse destinations are refused.
+The checkout Commit button's dropdown, **Copy or move checkout changes**, transfers checkout edits to a new or existing worktree belonging to that checkout. For a git clone they cross as the clone's git would commit them, line endings included, and a submodule's edits come along with the rest. The same flow is linked from **New worktree** and the selected-file menu in **Changes in the checkout**. Copy keeps the source; Move asks for confirmation and cleans transferred source files only after they reach the destination. Preview lists additions, edits, deletions, conflicts, and paths left behind. Non-overlapping edits merge; conflicts block the transfer. Recovery shelves retain both previous versions, and the destination's staged selection is preserved. SVN properties, directory scheduling, shared/excluded content, and linked files stay in place; sparse destinations are refused.
 
-Worktree **Advanced → Rename worktree and branch** changes both names while retaining commits, local edits, shelves, comments, and backup exclusions. The folder stays beside its original location. Existing remote backups keep their old name; subsequent backups use the new name. Review results remain available, with readiness requiring confirmation again after the folder changes. CLI and MCP expose both workflows through `sg transfer` / `sg_transfer` and `sg rename` / `sg_rename`; each previews by default and requires `--yes --version <preview-token>` to apply.
+Worktree **More actions → Rename worktree and branch** changes both names while retaining commits, local edits, shelves, comments, and backup exclusions. The folder stays beside its original location. Existing remote backups keep their old name; subsequent backups use the new name. Review results remain available, with readiness requiring confirmation again after the folder changes. CLI and MCP expose both workflows through `sg transfer` / `sg_transfer` and `sg rename` / `sg_rename`; each previews by default and requires `--yes --version <preview-token>` to apply.
 
 Import and restore drafts survive back/forward navigation in the current root, including empty branch names and a newly selected export file. Returning reads the source and validates the destination again. Checkout identity follows its folder through renames; removing a checkout leaves the destination unselected. Returning to a submitted restore does not reuse replacement consent.
 
@@ -31,7 +31,7 @@ The Windows app keeps a **Tasks** pane aligned with the page content, including 
 
 Actions that change the same root are blocked while a task holds it; browsing remains available. Blocked actions expose the task name and how to unblock them through hover help and screen-reader help. The checkout toolbar’s **Unavailable actions** entry explains task collisions, no checkout edits, and missing shelves. Scheduled backups defer while that root is busy. New worktrees, imports, backup restores, and recovery branches appear as placeholders immediately and refresh into real cards when finished. Exit and restart wait for active tasks to finish or be cancelled.
 
-Disabled checkout, commit, history, shelf, merge, push, and review navigation actions explain the missing input or blocking task. Their explanation is reachable by hover or keyboard focus and exposed to screen readers; it updates as validation and task state change. Views use `ActionHint` for ordinary availability and `TaskGate` for actions that also need repository ownership, while each action keeps its own validation rules.
+Disabled checkout, commit, history, shelf, merge, push, and review navigation actions explain the missing input or blocking task. Their explanation is reachable by hover or keyboard focus and exposed to screen readers; it updates as validation and task state change. Rare actions sit in **More** menus and in the dropdown of the action they belong to; actions on one row (a commit, a file, a shelf, a worktree card) are on its right-click menu, which Shift+F10 or the Menu key also opens. A menu item that a running task blocks is greyed, and the menu's first line names the task. Views use `ActionHint` for ordinary availability and `TaskGate` for actions that also need repository ownership, while each action keeps its own validation rules.
 
 Checkout navigation, page headers, and settings previews use compact 24 px icons. Custom images appear on their own; checkouts without one use a folder with stable, theme-aware colored initials. A mark in the icon's corner says which server the checkout speaks: an orange diamond for a git clone, a blue disc for an SVN working copy; the tooltip says it in words. **Edit checkout → Checkout icon → Choose image…** chooses a PNG, ICO, JPEG, BMP or GIF image. The picker saves a small, transparent PNG copy in `.sg/icons` immediately; the source image stays in place. ICO files use their largest embedded image, including transparency; the same portable copy travels in backups and exports. **Use initials** resets the custom image. Missing images fall back to initials, and collapsed navigation keeps the same identity with the full name and folder in its tooltip. Remote worktree backups include the checkout's chosen image or explicit reset to initials. Restore and backup pull apply it to the destination checkout only when no local appearance has been chosen; existing local images and explicit resets are kept. Appearance follows worktree exclusions and scoped backups, is checked in restore previews and coverage receipts, and is pruned with its worktree. Restore rehearsals leave checkout appearance unchanged. Checkout validation and volume checks run off the UI thread; the three folder pickers share one directory scan, and late results cannot replace newer input.
 
@@ -44,11 +44,11 @@ Unfinished updates and paused replays are rediscovered when a root opens. A reco
 
 Activity has two parts. **Needs attention** lists each open operation once, with the one action that moves it on and **Dismiss**, which closes the record without running anything and keeps its checkpoint and shelves. An operation whose worktree was removed cannot resume; it offers **Restore commits to a new branch** and Dismiss instead. **Copy agent instructions** copies what an AI agent needs to look into these operations with `sg`: each one's state, worktree, checkpoint and shelves, the commands that read and settle it, and the rules. Nothing is sent anywhere. **History** lists finished operations one line each, 20 at a time with **Show more** and full-history search; a line opens to its steps, checkpoint, and **Restore commits to a new branch**, which first lists the new branch, destination, and commit. Returning through navigation retains search, loaded rows, expanded details, and scroll position while reading fresh data. Backup retains the same browsing state; restore selection stays explicit.
 
-Backup opens with expandable worktree cards joining local folders and remote copies by name, without downloading every saved history. Each card offers **Back up**, **Restore**, and **Prune** for that worktree; **Manage** opens its focused restore options. Search includes local worktrees that have never been backed up. Saved edits and shelves outside the cards are under an expandable section. Selecting an item loads only its commits and SVN revisions, with loading, error, and retry feedback. A restore checks that the branch and saved-edits versions still match the preview before creating or replacing work. Leaving Backup or a workflow preview cancels its background read, including Git processes and storage scans. Submitted operations continue in Tasks, with results linking back to the selected worktree.
+Backup opens with worktree cards joining local folders and remote copies by name, without downloading every saved history. A card's button opens **Manage** or **Restore**; right-click the card for **Back up**, **Compare histories** and **Prune**, which the worktree's own page also has under **More**. Search includes local worktrees that have never been backed up. Saved edits and shelves outside the cards are under an expandable section. Selecting an item loads only its commits and SVN revisions, with loading, error, and retry feedback. A restore checks that the branch and saved-edits versions still match the preview before creating or replacing work. Leaving Backup or a workflow preview cancels its background read, including Git processes and storage scans. Submitted operations continue in Tasks, with results linking back to the selected worktree.
 
 Backup initially renders 20 worktrees, with **Show more**, full-catalog search by worktree or checkout, and **Needs attention**, **Local only**, and **Remote only** filters. Cards distinguish **Commits saved**, **Local commits differ**, and **Compare versions**, using one batched read of local tip metadata. Confirmation times appear only when the advertised remote version matches the recorded backup. This status compares commit IDs; browsing does not scan working files or compare shelves, and different IDs are never assumed to mean newer or different content after a replay.
 
-Expand a worktree and choose **Compare** to view local and saved commit histories beside their SVN bases. Search covers both complete histories; select a commit to load its patch. The editor is created only on selection, and navigation cancels unfinished reads. Comparison fetches only the selected backup and rejects a remote version that changed since the catalog was read. Patches stay tied to the selected commit IDs; search and selection survive navigation. **Local history** and **Restore options** link to the corresponding views. Comparing never runs a backup, scans working files, or assumes different IDs mean different work.
+Right-click a worktree card, or open **More** on the worktree's page, and choose **Compare histories** to view local and saved commit histories beside their SVN bases. Search covers both complete histories; select a commit to load its patch. The editor is created only on selection, and navigation cancels unfinished reads. Comparison fetches only the selected backup and rejects a remote version that changed since the catalog was read. Patches stay tied to the selected commit IDs; search and selection survive navigation. **Local history** and **Restore options** link to the corresponding views. Comparing never runs a backup, scans working files, or assumes different IDs mean different work.
 
 Finished tasks offer **View output**, with the same literal search, match navigation, and Ctrl+F shortcut as review-check output. The view keeps the task's original repository and status, including when no output was captured. Running tasks keep live output in the task pane.
 
@@ -70,7 +70,7 @@ Each run retains `test.log`, `result.json`, and its local SVN/Git fixtures under
 
 `scripts/test-checkout-add.ps1` creates its own tiny SVN repository and SG root, then verifies checkout completion redirects, duplicate-folder guidance, URL checkout selection, completion after navigating away, and adding the first checkout through New root. Build the Debug CLI and app first. All interaction uses UI Automation on a private desktop; the fixtures and diagnostics stay under `TestResults/UI`.
 
-`scripts/test-push-message.ps1` creates multiline commits in a local SVN fixture with an external and verifies that the Push to SVN message follows the selected range, Send all restores the full message, and manual edits survive range changes. Shared and per-working-copy drafts survive navigation, including disabled overrides and empty drafts that still fail validation. It checks that returning from Readiness restores both filters and the commit boundary, including when history or the snapshot changed while away. A fixture-only Git proxy delays or fails preview reads to check disabled actions, stable layout, cancellation of obsolete reads and inline retry. It also checks the narrow Changes/Diff switch, file selection, advanced actions, and compact message dialog; use `-CompactOnly` for layout checks or `-PreviewOnly` for the preview and history recovery group. It runs through native UI Automation on a private desktop and cancels every dialog without pushing. Build the Debug CLI and app first.
+`scripts/test-push-message.ps1` creates multiline commits in a local SVN fixture with an external and verifies that the Push to SVN message follows the selected range, Push the whole branch restores the full message, and manual edits survive range changes. Shared and per-working-copy drafts survive navigation, including disabled overrides and empty drafts that still fail validation. It checks that returning from Readiness restores both filters and the commit boundary, including when history or the snapshot changed while away. A fixture-only Git proxy delays or fails preview reads to check disabled actions, stable layout, cancellation of obsolete reads and inline retry. It also checks the narrow Changes/Diff switch, file selection, advanced actions, and compact message dialog; use `-CompactOnly` for layout checks or `-PreviewOnly` for the preview and history recovery group. It runs through native UI Automation on a private desktop and cancels every dialog without pushing. Build the Debug CLI and app first.
 
 `scripts/test-review-layout.ps1` checks Commit and Merge at narrow and wide sizes through native UI Automation on a private desktop. Disposable Git/SVN fixtures cover hidden advanced actions, disabled-action help, visible amend mode, staging, message drafts, committing only checked files, merge preview invalidation, and confirmed merges of selected revisions. It never commits to a remote SVN repository. Build the Debug CLI and app first.
 
@@ -103,7 +103,7 @@ Branch cards offer **Pull from SVN**: preview incoming revisions, preserve branc
 
 Pull previews show placeholders immediately, then fill in local commits and edits while SVN revisions are checked. Pull becomes available only when the complete plan is ready; submitting it rechecks files and staged content. Planning scans each workspace once and skips unused remote commit counts. Workflow screens, import previews, and checkout externals share loading placeholders; page reads share progress that stays visible while any section is loading. `scripts/test-pull-loading.ps1` creates a disposable SVN fixture and checks narrow layouts, collapsed details, navigation state, delayed repository access, a stalled SVN server, cancellation, and inline retry through background UI Automation. An existing disposable workflow root can also be supplied with `-FixtureRoot`.
 
-Pull previews use labeled status colors for revisions and saved edits, with links to local commits, SVN history, and changed files. File lists and preservation details expand on demand. Worktree **Advanced** actions group readiness checks, backup coverage, export, and worktree settings; daily actions and recovery remain directly available.
+Pull previews use labeled status colors for revisions and saved edits, with links to local commits, SVN history, and changed files. File lists and preservation details expand on demand. The worktree card's **More actions** menu groups readiness checks, backup coverage, export, and worktree settings, and a right-click on the card lists every action; daily actions and recovery remain directly available.
 
 **Code review** lets you leave file and line comments in a worktree, reply, resolve, or reopen them, and copy instructions for an agent. Comments and saved code context follow that worktree's backup and restore. **Review readiness** runs explicitly configured local checks and records the exact branch and feedback version reviewed; open comments prevent marking ready. **Backup coverage** distinguishes historical uploads, checked remote refs, exclusions, and restoration rehearsals in a separate branch. Handoff receipts are portable JSON, previewed before restoring.
 
@@ -195,8 +195,10 @@ The repository is public, so none of this needs a token. `sg` still uses one whe
 of GitHub's hourly rate limit. Were the repository made private again, a call without a token would answer 404, which is
 also what GitHub says for a release that is not there.
 
-The app checks GitHub every hour (Settings, 0 turns it off) and shows an "Update and restart" bar when a build is ready.
-Pressing it closes the app, lets `sg.exe` install the build, and starts the app again.
+The app checks GitHub every hour (Settings, 0 turns it off) and shows "Update and restart" when a build is ready.
+It opens one dialog: **Update** asks GitHub again, downloads the build with a progress bar and **Cancel**, and checks it;
+then the app closes, `sg.exe` installs the downloaded build and starts the app again. A failed download leaves the app
+open with the reason and **Retry**, and Cancel deletes what was downloaded.
 
 ## First use on the real checkout
 
@@ -284,7 +286,7 @@ and the worktrees are not on one ReFS volume. The second step is optional and ca
 A button that cannot do anything is disabled, and its tooltip says why.
 
 The overview asks the SVN server for new commits every few minutes and shows a toast when there are some, with a Sync
-button on it. It asks GitHub for a newer sg build on its own schedule and shows an "Update and restart" bar when one is
+button on it. It asks GitHub for a newer sg build on its own schedule and shows "Update and restart" when one is
 ready; that toast has the button too, a failed sync's toast opens the log, and a push's toast opens the branch's log.
 Settings says which build is installed, and Check now asks GitHub without waiting for the timer.
 
@@ -300,7 +302,7 @@ Project monitor: watch any SVN URLs, sorted into categories, each on its own int
 and a toast. Pick a repository to read the incoming revisions, their messages, changed paths, and diffs from the server.
 "Add my checkouts" watches the root and every external of a checkout. The list lives in `%LOCALAPPDATA%\sg\monitor.json`.
 
-Settings has "Install" for the Explorer context menu: right click a folder, "Show more options", then "sg".
+Settings has one button for the Explorer context menu, Install or Remove as it stands: right click a folder, "Show more options", then "sg".
 It is the classic menu, registry only, current user only. The menu points at the exe it was installed from.
 The diff viewer is the Monaco editor, with syntax colouring per file type. The app ships its own copy,
 so diffs colour with no internet and no CDN. `monacoUrl` in `app.json` is only the fallback for a build without the bundle.
@@ -348,8 +350,8 @@ Push shows its six pre-checks before you press the button: worktree clean, no re
 change types SVN takes, paths sg may write, and no local edit in the checkout on the same file. All passing is one line;
 any failing one names the paths. `sg push --check` prints the same list and exits 10 when one fails.
 
-One commit from the middle of the branch can go on its own. On Push to SVN, pick it and press **This commit**, or right
-click any commit: **Push only** narrows the push to that commit, cherry picked onto the snapshot, so the files, the diff
+One commit from the middle of the branch can go on its own. On Push to SVN, right
+click any commit, or select it and press Shift+F10: **Push only** narrows the push to that commit, cherry picked onto the snapshot, so the files, the diff
 and the checks are exactly what the server gets, and the commits under and over it stay on the branch, still the
 commits they were, over the new snapshot. A seventh check, "Goes without the commits under it", names the files when
 the commit changes lines a commit under it wrote, and offers **Send it with them**. **Apply only** writes that one
@@ -357,7 +359,7 @@ commit into the checkout as local changes and stops. **Shelve** takes the commit
 way git stash puts work aside; putting the shelf back merges it into the worktree as uncommitted changes. **Discard**
 takes it out of the branch. Both replay the commits above it onto the one under it, refuse with nothing changed when
 one of those builds on it, keep the branch as it was in Activity, and offer Undo on the bar while nothing else has
-happened on the branch. Log offers the same three, **Push alone**, **Shelve** and **Discard**, beside Squash, Reword and
+happened on the branch. Log's commit right-click menu offers the same three, **Push alone**, **Shelve** and **Discard**, beside Squash, Reword and
 Revert. `sg push --only <commit> [--apply]`, `sg shelve --commit <commit>` and `sg discard <commit>` do the same.
 
 Keyboard: `Ctrl+K` go to any checkout, worktree or page by name, `Ctrl+F` filter the files, `Ctrl+Shift+F` filter the commits on Log and Push, `Ctrl+Enter` commit or push, `F7` and `Shift+F7` next and previous change in the diff,
@@ -383,14 +385,15 @@ kept outside git. Putting one back writes over a file that still holds what it h
 and merges the change into one that moved on since, the way an svn update merges. A file it cannot merge is
 named, and the shelf is kept.
 
-In the app: "Shelved changes" on the checkout toolbar and on every worktree card, a Shelve button on both
-changes pages and in the right click menu of their file lists, and, when a push refuses because the checkout
+In the app: "Shelved changes" under the checkout toolbar's More and in every worktree card's menu, "Shelve them
+instead" in the Commit dropdown of both changes pages and in the right click menu of their file lists, and, when a push refuses because the checkout
 has an edit on the same file, a "Shelve them" button on the check that puts exactly those edits aside.
 
-Commit and Push to SVN keep the primary action beside Refresh and Advanced. Commit's Advanced menu holds
-staging, unstaging, shelving, discard, and amend; enabling amend shows a persistent notice with Cancel amend.
-Push's Advanced menu holds readiness, apply-only, and shelving options. Commit to SVN keeps its split button
-for shelf actions. Merge shows Merge and Preview merge first, with reverse merge under Advanced.
+Commit and Push to SVN keep the primary action, a split button, beside Refresh and More. Commit's dropdown holds
+shelve and discard, and More holds staging, unstaging, shelved changes and amend; enabling amend shows a persistent
+notice with Cancel amend. Push's dropdown applies without committing, and More holds readiness and shelved changes.
+Commit to SVN keeps shelve and discard in its split button and shelved changes under More. Merge shows Merge and
+Preview merge first; Merge's dropdown holds reverse merge (Take back out), and More holds checkout changes and Refresh.
 
 Commit, Push, and Merge share a resizable list/detail layout. Narrow windows switch between Changes/Diff or
 Revisions/Preview without rebuilding the lists or losing selection. Picking a file opens its diff; running
@@ -401,7 +404,7 @@ Commit and Merge retain their choices across Back and Forward navigation while r
 Commit keeps unsent messages, the file filter, checked files, folder expansion, open diff side, and pane size;
 newly appearing files stay unchecked. Amend is restored only for the same commit. Merge remembers source and
 target URLs, exact revisions and the expanded history group. Missing revisions or branches require an explicit
-new choice, and old previews are cleared. Advanced → Checkout changes lets you inspect local edits and return
+new choice, and old previews are cleared. More → Checkout changes lets you inspect local edits and return
 to the merge plan. Page status reads are cancelled when you navigate away.
 
 Diff viewers remember vertical and horizontal scroll and the selected range when switching files or

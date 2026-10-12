@@ -44,6 +44,56 @@ public sealed class UpdateTests
         Assert.False(Check(new BuildStamp { RunId = 101 }, remote).Newer);
     }
 
+    [Fact]
+    public void Fetched_TakesOnlyAFolderFetchMade_BecauseInstallingDeletesIt()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "sgfetch-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(temp, "payload"));
+        File.WriteAllText(Path.Combine(temp, "payload", "sg.exe"), "");
+        try
+        {
+            Assert.Throws<SgException>(() => Updater.Fetched(temp));
+            Assert.Throws<SgException>(() => Updater.Fetched(Path.Combine(Path.GetTempPath(), "sg-update-missing")));
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Install_WritesTheFetchedBuildOver_ReadsItsStamp_AndDeletesTheDownload()
+    {
+        var install = Path.Combine(Path.GetTempPath(), "sginst-" + Guid.NewGuid().ToString("N")[..8]);
+        var fetchedFolder = Path.Combine(Path.GetTempPath(), "sg-update-" + Guid.NewGuid().ToString("N")[..8]);
+        // A zip built with one root folder inside it unpacks to payload/sg; that still installs.
+        var files = Path.Combine(fetchedFolder, "payload", "sg");
+        Directory.CreateDirectory(Path.Combine(files, "ui"));
+        Directory.CreateDirectory(install);
+        try
+        {
+            File.WriteAllText(Path.Combine(install, "sg.exe"), "old");
+            File.WriteAllText(Path.Combine(install, Updater.StampFile), """{"runId":1,"runNumber":1}""");
+            File.WriteAllText(Path.Combine(files, "sg.exe"), "new");
+            File.WriteAllText(Path.Combine(files, "ui", "sg-ui.exe"), "new ui");
+            File.WriteAllText(Path.Combine(files, Updater.StampFile), """{"runId":2,"runNumber":2}""");
+
+            var fetched = Updater.Fetched(fetchedFolder);
+            var r = Updater.Install(fetched, Updater.ReadStamp(install), null, install, new NullLog());
+
+            Assert.Equal(1, r.Before!.RunNumber);
+            Assert.Equal(2, r.After.RunNumber);
+            Assert.Equal("new", File.ReadAllText(Path.Combine(install, "sg.exe")));
+            Assert.Equal("new ui", File.ReadAllText(Path.Combine(install, "ui", "sg-ui.exe")));
+            Assert.False(Directory.Exists(fetchedFolder));
+        }
+        finally
+        {
+            try { Directory.Delete(install, recursive: true); } catch (IOException) { }
+            Updater.Discard(fetchedFolder);
+        }
+    }
+
     static UpdateCheck Check(BuildStamp? local, BuildStamp remote) =>
         new(local, remote, "https://example.invalid/sg-win-x64.zip", false, 0);
 }

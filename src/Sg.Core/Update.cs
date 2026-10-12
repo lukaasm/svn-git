@@ -30,6 +30,12 @@ public sealed record UpdateCheck(BuildStamp? Local, BuildStamp Remote, string Do
 
 public sealed record UpdateResult(BuildStamp? Before, BuildStamp After, string InstallDir, int Files, int Retired);
 
+/// <summary>
+/// A build downloaded, unpacked and checked, not yet installed. Folder is the sg-update-* folder in temp
+/// that holds it and goes once it is installed or discarded; Files is the unpacked build inside it.
+/// </summary>
+public sealed record FetchedUpdate(string Folder, string Files);
+
 /// <summary>Reads the rolling 'latest-build' release on GitHub and installs it over the folder sg.exe runs from.</summary>
 public static class Updater
 {
@@ -139,33 +145,84 @@ public static class Updater
         return new UpdateCheck(local, remote, download, withToken, size);
     }
 
+    const string FetchPrefix = "sg-update-";
+    const string PayloadFolder = "payload";
+
     /// <summary>Downloads the release zip and writes it over the install folder. Replaces sg.exe while it runs.</summary>
     public static UpdateResult Apply(UpdateCheck check, string installDir, ILog log)
     {
         if (!Directory.Exists(installDir)) throw new SgException("no install folder: " + installDir);
+        return Install(Fetch(check, log), check.Local, check.Remote, installDir, log);
+    }
 
-        var temp = Path.Combine(Path.GetTempPath(), "sg-update-" + Guid.NewGuid().ToString("N")[..8]);
+    /// <summary>
+    /// Downloads the release zip, unpacks it and checks it holds sg.exe, all inside a folder of its own in
+    /// temp. Installs nothing, so the app can do this while it runs and show it. A stop through
+    /// Cancellation, or any failure, deletes the folder with the part already downloaded.
+    /// </summary>
+    public static FetchedUpdate Fetch(UpdateCheck check, ILog log)
+    {
+        var temp = Path.Combine(Path.GetTempPath(), FetchPrefix + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(temp);
         try
         {
             var zip = Path.Combine(temp, ZipAsset);
             using (var http = NewClient()) Download(http, check.DownloadUrl, check.ThroughApi, zip, check.Size, log);
+            Cancellation.ThrowIfRequested();
+            log.Progress("unpack", 0, 0, "files", null);
+            ZipFile.ExtractToDirectory(zip, Path.Combine(temp, PayloadFolder));
+            File.Delete(zip);
+            var fetched = Fetched(temp);
+            log.ProgressEnd("unpack", null);
+            return fetched;
+        }
+        catch (Exception)
+        {
+            Discard(temp);
+            throw;
+        }
+    }
 
-            var payload = Path.Combine(temp, "payload");
-            ZipFile.ExtractToDirectory(zip, payload);
-            payload = Unwrap(payload);
-            if (!File.Exists(Path.Combine(payload, "sg.exe")))
-                throw new SgException("the downloaded build has no sg.exe. Nothing was replaced.");
+    /// <summary>
+    /// A folder Fetch made, found again from its path, as sg update --payload gets it from the app. Only an
+    /// sg-update-* folder with an unpacked build in it is taken, because installing deletes the folder.
+    /// </summary>
+    public static FetchedUpdate Fetched(string folder)
+    {
+        folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+        var unpacked = Path.Combine(folder, PayloadFolder);
+        if (!Path.GetFileName(folder).StartsWith(FetchPrefix, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(unpacked))
+            throw new SgException("not a downloaded sg build: " + folder);
+        var files = Unwrap(unpacked);
+        if (!File.Exists(Path.Combine(files, "sg.exe")))
+            throw new SgException("the downloaded build has no sg.exe. Nothing was replaced.");
+        return new FetchedUpdate(folder, files);
+    }
 
+    /// <summary>Writes a fetched build over the install folder, then deletes what was fetched.</summary>
+    public static UpdateResult Install(FetchedUpdate fetched, BuildStamp? before, BuildStamp? after, string installDir, ILog log)
+    {
+        if (!Directory.Exists(installDir)) throw new SgException("no install folder: " + installDir);
+        try
+        {
+            after ??= ReadStamp(fetched.Files) ?? throw new SgException($"the downloaded build has no {StampFile}. Nothing was replaced.");
             var retired = Sweep(installDir);
-            var files = InstallPayload(payload, installDir);
+            var files = InstallPayload(fetched.Files, installDir);
             log.Info($"wrote {files} file(s) into {installDir}");
-            return new UpdateResult(check.Local, check.Remote, installDir, files, retired);
+            return new UpdateResult(before, after, installDir, files, retired);
         }
         finally
         {
-            try { Directory.Delete(temp, recursive: true); } catch (IOException) { }
+            Discard(fetched.Folder);
         }
+    }
+
+    /// <summary>Deletes a fetched build that will not be installed.</summary>
+    public static void Discard(string folder)
+    {
+        try { Directory.Delete(folder, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>Installs an already validated payload, retaining originals until every replacement succeeds.</summary>
@@ -306,22 +363,36 @@ public static class Updater
             req.Headers.Accept.ParseAdd("application/octet-stream");
         }
         log.Cmd("GET " + url);
-        using var resp = http.Send(req, HttpCompletionOption.ResponseHeadersRead);
+        var token = Cancellation.Current;
+        using var resp = http.Send(req, HttpCompletionOption.ResponseHeadersRead, token);
         if (!resp.IsSuccessStatusCode)
             throw new SgException($"download answered {(int)resp.StatusCode} for {url}");
 
         var total = resp.Content.Headers.ContentLength ?? expected;
-        using var body = resp.Content.ReadAsStream();
+        using var body = resp.Content.ReadAsStream(token);
         using var file = File.Create(dest);
         var buffer = new byte[81920];
         long done = 0;
         int read;
-        while ((read = body.Read(buffer, 0, buffer.Length)) > 0)
+        // A read waiting on a stalled connection never looks at the token. Closing the stream wakes it.
+        using (token.Register(body.Dispose))
         {
-            file.Write(buffer, 0, read);
-            done += read;
-            log.Progress("download", done, total, "B", null);
+            try
+            {
+                while ((read = body.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    token.ThrowIfCancellationRequested();
+                    file.Write(buffer, 0, read);
+                    done += read;
+                    log.Progress("download", done, total, "B", null);
+                }
+            }
+            catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
+            {
+                throw new SgCancelledException();
+            }
         }
+        token.ThrowIfCancellationRequested();
         log.ProgressEnd("download", null);
         if (total > 0 && done != total)
             throw new SgException($"download stopped at {done} of {total} bytes.");

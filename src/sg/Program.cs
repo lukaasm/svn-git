@@ -253,6 +253,10 @@ static class Cli
         var repo = Updater.Repo(a.Get("--repo"));
         var dir = Path.GetFullPath(a.Get("--dir") ?? Updater.InstallDir());
         var json = a.Has("--json");
+        // sg-ui downloads the build itself, where it can show the progress, and hands over the folder.
+        var payload = a.Get("--payload");
+        if (payload != null && a.Has("--check")) throw new SgException("--check reads GitHub and --payload installs a download; use one.");
+        if (payload != null) return InstallFetched(payload, dir, json, a, log);
         var check = Updater.Check(repo, dir, log);
 
         if (a.Has("--check"))
@@ -267,19 +271,8 @@ static class Cli
             return check.Newer ? 10 : 0;
         }
 
-        // sg-ui starts us with its own pid and asks to be started again once its files are replaced.
-        var waitPid = a.Get("--wait-pid");
         var relaunch = a.Get("--relaunch");
-
-        // Wait first, and refuse to linger. A waiter that outlives the attempt would install
-        // later, when the user closes the app for their own reasons, which looks like the app
-        // restarting itself out of nowhere.
-        var pid = 0;
-        if (waitPid != null && !int.TryParse(waitPid, out pid))
-            throw new SgException("--wait-pid needs a process id, got: " + waitPid);
-        if (waitPid != null && !WaitForExit(pid, log))
-            throw new SgException($"sg-ui (process {waitPid}) did not close, so nothing was installed. "
-                                  + "Close every sg window and run 'sg update' again.");
+        WaitForApp(a, log);
 
         if (!check.Newer && !a.Has("--force"))
         {
@@ -309,6 +302,44 @@ static class Cli
         }
         Relaunch(relaunch, log);
         return 0;
+    }
+
+    /// <summary>sg update --payload: install what sg-ui already downloaded and checked, with no network.</summary>
+    static int InstallFetched(string payload, string dir, bool json, Args a, ILog log)
+    {
+        var relaunch = a.Get("--relaunch");
+        // An app that did not close is still the user's app: start no second one.
+        WaitForApp(a, log);
+        UpdateResult r;
+        try
+        {
+            r = Updater.Install(Updater.Fetched(payload), Updater.ReadStamp(dir), null, dir, log);
+        }
+        catch (Exception)
+        {
+            Relaunch(relaunch, log);   // never leave the user without the app
+            throw;
+        }
+        if (json) Json(new { installDir = r.InstallDir, before = r.Before, after = r.After, files = r.Files, updated = true });
+        else Console.WriteLine($"updated {(r.Before?.ToString() ?? "unknown build")} -> {r.After}");
+        Relaunch(relaunch, log);
+        return 0;
+    }
+
+    /// <summary>
+    /// sg-ui starts us with its own pid and asks to be started again once its files are replaced. Wait
+    /// first, and refuse to linger: a waiter that outlives the attempt would install later, when the user
+    /// closes the app for their own reasons, which looks like the app restarting itself out of nowhere.
+    /// </summary>
+    static void WaitForApp(Args a, ILog log)
+    {
+        var waitPid = a.Get("--wait-pid");
+        if (waitPid == null) return;
+        if (!int.TryParse(waitPid, out var pid))
+            throw new SgException("--wait-pid needs a process id, got: " + waitPid);
+        if (!WaitForExit(pid, log))
+            throw new SgException($"sg-ui (process {waitPid}) did not close, so nothing was installed. "
+                                  + "Close every sg window and run 'sg update' again.");
     }
 
     /// <summary>True when the process is gone. False when it outlived the wait, and nothing should be installed.</summary>
@@ -1237,7 +1268,7 @@ sealed class Args
     static readonly HashSet<string> ValueOpts = new(StringComparer.OrdinalIgnoreCase)
     {
         "--from", "--near", "--skip", "--junction", "--optional", "--without", "--root", "--name", "-m", "--message", "--url", "--keep", "--as", "--shared", "--kind",
-        "--repo", "--dir", "--wait-pid", "--relaunch", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only", "--commit",
+        "--repo", "--dir", "--wait-pid", "--relaunch", "--payload", "-o", "--out", "--into", "--prefix", "--max-file", "--max-push", "--only", "--commit",
         "--worktree", "--body-file", "--body", "--file", "--side", "--lines", "--actor", "--expected-revision", "--version", "--request-id", "--state", "--offset",
     };
 

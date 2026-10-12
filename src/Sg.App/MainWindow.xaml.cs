@@ -510,26 +510,24 @@ public sealed partial class MainWindow : Window
             await Dialogs.Info(this, "Tasks are running", "Finish or cancel active tasks in the task pane before restarting.");
             return;
         }
-        if (!await Dialogs.Confirm(this, "Update and restart",
-                $"sg closes, {check.Remote} is written over {Updates.InstallDir()}, then sg opens again.\n\n"
-                + "Anything you typed in another sg window is lost.", "Update"))
-            return;
-
-        if (Session.Tasks.Snapshot().Any(t => t.Active)) return;
         _updating = true;
         UpdateItem.IsEnabled = false;
-        try
+        if (await UpdateDialog.Run(this, check) is { } fetched)
         {
-            Updates.StartInstaller();
+            try
+            {
+                Updates.StartInstaller(fetched);
+                ExitForUpdate();
+                return;
+            }
+            catch (Exception ex) when (ex is SgException or System.ComponentModel.Win32Exception)
+            {
+                Updater.Discard(fetched.Folder);
+                await Dialogs.Info(this, "Update", ex.Message);
+            }
         }
-        catch (SgException ex)
-        {
-            _updating = false;
-            UpdateItem.IsEnabled = true;
-            await Dialogs.Info(this, "Update", ex.Message);
-            return;
-        }
-        ExitForUpdate();
+        _updating = false;
+        UpdateItem.IsEnabled = true;
     }
 
     /// <summary>

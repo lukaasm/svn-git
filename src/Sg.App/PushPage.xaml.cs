@@ -9,11 +9,8 @@ namespace Sg.App;
 /// <summary>Review what leaves the machine, then push. One SVN commit per working copy, or one git commit pushed to the clone's branch.</summary>
 public sealed partial class PushPage : SgPage
 {
-    void ReviewReadiness_Click(object sender, RoutedEventArgs e)
-    {
-        AdvancedFlyout.Hide();
+    void ReviewReadiness_Click(object sender, RoutedEventArgs e) =>
         Go(() => new ReviewPage(_worktree), "review:" + _worktree);
-    }
     readonly string _worktree;
     readonly ListFilter _filter;
     readonly ReviewLayout _layout;
@@ -27,8 +24,8 @@ public sealed partial class PushPage : SgPage
 
     /// <summary>
     /// How much of the branch this push sends. Picking a commit in the list narrows it to the run that
-    /// ends there; everything above waits for the next push. "This commit" narrows it to one commit on
-    /// its own, from anywhere on the branch, and everything under and over it waits.
+    /// ends there; everything above waits for the next push. "Push only" in a commit's menu narrows it to
+    /// one commit on its own, from anywhere on the branch, and everything under and over it waits.
     /// </summary>
     PushScope _scope = PushScope.Whole;
     // Remember the boundary itself across navigation and refresh. A count can name another commit
@@ -83,6 +80,7 @@ public sealed partial class PushPage : SgPage
         _layout = new ReviewLayout(this, Body, ChangesPane, DiffPane, Splitter, CompactViews);
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (PushButton.IsEnabled) _ = PushAsync(); });
+        Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync());
         FileActions.Attach(Files, n => PathUtil.Join(_worktree, n.FullPath));
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display, r => ((FileRow)r).Group);
         _filter.Picked += OnPicked;
@@ -206,7 +204,7 @@ public sealed partial class PushPage : SgPage
         ChecksIcon.Glyph = "\uE946";
         ChecksIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         Checks.IsEnabled = WarnBar.IsEnabled = false;
-        AllCommitsButton.IsEnabled = _scope.Partial;
+        AllCommitsButton.IsEnabled = RangeAllCommitsButton.IsEnabled = _scope.Partial;
         SyncPushButton();
     }
 
@@ -258,7 +256,7 @@ public sealed partial class PushPage : SgPage
         _reading = false;
         PreviewProgress.IsActive = false;
         PreviewProgress.Opacity = 0;
-        ReadinessButton.Text = "Full branch readiness: " + (bundle?.Readiness ?? "unavailable");
+        ReadinessButton.Label = "Full branch readiness: " + (bundle?.Readiness ?? "unavailable");
         CommitsSkeleton.Hide();
         FilesSkeleton.Hide();
         if (read == null)
@@ -314,7 +312,7 @@ public sealed partial class PushPage : SgPage
             ? $"Commits on the branch, sending the oldest {p.Sending}"
             : "Commits on the branch";
         ShowCommits();
-        AllCommitsButton.IsEnabled = _scope.Partial;
+        AllCommitsButton.IsEnabled = RangeAllCommitsButton.IsEnabled = _scope.Partial;
         PartialBar.Message = alone
             ? $"Only {Short(p.Picked)} goes, cherry picked onto svn/{p.Checkout}: its own change and nothing the commits under it wrote. "
               + $"The other {p.Commits.Count - 1} commit(s) stay on the branch, over the new snapshot, ready for the next push."
@@ -369,7 +367,7 @@ public sealed partial class PushPage : SgPage
         ShowChecks(p);
         if (_rangeMissing)
         {
-            ChecksHeader.Text = "Choose a commit or Send all to continue";
+            ChecksHeader.Text = "Choose a commit, or push the whole branch, to continue";
             ChecksIcon.Glyph = "\uE7BA";
             ChecksIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorCautionBrush"];
         }
@@ -401,7 +399,6 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     void Commits_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        CommitActionsButton.IsEnabled = Commits.SelectedItem is CommitRow;
         if (_binding || Commits.SelectedItem is not CommitRow picked) return;
         // Against every commit, not against the list on screen: with a filter on, the line under the
         // picked one may be ten commits down the branch, and all ten go with it.
@@ -435,13 +432,15 @@ public sealed partial class PushPage : SgPage
         if (Commits.ItemsSource is not IReadOnlyList<CommitRow> current || !current.SequenceEqual(shown)) Commits.ItemsSource = shown;
         Commits.SelectedItem = cut != null && shown.Contains(cut) ? cut : null;
         _binding = false;
-        CommitActionsButton.IsEnabled = Commits.SelectedItem is CommitRow;
         CommitsHeader.Text = _commitFilter.Active
             ? _commitsTitle + ", " + CommitFilter.Showing(shown.Count, _commitRows.Count)
             : _commitsTitle;
     }
 
-    async void AllCommits_Click(object sender, RoutedEventArgs e)
+    async void AllCommits_Click(object sender, RoutedEventArgs e) => await WholeBranchAsync();
+
+    /// <summary>Back to sending the whole branch: from the bar that says only part of it goes, from the one that says the picked commit is gone, or from a commit's menu.</summary>
+    async Task WholeBranchAsync()
     {
         if (!_scope.Partial) return;
         _scope = PushScope.Whole;
@@ -537,7 +536,7 @@ public sealed partial class PushPage : SgPage
         PushButton.IsEnabled = _canPush;
         var help = _reading ? "Wait for the selected commits' push preview to finish updating."
             : ReadError.IsOpen ? "The push preview could not be read. Retry before pushing or applying changes."
-            : _rangeMissing ? "The previously selected commit is no longer on the branch. Choose a commit or Send all to continue."
+            : _rangeMissing ? "The previously selected commit is no longer on the branch. Choose a commit, or push the whole branch, to continue."
             : _canPush ? $"Review the messages and push these commits to {(_co != null ? ServerWords.Target(_co) : "SVN")}."
             : _preview == null ? "Wait for the push preview to load."
             : _preview.Dirty ? "Commit or shelve the uncommitted worktree changes first."
@@ -555,13 +554,12 @@ public sealed partial class PushPage : SgPage
     }
 
     /// <summary>
-    /// What is already put aside from this branch. It is in the push button's menu because the shelf is
-    /// the other place a change can be instead of going to SVN, and because a push that was unblocked by
-    /// shelving something needs the way back to it from here.
+    /// What is already put aside from this branch. It is under More because the shelf is the other place
+    /// a change can be instead of going to SVN, and because a push that was unblocked by shelving
+    /// something needs the way back to it from here.
     /// </summary>
     void Shelf_Click(object sender, RoutedEventArgs e)
     {
-        AdvancedFlyout.Hide();
         var branch = Branch;
         Go(() => new ShelfPage(null, _worktree, branch) { Checkout = Checkout, Branch = branch }, "shelf:" + _worktree);
     }
@@ -573,7 +571,6 @@ public sealed partial class PushPage : SgPage
     /// </summary>
     async void Apply_Click(object sender, RoutedEventArgs e)
     {
-        AdvancedFlyout.Hide();
         var p = _preview;
         if (!_canPush || !PushButton.IsEnabled || p == null) return;
         var gen = _generation;
@@ -733,16 +730,11 @@ public sealed partial class PushPage : SgPage
         return null;
     }
 
-    /// <summary>"This commit": the menu for the picked line, under the button.</summary>
-    void CommitActions_Click(object sender, RoutedEventArgs e)
-    {
-        if (Commits.SelectedItem is CommitRow row && sender is FrameworkElement button) CommitMenu(row).ShowAt(button);
-    }
-
     /// <summary>
     /// What can be done with one commit alone, wherever it sits on the branch: send it on its own, write
     /// only it into the checkout, put it on the shelf, or throw it away. The first changes what this page
-    /// sends and reads the preview again; the others run at once and read the branch again after.
+    /// sends and reads the preview again; the others run at once and read the branch again after. Going
+    /// back to the whole branch sits beside the first, as the way out of it.
     /// </summary>
     MenuFlyout CommitMenu(CommitRow row)
     {
@@ -752,6 +744,8 @@ public sealed partial class PushPage : SgPage
             $"Send this commit to {target} on its own, cherry picked onto the snapshot: its own change and nothing the commits under it wrote. "
             + "The commits under and over it stay on the branch. The page shows what would go before anything is sent.",
             () => PickOnly(row));
+        Item(menu, "Push the whole branch", "\uE898", "Go back to sending the whole branch in one push.",
+            () => _ = WholeBranchAsync()).IsEnabled = _scope.Partial;
         Item(menu, $"Apply only {row.ShortSha} to the checkout", "\uE8DE",
             "Write this commit's own change into the checkout as local changes, and nothing under or over it. Nothing is committed and the branch does not move.",
             () => _ = ApplyOnlyAsync(row));
@@ -764,12 +758,13 @@ public sealed partial class PushPage : SgPage
             () => _ = TakeOutAsync(row, shelve: false));
         return menu;
 
-        static void Item(MenuFlyout into, string text, string glyph, string tip, Action run)
+        static MenuFlyoutItem Item(MenuFlyout into, string text, string glyph, string tip, Action run)
         {
             var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph } };
             ToolTipService.SetToolTip(item, tip);
             item.Click += (_, _) => run();
             into.Items.Add(item);
+            return item;
         }
     }
 
@@ -830,7 +825,8 @@ public sealed partial class PushPage : SgPage
 
     static string Short(string sha) => sha.Length >= 8 ? sha[..8] : sha;
 
-    async void Push_Click(object sender, RoutedEventArgs e) => await PushAsync();
+    /// <summary>The left half of the split button. Its right half drops the menu and never gets here.</summary>
+    async void Push_Click(SplitButton sender, SplitButtonClickEventArgs e) => await PushAsync();
 
     async Task PushAsync()
     {

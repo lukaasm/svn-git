@@ -66,7 +66,7 @@ try {
     Start-UiScenario 'Back navigation restores the current Push reading position'
     Push-ScrollBottom
     $expectedTop = Push-Editors 'return editors[1].getScrollTop();'
-    Invoke-Control (Find 'AdvancedButton')
+    Open-More
     Invoke-Control (Wait-For { Find 'ReadinessButton' })
     Invoke-Control (Wait-For { Find 'PART_BackButton' })
     $browser.Dispose(); $browser = $null

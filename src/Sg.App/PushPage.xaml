@@ -9,7 +9,12 @@
         <StackPanel Grid.Row="0" Spacing="6">
             <InfoBar x:Name="ResultBar" Severity="Success" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
             <InfoBar x:Name="RangeNotice" Severity="Warning" IsClosable="False" IsOpen="False"
-                     Message="The previously selected commit is no longer on the branch. Choose a commit or Send all to continue." />
+                     Message="The previously selected commit is no longer on the branch. Choose a commit, or push the whole branch, to continue.">
+                <InfoBar.ActionButton>
+                    <Button x:Name="RangeAllCommitsButton" Content="Push the whole branch" Click="AllCommits_Click"
+                            ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
+                </InfoBar.ActionButton>
+            </InfoBar>
             <InfoBar x:Name="ReadError" Title="Could not update the push preview. Any displayed files are from the last successful read."
                      Severity="Error" IsClosable="False" IsOpen="False">
                 <InfoBar.ActionButton>
@@ -61,29 +66,29 @@
                 <Grid x:Name="ChangesPane" Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
                     <!-- Pick where the push stops. The list is newest first, so picking a line sends
                          everything from the snapshot up to it and leaves the lines above it behind.
-                         "This commit" acts on the picked line alone: send it on its own, write only it
-                         into the checkout, shelve it, or discard it. A right click on any line does the same. -->
-                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+                         A line's menu, on a right click or Shift+F10, acts on that commit alone: send it on
+                         its own, write only it into the checkout, shelve it, or discard it. -->
+                    <StackPanel Spacing="6">
                         <TextBlock x:Name="CommitsHeader" Text="Commits on the branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"
-                                   Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" />
-                        <TextBox x:Name="CommitFilterBox" Grid.Row="1" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBox x:Name="CommitFilterBox" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12"
                                  ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. It changes the list, never what gets pushed: the cut stays on the commit it was on." />
-                        <local:IconButton x:Name="CommitActionsButton" Grid.Row="1" Grid.Column="1" Glyph="&#xE712;" Text="This commit" Click="CommitActions_Click"
-                                          FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False"
-                                          ToolTipService.ToolTip="The picked commit alone: push it on its own, write only it into the checkout, shelve it, or discard it. Right click any commit for the same." />
-                        <Button x:Name="AllCommitsButton" Grid.Row="1" Grid.Column="2" Content="Send all" Click="AllCommits_Click" FontSize="12" Padding="8,2" MinHeight="0"
-                                IsEnabled="False"
-                                ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
-                    </Grid>
+                    </StackPanel>
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4" MaxHeight="260">
                         <Grid>
                             <local:RowListView x:Name="Commits" SelectionMode="Single" SelectionChanged="Commits_SelectionChanged"
                                                ItemTemplate="{StaticResource CommitRowTemplate}"
-                                               ToolTipService.ToolTip="Pick the last commit this push should send. Everything under it goes with it; everything above it stays on the branch for the next push. Right click a commit to send it on its own, shelve it, or discard it." />
+                                               ToolTipService.ToolTip="Pick the last commit this push should send. Everything under it goes with it; everything above it stays on the branch for the next push. Right click a commit, or press Shift+F10, to send it on its own, shelve it, or discard it." />
                             <local:Skeleton x:Name="CommitsSkeleton" RowCount="4" Badges="False" Visibility="Collapsed" />
                         </Grid>
                     </Border>
-                    <InfoBar x:Name="PartialBar" Grid.Row="2" Severity="Informational" IsClosable="False" IsOpen="False" />
+                    <!-- Open only while part of the branch is going, which is the one time the whole of it is a choice. -->
+                    <InfoBar x:Name="PartialBar" Grid.Row="2" Severity="Informational" IsClosable="False" IsOpen="False">
+                        <InfoBar.ActionButton>
+                            <Button x:Name="AllCommitsButton" Content="Push the whole branch" Click="AllCommits_Click" IsEnabled="False"
+                                    ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
+                        </InfoBar.ActionButton>
+                    </InfoBar>
                     <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
                         <TextBlock x:Name="FilesHeader" Text="Files, one SVN commit per working copy" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
                         <TextBox x:Name="Filter" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12"
@@ -139,31 +144,37 @@
                 <!-- The message is asked for on the press, in a dialog, not held open under the checks. -->
                 <local:WrapRow Spacing="8" Margin="0,4,0,0">
                     <local:TaskGate>
-                        <Button AutomationProperties.Name="Push to SVN" x:Name="PushButton" Style="{StaticResource AccentButtonStyle}"
+                        <!-- Its menu holds the same write stopped short of the server. -->
+                        <local:AccentSplitButton AutomationProperties.Name="Push to SVN" x:Name="PushButton"
                                                  Click="Push_Click" IsEnabled="False"
                                                  ToolTipService.ToolTip="Write the message, then sync the checkout, rebase the branch, and make one svn commit per repository. Asks before it commits. Ctrl+Enter opens this too.">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon Glyph="&#xE898;" FontSize="14" />
                                 <TextBlock x:Name="PushLabel" Text="Push to SVN" />
                             </StackPanel>
-                        </Button>
+                            <local:AccentSplitButton.Flyout>
+                                <MenuFlyout Placement="TopEdgeAlignedRight" local:MenuGate.Watch="True">
+                                    <MenuFlyoutItem x:Name="ApplyItem" Text="Apply without committing" Click="Apply_Click" local:MenuGate.Gated="True">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DE;" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </local:AccentSplitButton.Flyout>
+                        </local:AccentSplitButton>
                     </local:TaskGate>
-                    <local:IconButton x:Name="RefreshPreviewButton" Glyph="&#xE72C;" Text="Refresh"
-                        Click="Refresh_Click" ToolTipService.ToolTip="Read the branch again: commits, files, and the message." />
-                    <local:IconButton x:Name="AdvancedButton" Glyph="&#xE712;" Text="Advanced" ToolTipService.ToolTip="Review readiness, apply locally, or open shelved changes.">
-                        <Button.Flyout>
-                            <Flyout x:Name="AdvancedFlyout" Placement="TopEdgeAlignedLeft">
-                                <StackPanel Spacing="8">
-                                    <local:IconButton x:Name="ReadinessButton" Glyph="&#xE73E;" Text="Review readiness" Click="ReviewReadiness_Click" />
-                                    <local:TaskGate>
-                                        <local:IconButton x:Name="ApplyItem" Glyph="&#xE8DE;" Text="Apply without committing" Click="Apply_Click" />
-                                    </local:TaskGate>
-                                    <local:IconButton Glyph="&#xE7B8;" Text="Shelved changes" Click="Shelf_Click" />
-                                </StackPanel>
-                            </Flyout>
-                        </Button.Flyout>
-                    </local:IconButton>
-                    <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is sent." />
+                    <CommandBar x:Name="Actions" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,0,0,0">
+                        <AppBarButton x:Name="RefreshPreviewButton" Label="Refresh" Click="Refresh_Click"
+                                      ToolTipService.ToolTip="Read the branch again: commits, files, and the message. F5 does the same.">
+                            <AppBarButton.Icon><FontIcon Glyph="&#xE72C;" /></AppBarButton.Icon>
+                        </AppBarButton>
+                        <CommandBar.SecondaryCommands>
+                            <AppBarButton x:Name="ReadinessButton" Label="Review readiness" Click="ReviewReadiness_Click">
+                                <AppBarButton.Icon><FontIcon Glyph="&#xE73E;" /></AppBarButton.Icon>
+                            </AppBarButton>
+                            <AppBarButton Label="Shelved changes" Click="Shelf_Click">
+                                <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
+                            </AppBarButton>
+                        </CommandBar.SecondaryCommands>
+                    </CommandBar>
                 </local:WrapRow>
             </StackPanel>
         </Grid>

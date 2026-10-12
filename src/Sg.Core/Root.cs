@@ -310,6 +310,14 @@ public sealed class SgRoot
         }
     }
 
+    /// <summary>A checkout that left the root takes its cached rules with it, out of the shared exclude as well.</summary>
+    public void ForgetIgnores(CheckoutConfig co)
+    {
+        try { File.Delete(IgnoreFileFor(co)); }
+        catch (IOException) { /* the shared exclude below reads only the registered checkouts' files */ }
+        WriteSharedExclude();
+    }
+
     void WriteSharedExclude()
     {
         var lines = new List<string>

@@ -83,12 +83,18 @@ public sealed partial class SvnCommitPage : SgPage
     /// <summary>Right click on a line: the file actions, then what can be done to these changes.</summary>
     void ExtendMenu(MenuFlyout menu, TreeNode node)
     {
-        var changes = node.Rows().OfType<SvnChangeRow>().Select(r => r.Change).ToList();
+        var clicked = node.Rows().OfType<SvnChangeRow>().ToList();
+        var changes = clicked.Select(r => r.Change).ToList();
         if (changes.Count == 0) return;
         menu.Items.Add(new MenuFlyoutSeparator());
+        // Discard and shelve take every checked change when the click lands on one, across working copies:
+        // each root or external took a right click of its own before.
+        var (target, count) = CheckableRow.MenuTarget(clicked, _rows);
+        var paths = target.Select(r => r.Change.Path).ToList();
+        var these = count.Length > 0 ? "every checked file" : "these files";
 
-        Add("Discard", "\uE7A7", $"Put these files back the way {(_co.IsGit ? "the server" : "SVN")} has them; an unversioned one is deleted. Asks first, and Undo on the bar brings them back.",
-            () => RevertAsync(changes.Select(c => c.Path).ToList()));
+        Add(count.Length > 0 ? "Discard " + count : "Discard", "\uE7A7", $"Put {these} back the way {(_co.IsGit ? "the server" : "SVN")} has them; an unversioned one is deleted. Asks first, and Undo on the bar brings them back.",
+            () => RevertAsync(paths));
 
         var unversioned = changes.Where(c => c.Item == "unversioned").ToList();
         if (unversioned.Count > 0)
@@ -97,8 +103,8 @@ public sealed partial class SvnCommitPage : SgPage
                     : "Set svn:ignore on the folder each of these sits in, so it stops being listed. The property change is itself a change to commit.",
                 () => IgnoreAsync(unversioned.Select(c => c.Path).ToList()));
 
-        Add("Shelve", "\uE7B8", "Take these out of the checkout and keep them, to put back later. A local edit that blocks a push stops blocking it.",
-            () => ShelveAsync(changes.Select(c => c.Path).ToList()));
+        Add(count.Length > 0 ? "Shelve " + count : "Shelve", "\uE7B8", $"Take {these} out of the checkout and keep them, to put back later. A local edit that blocks a push stops blocking it.",
+            () => ShelveAsync(paths));
 
         Add("Copy or move to worktree…", "\uE8C8", "Preview these changes in a new or existing worktree.", () =>
         {

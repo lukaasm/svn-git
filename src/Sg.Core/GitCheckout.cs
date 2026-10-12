@@ -678,6 +678,7 @@ public sealed class GitCheckoutVcs : ICheckoutVcs
         catch (Exception e) when (e is SgException or IOException or UnauthorizedAccessException) { /* the message says what happened */ }
         SgRoot.SweepTempDir(GitTunnel.DirOf(root, co.Name));
         root.Git.DeleteRef(UpstreamRef(co));
+        root.Git.DeleteRef(OutgoingRef(co));
         root.RefreshTunnels();
     }
 

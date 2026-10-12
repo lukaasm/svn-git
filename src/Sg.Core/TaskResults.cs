@@ -31,6 +31,8 @@ public static class TaskResults
             + (r.Stayed != null ? "\nThe checkout's edits stayed: " + r.Stayed + "\nOpen Transfer checkout changes to review them." : "")),
         CheckoutTransferResult r => (TaskState.Succeeded, $"{r.Files} file(s) {(r.Moved ? "moved" : "copied")} to {r.Path}. Recovery shelves retained."),
         WorktreeRenamePlan r => (TaskState.Succeeded, $"Renamed {r.Branch} to {r.Name}.\n{r.NewPath}"),
+        CheckoutRemovalPlan r => (TaskState.Succeeded, $"Checkout {r.Checkout} is removed"
+            + (r.Branches.Count == 0 ? "." : $", with {r.Branches.Count} branch{(r.Branches.Count == 1 ? "" : "es")}.") + $" The folder stays:\n{r.Path}"),
         ReviewRecord r => (r.Checks.Any(c => c.ExitCode != 0) ? TaskState.NeedsAttention : TaskState.Succeeded,
             string.Join("\n", r.Checks.Select(c => $"{c.Name}: {(c.ExitCode == 0 ? "passed" : "failed (exit " + c.ExitCode + ")")}"))),
         AutoResolveResult r => (r.AllResolved ? TaskState.Succeeded : TaskState.NeedsAttention,
@@ -60,6 +62,7 @@ public static class TaskResults
         NewWorktreeResult r => FollowUp(r.Branch),
         CheckoutTransferResult r => new(TaskTargetKind.Folder, r.Path),
         WorktreeRenamePlan r => new(TaskTargetKind.Folder, r.NewPath),
+        CheckoutRemovalPlan r => new(TaskTargetKind.Folder, r.Path),
         CheckoutResult r => new(TaskTargetKind.Folder, r.Checkout.Path),
         OperationRecord r => new(r.Terminal ? TaskTargetKind.Folder : TaskTargetKind.Update, r.Path),
         BackupResult r => new(TaskTargetKind.Backup, Worktree: r.Worktree),

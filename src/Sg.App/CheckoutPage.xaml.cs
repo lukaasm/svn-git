@@ -57,6 +57,9 @@ public sealed partial class CheckoutPage : SgPage
             ? busy.BlockingExplanation
             : _current == null ? "Select a checkout before creating a worktree." : "Create a worktree from this checkout's latest snapshot.";
         TaskGate.SetHelp(NewWorktreeButton, reason);
+        RemoveCheckoutButton.IsEnabled = _current != null && busy == null;
+        TaskGate.SetHelp(RemoveCheckoutButton, busy?.BlockingExplanation
+            ?? "sg forgets this checkout, with every worktree and branch born from it. The folder stays on disk. Asks first.");
     }
 
     async void UnavailableActions_Click(object sender, RoutedEventArgs e)
@@ -64,7 +67,7 @@ public sealed partial class CheckoutPage : SgPage
         var reasons = new List<string>();
         var busy = Session.Tasks.Blocking(Session.Root?.RootPath ?? "");
         if (busy != null)
-            reasons.Add("Sync and New worktree: " + busy.BlockingExplanation);
+            reasons.Add("Sync, New worktree and Remove checkout: " + busy.BlockingExplanation);
         if (!SvnCommitButton.IsEnabled)
             reasons.Add("Commit: " + AutomationProperties.GetHelpText(SvnCommitButton));
         if (!ShelfButton.IsEnabled)
@@ -560,6 +563,11 @@ public sealed partial class CheckoutPage : SgPage
     void Edit_Click(object sender, RoutedEventArgs e)
     {
         if (_current != null) _owner.EditCheckout(_current);
+    }
+
+    async void RemoveCheckout_Click(object sender, RoutedEventArgs e)
+    {
+        if (_current != null) await _owner.RemoveCheckoutAsync(_current, sender);
     }
 
     void OpenCheckout_Click(object sender, RoutedEventArgs e)

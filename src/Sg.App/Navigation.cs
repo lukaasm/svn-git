@@ -190,6 +190,22 @@ public sealed class NavHost : ContentControl
         return false;
     }
 
+    /// <summary>
+    /// Drops the pages behind and ahead of this one whose keys name something that is gone, like a removed
+    /// checkout: going back to one would build its page again, for a checkout the root no longer has. The
+    /// page on screen stays.
+    /// </summary>
+    public void Forget(Func<string, bool> gone)
+    {
+        for (var i = _entries.Count - 1; i >= 0; i--)
+        {
+            if (i == _index || !gone(_entries[i].Key)) continue;
+            _entries.RemoveAt(i);
+            if (i < _index) _index--;
+        }
+        Changed?.Invoke();
+    }
+
     /// <summary>A page asks to be left: back when there is a back, otherwise the window goes.</summary>
     public void Leave(SgPage page)
     {

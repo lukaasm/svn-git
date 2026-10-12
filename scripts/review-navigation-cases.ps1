@@ -8,7 +8,7 @@ function File-Check([string]$path) {
 function Toggle-File([string]$path) { (File-Check $path).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }
 function Checked-File([string]$path) { (File-Check $path).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState -eq 'On' }
 function Open-Shelf {
-    Invoke-Control (Wait-For { Find 'AdvancedButton' }); Invoke-Control (Wait-For { Find 'ShelfButton' })
+    Open-More; Invoke-Control (Wait-For { Find 'ShelfButton' })
     $null = Wait-For { !(Find 'CommitButton') -and (Find 'PART_BackButton') }
 }
 function Back-ToCommit {
@@ -40,7 +40,7 @@ if ($NavigationScope -ne 'Merge') {
 Start-UiScenario 'Commit restores its draft, filter, checked files, open diff and compact pane'
 Launch 'commit' $worktree
 $null = Wait-For { (Find 'CommitButton').Current.IsEnabled }
-Invoke-Control (Wait-For { Find 'NoneButton' }); Toggle-File 'base.txt'
+Set-AllCheck $false; Toggle-File 'base.txt'
 Invoke-Control (Wait-For { Find 'CommitButton' })
 Enter-Value (Wait-For { Message-Box }) 'Navigation draft with selected files'
 Close-Dialog
@@ -70,14 +70,14 @@ Save-UiWindow $window (Join-Path $ArtifactDirectory 'commit-restored.png')
 Complete-UiScenario
 
 Start-UiScenario 'An explicit empty Commit selection survives navigation'
-Invoke-Control (Wait-For { Find 'NoneButton' })
+Set-AllCheck $false
 Open-Shelf; Back-ToCommit
 Assert-Disabled 'CommitButton' '*Select at least one*'
 if (Checked-File 'base.txt') { throw 'Returning silently checked a file.' }
 Complete-UiScenario
 
 Start-UiScenario 'Amend is restored for the same commit and cancelled when HEAD changes'
-Invoke-Control (Wait-For { Find 'AdvancedButton' })
+Open-More
 (Find 'Amend').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
 $null = Wait-For { Find 'Cancel amend' -Name }
 Open-Shelf; Back-ToCommit
@@ -99,7 +99,7 @@ Complete-UiScenario
 Start-UiScenario 'A successfully committed message is not resurrected on return'
 Invoke-Control (Wait-For { Find 'CommitButton' }); $null = Wait-For { Find 'PrimaryButton' }; Invoke-Control (Wait-For { Find 'PrimaryButton' })
 $null = Wait-For { (& git -C $worktree log -1 --format=%s) -eq 'Navigation draft with selected files' }
-$null = Wait-For { (Find 'AllButton').Current.IsEnabled -and (Find 'CommitLabel').Current.Name -eq 'Commit' }
+$null = Wait-For { (Find 'AllCheck').Current.IsEnabled -and (Find 'CommitLabel').Current.Name -eq 'Commit' }
 Open-Shelf; Back-ToCommit
 Toggle-File 'keep.txt'; Invoke-Control (Wait-For { Find 'CommitButton' })
 if ((Value (Wait-For { Message-Box })) -eq 'Navigation draft with selected files') { throw 'A committed draft came back.' }

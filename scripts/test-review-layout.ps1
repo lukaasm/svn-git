@@ -80,6 +80,29 @@ function Assert-Disabled([string]$id, [string]$reason) {
         $hint -and $hint.Current.IsKeyboardFocusable -and $hint.Current.HelpText -like $reason
     } "Disabled $id does not expose keyboard help."
 }
+function Assert-MenuDisabled([string]$id, [string]$reason) {
+    # A menu item has no hint wrapper; its own help text carries the reason.
+    $control = Wait-For { Find $id }
+    if ($control.Current.IsEnabled -or $control.Current.HelpText -notlike $reason) { throw "Missing disabled reason on $id : $($control.Current.HelpText)" }
+}
+function Open-More { Invoke-Control (Wait-For { Find 'MoreButton' -within (Wait-For { Find 'Actions' }) }) }
+function Open-CommitMenu {
+    # A menu opened while another one is still closing can be dismissed with it; open it again until it stays.
+    $null = Wait-For {
+        $button = Find 'CommitButton'
+        if (!$button) { return $false }
+        $menu = $button.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if ($menu.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded) { $menu.Expand(); Start-Sleep -Milliseconds 300 }
+        $menu.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded
+    } 'The menu of Commit did not open.'
+}
+function Set-AllCheck([bool]$on) {
+    # Anything unchecked checks every row; a full list unchecks them all.
+    $toggle = (Wait-For { Find 'AllCheck' }).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    $want = if ($on) { [System.Windows.Automation.ToggleState]::On } else { [System.Windows.Automation.ToggleState]::Off }
+    for ($i = 0; $i -lt 2 -and $toggle.Current.ToggleState -ne $want; $i++) { $toggle.Toggle() }
+    $null = Wait-For { $toggle.Current.ToggleState -eq $want } 'The All box did not change every row.'
+}
 function Close-Dialog {
     # InfoBars also expose CloseButton; the message dialog's action is specifically Cancel.
     Invoke-Control (Wait-For { Find 'Cancel' -Name })
@@ -189,8 +212,8 @@ try {
     Start-UiScenario 'Compact Commit exposes common actions and preserves the file selection across views'
     Launch 'commit' $worktree
     $null = Wait-For { (Find 'CommitButton').Current.IsEnabled }
-    foreach ($id in @('CommitButton', 'AdvancedButton', 'RefreshButton', 'AllButton', 'NoneButton', 'ChangesTab', 'DiffTab')) { Assert-Fits $id }
-    if (Find 'StageButton') { throw 'Staging is exposed before opening Advanced.' }
+    foreach ($id in @('CommitButton', 'MoreButton', 'RefreshButton', 'AllCheck', 'ChangesTab', 'DiffTab')) { Assert-Fits $id }
+    if (Find 'StageButton') { throw 'Staging is exposed before opening More.' }
     Select-Control (Row 'Files' '*base.txt*')
     $null = Wait-For { $t = Find 'TitleText'; $t -and !$t.Current.IsOffscreen -and $t.Current.Name -like '*base.txt*' }
     if (!(Find 'DiffTab').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected) { throw 'Picking a Commit file did not open Diff.' }
@@ -202,41 +225,46 @@ try {
     Complete-UiScenario
 
     Start-UiScenario 'Commit advanced actions explain disabled states and visibly identify amend mode'
-    Invoke-Control (Find 'NoneButton')
-    Invoke-Control (Find 'AdvancedButton')
-    foreach ($id in @('StageButton', 'ShelveButton', 'DiscardButton')) { Assert-Disabled $id '*Check at least one*'; Assert-Fits $id }
-    Assert-Disabled 'UnstageButton' '*No checked file*'
+    Set-AllCheck $false
+    Open-More
+    Assert-MenuDisabled 'StageButton' '*Check at least one*'; Assert-Fits 'StageButton'
+    Assert-MenuDisabled 'UnstageButton' '*No checked file*'
     (Find 'Amend').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     $null = Wait-For { Find 'Cancel amend' -Name }
     if (!(Find 'CommitButton').Current.IsEnabled -or (Find 'CommitLabel').Current.Name -ne 'Amend') { throw 'Message-only amend is not available.' }
+    $null = Wait-For { !(Find 'StageButton') } 'More stayed open after Amend.'
+    Open-CommitMenu
+    # A split button's menu opens below it and may leave the window, so it is not held to the window's bounds.
+    foreach ($id in @('ShelveButton', 'DiscardButton')) { Assert-MenuDisabled $id '*Check at least one*' }
+    (Find 'CommitButton').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse()
     Assert-Fits 'AmendNotice'
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'commit-amend-narrow.png')
     Invoke-Control (Find 'Cancel amend' -Name)
     Assert-Disabled 'CommitButton' '*Select at least one*'
     Complete-UiScenario
 
-    Start-UiScenario 'Stage and unstage operate only on checked files through Advanced'
+    Start-UiScenario 'Stage and unstage operate only on checked files through More'
     $baseRow = Row 'Files' '*base.txt*'
     $check = $baseRow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::CheckBox))
     $check.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-    Invoke-Control (Find 'AdvancedButton'); Invoke-Control (Wait-For { Find 'StageButton' })
+    Open-More; Invoke-Control (Wait-For { Find 'StageButton' })
     $null = Wait-For { $staged = & git -C $worktree diff --cached --name-only; $staged -eq 'base.txt' }
     $null = Wait-For { (Find 'CommitButton').Current.IsEnabled }
-    Invoke-Control (Find 'AdvancedButton')
+    Open-More
     $null = Wait-For { (Find 'UnstageButton').Current.IsEnabled }
     Invoke-Control (Find 'UnstageButton')
     $null = Wait-For { !(& git -C $worktree diff --cached --name-only) }
     $null = Wait-For { (Find 'CommitButton').Current.IsEnabled }
-    Invoke-Control (Find 'AdvancedButton')
+    Open-More
     $null = Wait-For { !(Find 'UnstageButton').Current.IsEnabled }
-    Assert-Disabled 'UnstageButton' '*No checked file*'
-    Invoke-Control (Find 'AdvancedButton')
+    Assert-MenuDisabled 'UnstageButton' '*No checked file*'
+    Open-More # More again closes it
     Complete-UiScenario
 
     Start-UiScenario 'Commit message draft and selected changes survive compact and wide layout switches'
     Select-Control (Find 'ChangesTab')
-    Invoke-Control (Find 'NoneButton')
+    Set-AllCheck $false
     $baseRow = Row 'Files' '*base.txt*'
     $check = $baseRow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::CheckBox))
@@ -247,7 +275,7 @@ try {
     Close-Dialog
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $null = Wait-For { $t = Find 'DiffTab'; !$t -or $t.Current.IsOffscreen }
-    foreach ($id in @('Files', 'TitleText', 'CommitButton', 'AdvancedButton')) { Assert-Fits $id }
+    foreach ($id in @('Files', 'TitleText', 'CommitButton', 'MoreButton')) { Assert-Fits $id }
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'commit-wide.png')
     Invoke-Control (Find 'CommitButton')
     $box = Wait-For { Message-Box }

@@ -120,12 +120,12 @@ $shelvesBefore = Shelf-Refs
 Check-Exit 'fixture scheduled addition'
 Invoke-Control (Find 'Refresh' -Name)
 $null = Wait-For { Row 'Files' '*added.txt*' }
-Invoke-Control (Find 'All' -Name)
-Invoke-Control (Find 'Discard' -Name)
+Set-AllCheck $true
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 Permanent-Choice
 Close-Dialog
 if ([IO.File]::ReadAllText((Join-Path $checkout 'base.txt')) -ne "Discard this edit`n" -or (Shelf-Refs) -ne $shelvesBefore) { throw 'Cancelling permanent discard changed files or shelves.' }
-Invoke-Control (Find 'Discard' -Name)
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 Permanent-Choice
 Save-UiWindow $window (Join-Path $ArtifactDirectory 'permanent-discard-warning.png')
 Invoke-Control (Find 'PrimaryButton')
@@ -139,8 +139,8 @@ Start-UiScenario 'A subsequent checkout discard defaults to recovery and Undo re
 [IO.File]::WriteAllText((Join-Path $checkout 'base.txt'), "Recover this edit`n")
 Invoke-Control (Find 'Refresh' -Name)
 $null = Wait-For { Row 'Files' '*base.txt*' }
-Invoke-Control (Find 'All' -Name)
-Invoke-Control (Find 'Discard' -Name)
+Set-AllCheck $true
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 $toggle = (Wait-For { Find 'DiscardPermanently' }).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
 if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) { throw 'Permanent discard persisted into the next confirmation.' }
 Invoke-Control (Find 'PrimaryButton')
@@ -158,9 +158,8 @@ Check-Exit 'fixture staged rename'
 Check-Exit 'fixture staged addition'
 Launch 'commit' $renamed
 $null = Wait-For { (Find 'CommitButton').Current.IsEnabled }
-Invoke-Control (Find 'AllButton')
-Invoke-Control (Find 'AdvancedButton')
-Invoke-Control (Wait-For { Find 'DiscardButton' })
+Set-AllCheck $true
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 Permanent-Choice
 $shelvesBefore = Shelf-Refs
 Invoke-Control (Find 'PrimaryButton')

@@ -330,8 +330,13 @@ public sealed partial class SvnCommitPage : SgPage
         catch (IOException) { return ""; }
     }
 
-    void All_Click(object sender, RoutedEventArgs e) { foreach (var r in _rows) r.Checked = true; SyncCommitButton(); }
-    void None_Click(object sender, RoutedEventArgs e) { foreach (var r in _rows) r.Checked = false; SyncCommitButton(); }
+    /// <summary>The box over the list: anything unchecked checks everything, and a full list unchecks it all.</summary>
+    void All_Click(object sender, RoutedEventArgs e)
+    {
+        var on = _rows.Any(r => !r.Checked);
+        foreach (var r in _rows) r.Checked = on;
+        SyncCommitButton();
+    }
 
     List<string> Checked() => _rows.Where(r => r.Checked).Select(r => r.Change.Path).ToList();
 
@@ -339,6 +344,8 @@ public sealed partial class SvnCommitPage : SgPage
     void SyncCommitButton()
     {
         var picked = _rows.Count(r => r.Checked);
+        AllCheck.IsEnabled = _rows.Count > 0;
+        AllCheck.IsChecked = picked == 0 ? false : picked == _rows.Count ? true : null;
         CommitButton.IsEnabled = picked > 0;
         var target = ServerWords.Target(_co);
         ActionHint.SetHelp(CommitButton, picked > 0 ? $"Review the message and commit the selected files to {target}." : $"Select at least one changed file to commit to {target}.");
@@ -452,12 +459,22 @@ public sealed partial class SvnCommitPage : SgPage
         await LoadAsync();
     }
 
-    async void Shelve_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => ShelveAsync(Checked()));
+    async void Shelve_Click(object sender, RoutedEventArgs e) => await RunCheckedActionAsync(() => ShelveAsync(Checked()));
 
     void Shelf_Click(object sender, RoutedEventArgs e) =>
         Go(() => new ShelfPage(_co) { Checkout = _co.Name }, "shelf:" + _co.Name);
 
-    async void Revert_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => RevertAsync(Checked()));
+    async void Revert_Click(object sender, RoutedEventArgs e) => await RunCheckedActionAsync(() => RevertAsync(Checked()));
+
+    /// <summary>
+    /// Shelve and Discard come from the menu of Commit, so the split button shows the work running.
+    /// Whether it is on afterwards follows the fresh list, a cancelled dialog included.
+    /// </summary>
+    async Task RunCheckedActionAsync(Func<Task> action)
+    {
+        try { await Busy.During(CommitButton, action, restoreEnabled: false); }
+        finally { SyncCommitButton(); }
+    }
 
     async void Refresh_Click(object sender, RoutedEventArgs e)
     {

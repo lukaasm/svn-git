@@ -29,7 +29,8 @@
 
         <ContentControl x:Name="FilledGate" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" IsTabStop="False">
         <Grid x:Name="Filled" RowDefinitions="Auto,*,Auto" Visibility="Collapsed">
-            <InfoBar x:Name="InfoText" Grid.Row="0" Severity="Informational" IsClosable="False" IsOpen="True"
+            <!-- It explains the page; it is not a status, so it can be closed. -->
+            <InfoBar x:Name="InfoText" Grid.Row="0" Severity="Informational" IsClosable="True" IsOpen="True"
                      Message="These are edits made directly in the SVN checkout. Commit sends the checked ones straight to SVN, one commit per working copy. Then the snapshot is refreshed." />
 
             <Grid x:Name="Body" Grid.Row="1" Padding="0,8">
@@ -39,25 +40,18 @@
                     <ColumnDefinition Width="*" MinWidth="400" />
                 </Grid.ColumnDefinitions>
 
-                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" RowSpacing="6">
-                    <!-- The same two rows the git commit page has: the filter takes what the header leaves,
-                         the actions get a row of their own and stay whole when the split is dragged narrow. -->
-                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
+                    <!-- The filter takes what the header leaves. Discard and Shelve are in the menu of Commit:
+                         the three ends of one decision about the same checked files. -->
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                         <TextBlock x:Name="FilesHeader" Text="Changes" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                         <TextBox x:Name="Filter" Grid.Column="1" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12" VerticalAlignment="Center"
                                  ToolTipService.ToolTip="Show only the rows whose status or path contains this text. It changes the list, never what is checked or discarded." />
+                        <!-- One box for every row: ticked when they all are, half when some are. -->
+                        <CheckBox x:Name="AllCheck" Grid.Column="2" Content="All" MinWidth="0" Click="All_Click"
+                                  ToolTipService.ToolTip="Check every change, unversioned files too. With every change checked, this unchecks them all." />
                     </Grid>
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
-                        <Button Content="All" Click="All_Click" ToolTipService.ToolTip="Check every change, unversioned files too." />
-                        <Button Content="None" Click="None_Click" ToolTipService.ToolTip="Uncheck everything." />
-                        <local:IconButton x:Name="DiscardButton" Glyph="&#xE7A7;" Text="Discard"
-                            Click="Revert_Click" ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. The confirmation keeps a recovery shelf by default, with an option to discard permanently." />
-                        <local:TaskGate>
-                            <local:IconButton Glyph="&#xE7B8;" Text="Shelve"
-                                Click="Shelve_Click" ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file." />
-                        </local:TaskGate>
-                    </StackPanel>
-                    <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4">
                         <Grid>
                             <!-- One root per working copy: a commit goes out per working copy, so the tree shows the same cut. -->
                             <local:RowTreeView x:Name="Files" ItemTemplate="{StaticResource CheckedFileTreeTemplate}" />
@@ -74,17 +68,23 @@
             </Grid>
 
             <!-- The message is asked for on the press, in a dialog, not held open under the list. -->
-            <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-                <local:IconButton Glyph="&#xE72C;" Text="Refresh"
-                    Click="Refresh_Click" ToolTipService.ToolTip="Read the changes in the checkout again." />
-                <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. The changes stay in the checkout." />
-                <local:IconButton Grid.Column="2" x:Name="ShelfButton" Glyph="&#xE7B8;" Text="Shelved changes" Click="Shelf_Click"
-                    ToolTipService.ToolTip="What is already put aside from this checkout, and the button that writes it back." />
-                <TextBlock Grid.Column="3" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                <!-- The same split the git changes page has, and for the same reason: the two ends of one
+            <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+                <CommandBar x:Name="Actions" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,0,0,0">
+                    <AppBarButton Label="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the changes in the checkout again. F5 does the same.">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE72C;" /></AppBarButton.Icon>
+                    </AppBarButton>
+                    <CommandBar.SecondaryCommands>
+                        <AppBarButton x:Name="ShelfButton" Label="Shelved changes" Click="Shelf_Click"
+                                      ToolTipService.ToolTip="What is already put aside from this checkout, and the button that writes it back.">
+                            <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
+                        </AppBarButton>
+                    </CommandBar.SecondaryCommands>
+                </CommandBar>
+                <TextBlock Grid.Column="1" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <!-- The same split the git changes page has, and for the same reason: the three ends of one
                      decision about the same checked files. Here putting them aside is also how a push that
                      refuses because the checkout holds an edit on the same file gets unblocked. -->
-                <local:TaskGate Grid.Column="4">
+                <local:TaskGate Grid.Column="2">
                     <local:AccentSplitButton AutomationProperties.Name="Commit to SVN" x:Name="CommitButton"
                                              Click="Commit_Click"
                                              ToolTipService.ToolTip="Write the message, then commit the checked changes to SVN, one commit per working copy. Unversioned files are added first. Asks first. Ctrl+Enter opens this too.">
@@ -93,20 +93,20 @@
                             <TextBlock x:Name="CommitLabel" Text="Commit to SVN" />
                         </StackPanel>
                         <local:AccentSplitButton.Flyout>
-                            <MenuFlyout Placement="TopEdgeAlignedRight">
+                            <MenuFlyout Placement="TopEdgeAlignedRight" local:MenuGate.Watch="True">
                                 <MenuFlyoutItem Text="Copy or move to worktree…" Click="Transfer_Click">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click"
+                                <MenuFlyoutItem Text="Shelve them instead" Click="Shelve_Click" local:MenuGate.Gated="True"
                                                 ToolTipService.ToolTip="Take the checked changes out of the checkout and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file.">
                                     <MenuFlyoutItem.Icon>
                                         <FontIcon Glyph="&#xE7B8;" />
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Shelved changes" Click="Shelf_Click"
-                                                ToolTipService.ToolTip="What is already put aside from this checkout, and the button that writes it back.">
+                                <MenuFlyoutItem x:Name="DiscardButton" Text="Discard them…" Click="Revert_Click" local:MenuGate.Gated="True"
+                                                ToolTipService.ToolTip="Put the checked files back the way SVN has them; unversioned files get deleted. The confirmation keeps a recovery shelf by default, with an option to discard permanently.">
                                     <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE81C;" />
+                                        <FontIcon Glyph="&#xE7A7;" />
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>

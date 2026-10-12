@@ -97,11 +97,11 @@ public static class ShelfActions
     }
 
     /// <summary>
-    /// How much is on the shelf, written on the button that opens it and on the one the empty state
-    /// carries. Both changes pages ask the same question of the same two buttons, and had a copy each
-    /// until they started drifting apart. stillWanted drops an answer the page has already moved past.
+    /// How much is on the shelf, written on the entry under More that opens it and on the button the
+    /// empty state carries. Both changes pages ask the same question of the same two, and had a copy
+    /// each until they started drifting apart. stillWanted drops an answer the page has already moved past.
     /// </summary>
-    public static async Task ShowCountAsync(IconButton onPage, IconButton onEmptyState,
+    public static async Task ShowCountAsync(AppBarButton onPage, IconButton onEmptyState,
         string? checkout, string? branch, Func<bool> stillWanted)
     {
         var root = Session.Root;
@@ -109,7 +109,7 @@ public static class ShelfActions
         var count = await Task.Run(() => Shelf.For(root, checkout, branch).Count);
         if (!stillWanted()) return;
         var text = count == 0 ? "Shelved changes" : $"Shelved changes ({count})";
-        onPage.Text = text;
+        onPage.Label = text;
         onEmptyState.Text = text;
         // A clean working copy with something on the shelf is the one place the shelf is the whole story.
         onEmptyState.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;

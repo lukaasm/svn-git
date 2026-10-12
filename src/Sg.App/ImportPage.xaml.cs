@@ -185,6 +185,7 @@ public sealed partial class ImportPage : SgPage
         _meta = null;
         _waiting = null;
         ResolveButton.Visibility = ConflictsHeader.Visibility = ConflictsCard.Visibility = Visibility.Collapsed;
+        ImportButton.Visibility = Visibility.Visible;
         ResultBar.IsOpen = false;
         await LoadAsync();
     }
@@ -230,10 +231,11 @@ public sealed partial class ImportPage : SgPage
         // it stopped, and one button away is the page that finishes it.
         _waiting = res.Waiting ? res : null;
         ResolveButton.Visibility = res.Waiting ? Visibility.Visible : Visibility.Collapsed;
+        ImportButton.Visibility = res.Waiting ? Visibility.Collapsed : Visibility.Visible;
 
         // The branch exists now, so this page has nothing left to offer about this file.
         ImportButton.IsEnabled = false;
-        ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. Close this and the worktree is on the checkout's card."
+        ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. The worktree is on the checkout's card."
             : res.Waiting ? "Resume the operation to finish, skip a commit, or cancel."
             : "Review the result above for the reason the import stopped.");
     }

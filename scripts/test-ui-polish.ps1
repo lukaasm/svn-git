@@ -88,7 +88,8 @@ try {
     Complete-UiScenario
 
     Start-UiScenario 'Disabled checkout actions expose reasons and a keyboard tooltip'
-    Invoke-Control (Find 'AddCheckoutButton')
+    Invoke-Control (Find 'AddMenu')
+    Invoke-Control (Wait-For { Find 'AddCheckoutButton' })
     $button = Wait-For { $b = Find 'Add the checkout' -Name; if ($b -and $b.Current.HelpText -eq 'Choose an SVN working copy or a git clone.') { $b } }
     $hint = Find 'DisabledHint_AddButton'
     if (!$hint.Current.IsKeyboardFocusable) { throw 'Disabled action explanation is not keyboard accessible.' }

@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Sg.Core;
 using Windows.System;
 
@@ -44,6 +45,17 @@ public sealed partial class ShelfPage : SgPage
         ColumnSplitter.Attach(Splitter);
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync());
+        RowMenu.Attach(Shelves, ShelfMenu);
+        // Delete drops the picked shelf, asking first as the menu's Drop does. Only from the list: in the
+        // filter box the same key deletes a letter.
+        var drop = new KeyboardAccelerator { Key = VirtualKey.Delete, ScopeOwner = Shelves };
+        drop.Invoked += async (_, args) =>
+        {
+            args.Handled = true;
+            if (_picked is { } shelf && !_working) await DropAsync(shelf);
+        };
+        Shelves.KeyboardAccelerators.Add(drop);
+        Shelves.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
         FileActions.Attach(Files, n => TargetOf(n.FullPath));
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display);
         _filter.Picked += OnPicked;
@@ -83,8 +95,8 @@ public sealed partial class ShelfPage : SgPage
         ShowPicked((Shelves.SelectedItem as ShelfRow)?.Shelf);
 
     /// <summary>
-    /// One of the three buttons is running. Busy.During only disables the one that was pressed, and the
-    /// other two act on the same shelf: Drop while Put back was still writing threw the shelf away
+    /// One of the three actions is running. Busy.During only disables the button that was pressed, and
+    /// the other two act on the same shelf: Drop while Put back was still writing threw the shelf away
     /// underneath it, and what was half written stayed half written.
     /// </summary>
     bool _working;
@@ -94,15 +106,60 @@ public sealed partial class ShelfPage : SgPage
         var shelf = _picked;
         RestoreButton.IsEnabled = !_working && shelf != null && !shelf.Gone;
         KeepButton.IsEnabled = !_working && shelf != null && !shelf.Gone;
-        DropButton.IsEnabled = !_working && shelf != null;
-        var reason = _working ? "A shelf action is in progress. Follow it in Tasks." : shelf == null ? "Select a shelf first." : shelf.Gone ? "The original checkout or worktree folder is missing. Restore it before putting these changes back." : null;
-        TaskGate.SetHelp(RestoreButton, reason ?? "Restore these changes and remove the shelf after a successful restore.");
-        TaskGate.SetHelp(KeepButton, reason ?? "Restore these changes and keep the shelf for later.");
-        TaskGate.SetHelp(DropButton, _working ? reason! : shelf == null ? "Select a shelf to drop." : "Review the confirmation before deleting this shelf.");
+        TaskGate.SetHelp(RestoreButton, PutBackReason(shelf) ?? "Restore these changes and remove the shelf after a successful restore.");
+        TaskGate.SetHelp(KeepButton, PutBackReason(shelf) ?? "Restore these changes and keep the shelf for later.");
+    }
+
+    /// <summary>Why a shelf cannot be put back right now, or null when it can.</summary>
+    string? PutBackReason(ShelfInfo? shelf) =>
+        _working ? "A shelf action is in progress. Follow it in Tasks."
+        : shelf == null ? "Select a shelf first."
+        : shelf.Gone ? "The original checkout or worktree folder is missing. Restore it before putting these changes back." : null;
+
+    /// <summary>
+    /// A row's menu: the same three actions, on the shelf under the pointer. Opening it picks that row,
+    /// so the files and the diff beside it are of the shelf the menu acts on.
+    /// </summary>
+    MenuFlyout? ShelfMenu(DependencyObject source)
+    {
+        if (RowUnder(source) is not { } row) return null;
+        if (!ReferenceEquals(Shelves.SelectedItem, row)) Shelves.SelectedItem = row;
+        var shelf = row.Shelf;
+        var menu = new MenuFlyout();
+        var putBack = Item("Put back", "\uE7B8", PutBackReason(shelf) == null,
+            "Write these changes back into the folder they came from, and take the shelf off. A file that changed since gets the change merged into it.",
+            () => _ = GuardedAsync(RestoreButton, () => RestoreAsync(shelf, keep: false)));
+        var keep = Item("Put back and keep", "\uE8C8", PutBackReason(shelf) == null,
+            "The same, and the shelf stays where it is. For trying a change in two places.",
+            () => _ = GuardedAsync(RestoreButton, () => RestoreAsync(shelf, keep: true)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var drop = Item("Drop", "\uE74D", !_working, "Throw this shelf away without putting it back. Asks first.", () => _ = DropAsync(shelf));
+        drop.KeyboardAcceleratorTextOverride = "Delete";
+        return MenuGate.Gate(menu, putBack, keep, drop);
+
+        MenuFlyoutItem Item(string text, string glyph, bool on, string tip, Action run)
+        {
+            var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph }, IsEnabled = on };
+            ToolTipService.SetToolTip(item, tip);
+            item.Click += (_, _) => run();
+            menu.Items.Add(item);
+            return item;
+        }
+    }
+
+    /// <summary>The shelf row a right click landed on, walking up from whatever part of it was hit.</summary>
+    static ShelfRow? RowUnder(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is FrameworkElement { DataContext: ShelfRow row }) return row;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source);
+        }
+        return null;
     }
 
     /// <summary>Runs one shelf action with the other two off, and gives them back whatever happens.</summary>
-    async Task GuardedAsync(object sender, Func<Task> work)
+    async Task GuardedAsync(object? sender, Func<Task> work)
     {
         if (_working) return;
         _working = true;
@@ -173,14 +230,20 @@ public sealed partial class ShelfPage : SgPage
 
     // ---- what can be done to one ----
 
-    async void Restore_Click(object sender, RoutedEventArgs e) => await GuardedAsync(sender, () => RestoreAsync(keep: false));
-
-    async void RestoreKeep_Click(object sender, RoutedEventArgs e) => await GuardedAsync(sender, () => RestoreAsync(keep: true));
-
-    async Task RestoreAsync(bool keep)
+    /// <summary>The left half of the split button. Its right half drops the menu and never gets here.</summary>
+    async void Restore_Click(SplitButton sender, SplitButtonClickEventArgs e)
     {
-        var shelf = _picked;
-        if (shelf == null) return;
+        if (_picked is { } shelf) await GuardedAsync(sender, () => RestoreAsync(shelf, keep: false));
+    }
+
+    /// <summary>From the menu of Put back, so the split button is what shows the work running.</summary>
+    async void RestoreKeep_Click(object sender, RoutedEventArgs e)
+    {
+        if (_picked is { } shelf) await GuardedAsync(RestoreButton, () => RestoreAsync(shelf, keep: true));
+    }
+
+    async Task RestoreAsync(ShelfInfo shelf, bool keep)
+    {
         var root = Session.Require();
         ResultBar.IsOpen = false;
         var r = await Runner.Run(Pane, "put back " + shelf.Id, () => Shelf.Restore(root, shelf.Id, keep));
@@ -206,15 +269,14 @@ public sealed partial class ShelfPage : SgPage
         await LoadAsync();
     }
 
-    async void Drop_Click(object sender, RoutedEventArgs e)
+    /// <summary>From a row's menu or the Delete key. No button shows it running; the strip and Tasks do.</summary>
+    async Task DropAsync(ShelfInfo shelf)
     {
-        var shelf = _picked;
-        if (shelf == null) return;
         if (!await Dialogs.Confirm(this, "Drop this shelf",
                 $"Throw away \"{shelf.Title}\" and the {shelf.Count} file(s) in it? They were taken out of the working copy, so this is the only copy left.", "Drop"))
             return;
         var root = Session.Require();
-        await GuardedAsync(sender, async () =>
+        await GuardedAsync(null, async () =>
         {
             await Runner.Run(Pane, "drop " + shelf.Id, () => Shelf.Drop(root, shelf.Id));
             await LoadAsync();

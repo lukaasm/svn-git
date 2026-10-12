@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Sg.Core;
@@ -36,37 +37,39 @@ public sealed partial class LogPage : SgPage
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(item);
         });
-        // The same actions the buttons under the list offer, on the rows they act on. The buttons say what
-        // is possible and stay where the eye can find them; the menu is for the hand that is already on
-        // the commit. Both run exactly the same code, and the menu is greyed by the same rules.
-        Commits.RightTapped += (_, e) =>
+        // The commit actions live on the rows they act on, for the mouse and the keyboard alike; the line
+        // under the list says so. Each item is greyed by what is picked, with the reason in its help text
+        // because a greyed item shows no tooltip, and the line names the reason when the pick rules one out.
+        RowMenu.Attach(Commits, source =>
         {
-            if (RowUnder(e.OriginalSource as DependencyObject) is not { } row) return;
+            if (RowUnder(source) is not { } row) return null;
             // Right clicking a commit outside the picked set picks it, so the menu is about what it is on.
             if (!Picked().Any(p => p.Sha == row.Sha)) Commits.SelectedItem = row;
             var menu = new MenuFlyout();
-            Add(menu, "Revert", "", RevertButton.IsEnabled, RevertLabel.Text,
-                "Add a commit on this branch that takes the picked ones back out. The commits themselves stay in the history.",
+            var revert = Add(menu, _revert, "\uE7A7",
+                "Add a commit on top that takes the picked commits back out. Nothing is rewritten, so this is safe even for a commit somebody else already has.",
                 () => Revert_Click(this, null!));
-            Add(menu, "Squash", "", SquashButton.IsEnabled, SquashLabel.Text,
-                "Make the picked commits into one. They have to sit next to each other, and none may be pushed.",
+            var squash = Add(menu, _squash, "\uE8B1",
+                "Join the picked commits into one. They have to sit next to each other, and none may be pushed; everything above them is kept and replayed on top.",
                 () => Squash_Click(this, null!));
-            Add(menu, "Reword", "", RewordButton.IsEnabled, "Reword",
-                "Replace this commit with one that has the same files and a new message.",
+            var reword = Add(menu, _reword, "\uE70F",
+                "Give the picked commit a new message. What it changed stays exactly as it is.",
                 () => Reword_Click(this, null!));
             menu.Items.Add(new MenuFlyoutSeparator());
-            Add(menu, "Push this commit alone", "\uE898", PushAloneButton.IsEnabled, "Push this commit alone",
+            // One commit from anywhere on the branch, alone: sent to the server on its own, put on the
+            // shelf, or thrown away. The commits under and over it stay on the branch.
+            Add(menu, _pushAlone, "\uE898",
                 $"Open Push to {_server} with only this commit going, cherry picked onto the snapshot. The commits under and over it stay on the branch.",
                 () => PushAlone_Click(this, null!));
-            Add(menu, "Shelve this commit", "\uE7B8", ShelveCommitButton.IsEnabled, "Shelve this commit",
+            var shelve = Add(menu, _shelve, "\uE7B8",
                 "Take this commit off the branch and put what it changed on the shelf, like git stash. The commits over it are replayed.",
                 () => ShelveCommit_Click(this, null!));
-            Add(menu, "Discard this commit", "\uE74D", DiscardCommitButton.IsEnabled, "Discard this commit",
+            var discard = Add(menu, _discard, "\uE74D",
                 "Take this commit out of the branch. The commits over it are replayed, and Activity keeps the branch as it was.",
                 () => DiscardCommit_Click(this, null!));
-            menu.ShowAt(Commits, new FlyoutShowOptions { Position = e.GetPosition(Commits) });
-            e.Handled = true;
-        };
+            // Push alone only opens the push page, which runs its own checks; the rest write the branch.
+            return MenuGate.Gate(menu, revert, squash, reword, shelve, discard);
+        });
         _filter = new ListFilter(Filter, Files, FilesHeader, r => ((FileRow)r).Display);
         _filter.Picked += OnPicked;
         _filter.ExpectStats = true;
@@ -75,14 +78,24 @@ public sealed partial class LogPage : SgPage
         _commitsViewport = new(Commits, item => ((CommitRow)item).IsGroup ? "snapshots" : ((CommitRow)item).Sha);
         Unloaded += (_, _) => OnHidden();
 
-        static void Add(MenuFlyout menu, string name, string glyph, bool on, string label, string tip, Action run)
+        static MenuFlyoutItem Add(MenuFlyout menu, CommitAction action, string glyph, string tip, Action run)
         {
-            var item = new MenuFlyoutItem { Text = label.StartsWith(name, StringComparison.Ordinal) ? label : name, Icon = new FontIcon { Glyph = glyph }, IsEnabled = on };
+            var item = new MenuFlyoutItem { Text = action.Label, Icon = new FontIcon { Glyph = glyph }, IsEnabled = action.On };
             ToolTipService.SetToolTip(item, tip);
+            AutomationProperties.SetHelpText(item, action.Help);
             item.Click += (_, _) => run();
             menu.Items.Add(item);
+            return item;
         }
     }
+
+    /// <summary>
+    /// What one commit action can do with the picked commits: whether it runs, the words on its menu item,
+    /// and what it would do or why it cannot.
+    /// </summary>
+    readonly record struct CommitAction(bool On, string Label, string Help);
+
+    CommitAction _squash, _reword, _revert, _pushAlone, _shelve, _discard;
 
     /// <summary>The commit row a right click landed on, walking up from whatever part of it was hit.</summary>
     CommitRow? RowUnder(DependencyObject? source)
@@ -228,47 +241,46 @@ public sealed partial class LogPage : SgPage
         if (keep != null) Commits.SelectedItem = keep;
         _rebuilding = false;
         if (keep == null && _currentSha.Length > 0) NothingPicked();
-        SyncRewriteButtons();
+        SyncCommitActions();
     }
 
     /// <summary>The branch's own commits among the picked ones, newest first. A snapshot is never one of them.</summary>
     List<CommitRow> Picked() => Commits.SelectedItems.OfType<CommitRow>().Where(r => !r.IsSnapshot).ToList();
 
     /// <summary>
-    /// What the two rewrite buttons can do with what is picked. A snapshot in the selection turns both
-    /// off rather than being quietly skipped: the picked set is what the button acts on, whole.
+    /// What each commit action can do with what is picked, for the row menu to offer and the line under
+    /// the list to explain. A snapshot in the selection turns them all off rather than being quietly
+    /// skipped: the picked set is what an action acts on, whole.
     /// </summary>
-    void SyncRewriteButtons()
+    void SyncCommitActions()
     {
         var all = Commits.SelectedItems.OfType<CommitRow>().ToList();
         var own = Picked();
         var snapshot = all.Count != own.Count;
-        // The same rule the core enforces, asked here so the button is off rather than the press
+        // The same rule the core enforces, asked here so the item is off rather than the press
         // being refused after a message has been written.
         var run = !snapshot && own.Count >= 2 && Consecutive(own);
-
-        SquashButton.IsEnabled = run;
-        RewordButton.IsEnabled = own.Count == 1 && !snapshot;
-        // A revert adds a commit rather than rewriting one, so the picked commits need not sit together.
-        RevertButton.IsEnabled = own.Count >= 1 && !snapshot;
         var cannotRewrite = snapshot ? $"Select local commits only. Snapshots of {_server} cannot be rewritten." : null;
-        TaskGate.SetHelp(SquashButton, cannotRewrite ?? (own.Count < 2 ? "Select two or more consecutive local commits to squash." : !run ? "Select consecutive commits with no gaps in the branch history." : "Combine the selected commits and replay the commits above them."));
-        TaskGate.SetHelp(RewordButton, cannotRewrite ?? (own.Count != 1 ? "Select exactly one local commit to change its message." : "Change the selected commit's message without changing its files."));
-        TaskGate.SetHelp(RevertButton, snapshot ? $"Select local commits only. Snapshots of {_server} cannot be reverted here." : own.Count == 0 ? "Select one or more local commits to revert." : "Add a commit that reverses the selected changes.");
+        _squash = new(run, run ? $"Squash {own.Count}" : "Squash",
+            cannotRewrite ?? (own.Count < 2 ? "Select two or more consecutive local commits to squash." : !run ? "Select consecutive commits with no gaps in the branch history." : "Combine the selected commits and replay the commits above them."));
+        _reword = new(own.Count == 1 && !snapshot, "Reword",
+            cannotRewrite ?? (own.Count != 1 ? "Select exactly one local commit to change its message." : "Change the selected commit's message without changing its files."));
+        // A revert adds a commit rather than rewriting one, so the picked commits need not sit together.
+        _revert = new(own.Count >= 1 && !snapshot, own.Count > 1 && !snapshot ? $"Revert {own.Count}" : "Revert",
+            snapshot ? $"Select local commits only. Snapshots of {_server} cannot be reverted here." : own.Count == 0 ? "Select one or more local commits to revert." : "Add a commit that reverses the selected changes.");
         // One commit alone, from anywhere on the branch: sent on its own, shelved, or discarded.
         var one = own.Count == 1 && !snapshot;
-        PushAloneButton.IsEnabled = ShelveCommitButton.IsEnabled = DiscardCommitButton.IsEnabled = one;
         var pickOne = cannotRewrite ?? (one ? null : "Select exactly one local commit.");
-        ActionHint.SetHelp(PushAloneButton, pickOne ?? $"Open Push to {_server} with only this commit going, cherry picked onto the snapshot.");
-        TaskGate.SetHelp(ShelveCommitButton, pickOne ?? "Take this commit off the branch and onto the shelf; the commits over it are replayed.");
-        TaskGate.SetHelp(DiscardCommitButton, pickOne ?? "Take this commit out of the branch; the commits over it are replayed.");
-        SquashLabel.Text = run ? $"Squash {own.Count}" : "Squash";
-        RevertLabel.Text = own.Count > 1 && !snapshot ? $"Revert {own.Count}" : "Revert";
+        _pushAlone = new(one, "Push this commit alone", pickOne ?? $"Open Push to {_server} with only this commit going, cherry picked onto the snapshot.");
+        _shelve = new(one, "Shelve this commit", pickOne ?? "Take this commit off the branch and onto the shelf; the commits over it are replayed.");
+        _discard = new(one, "Discard this commit", pickOne ?? "Take this commit out of the branch; the commits over it are replayed.");
+        // A greyed menu item shows no tooltip, so what the pick rules out is said here, where the eye is.
         PickHint.Text = all.Any(r => r.IsGroup) ? "Press that line to open the snapshots, or leave it folded."
-            : snapshot ? $"A snapshot of {_server} is picked. Those cannot be rewritten."
-            : own.Count >= 2 && !run ? "They have to sit next to each other."
-            : own.Count >= 2 ? ""
-            : "Ctrl or Shift picks more than one.";
+            : snapshot ? $"A snapshot of {_server} is picked. The commit actions take the branch's own commits only."
+            : own.Count == 1 ? "Right-click it to reword, revert, push alone, shelve or discard. Squash takes two or more: Ctrl or Shift picks more."
+            : own.Count >= 2 && run ? $"Right-click to squash or revert these {own.Count}. Reword, push alone, shelve and discard take one commit."
+            : own.Count >= 2 ? $"Right-click to revert these {own.Count}. Squash needs them next to each other; reword, push alone, shelve and discard take one commit."
+            : "Right-click a commit to squash, reword, revert, push alone, shelve or discard. Ctrl or Shift picks more than one.";
     }
 
     /// <summary>
@@ -286,7 +298,7 @@ public sealed partial class LogPage : SgPage
     async void Commits_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_rebuilding) return;
-        SyncRewriteButtons();
+        SyncCommitActions();
         // The details follow the line just clicked, which with several picked is the last one added.
         if ((e.AddedItems.LastOrDefault() ?? Commits.SelectedItem) is not CommitRow row)
         {

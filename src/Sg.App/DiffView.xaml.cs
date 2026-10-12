@@ -15,8 +15,10 @@ public sealed partial class DiffView : UserControl
     /// <summary>
     /// One button over the diff. The same list goes into the editor's own right click menu, so the
     /// keyboard reaches every one of them. Key is "ctrl+s", "ctrl+shift+s", "ctrl+r" or "ctrl+u".
+    /// HideWhenOff keeps the button off screen while it is off, beside the unsaved chip once it is on:
+    /// for Save and Undo edits, which only mean something once the editor holds a change.
     /// </summary>
-    public sealed record DiffAction(string Id, string Label, string Glyph, string Tooltip, string? Key = null);
+    public sealed record DiffAction(string Id, string Label, string Glyph, string Tooltip, string? Key = null, bool HideWhenOff = false);
 
     /// <summary>A button or its menu entry was pressed. The id is the one the window gave.</summary>
     public event Action<string>? ActionInvoked;
@@ -45,6 +47,7 @@ public sealed partial class DiffView : UserControl
         InlineToggle.IsChecked = Session.Settings.DiffInline;
         CollapsedToggle.IsChecked = Session.Settings.DiffCollapsed;
         WhitespaceToggle.IsChecked = Session.Settings.DiffIgnoreWhitespace;
+        SyncModeText();
         Loaded += OnLoaded;
         ActualThemeChanged += (_, _) => SendTheme();
         // A theme picked in Settings repaints every diff already on screen, not only the next one opened.
@@ -137,8 +140,25 @@ public sealed partial class DiffView : UserControl
     /// </summary>
     void SetMode(string text)
     {
-        ModeText.Text = text;
-        ModeText.Visibility = text == "Monaco" ? Visibility.Collapsed : Visibility.Visible;
+        _mode = text;
+        SyncModeText();
+    }
+
+    string _mode = "loading";
+
+    /// <summary>
+    /// The mode word, then a View choice that is off its default and acts on what is on show: the menu
+    /// keeps them out of sight, and a diff read inline or without its space changes has to say so.
+    /// </summary>
+    void SyncModeText()
+    {
+        var words = new List<string>();
+        if (_mode != "Monaco") words.Add(_mode);
+        if (InlineToggle.IsEnabled && InlineToggle.IsChecked) words.Add("inline");
+        if (CollapsedToggle.IsEnabled && CollapsedToggle.IsChecked) words.Add("collapsed");
+        if (WhitespaceToggle.IsEnabled && WhitespaceToggle.IsChecked) words.Add("ignoring space");
+        ModeText.Text = string.Join(" · ", words);
+        ModeText.Visibility = words.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     void UseFallback(string why)
@@ -372,6 +392,7 @@ public sealed partial class DiffView : UserControl
         _actions.AddRange(list);
         _buttons.Clear();
         Actions.Children.Clear();
+        EditActions.Children.Clear();
         foreach (var a in _actions)
         {
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -385,17 +406,23 @@ public sealed partial class DiffView : UserControl
             var id = a.Id;
             button.Click += (_, _) => ActionInvoked?.Invoke(id);
             _buttons[id] = button;
-            Actions.Children.Add(button);
+            if (a.HideWhenOff) button.Visibility = Visibility.Collapsed;
+            (a.HideWhenOff ? EditActions : Actions).Children.Add(button);
         }
         SendActions();
         SyncActions();
     }
 
-    /// <summary>Turns one button on or off, and gives it the words for what it would act on right now.</summary>
+    /// <summary>
+    /// Turns one button on or off, and gives it the words for what it would act on right now. A
+    /// HideWhenOff button comes and goes with it.
+    /// </summary>
     public void SetActionState(string id, bool enabled, string? label = null)
     {
         if (!_buttons.TryGetValue(id, out var button)) return;
         button.IsEnabled = enabled && _ready && !_failed;
+        if (_actions.Any(a => a.Id == id && a.HideWhenOff))
+            button.Visibility = button.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
         if (label != null && button.Tag is TextBlock text) text.Text = label;
     }
 
@@ -453,14 +480,17 @@ public sealed partial class DiffView : UserControl
     });
 
     /// <summary>
-    /// The two switches over the diff. Collapsed is only offered for one file's diff: a patch over many
-    /// files is already only the changes and the lines around them, so there would be nothing to hide.
+    /// The switches in the View menu. Collapsed and Ignore space are only offered for one file's diff: a
+    /// patch over many files is already only the changes and the lines around them, so there would be
+    /// nothing to hide, and its text is drawn as it is.
     /// </summary>
     void SyncToggles()
     {
         InlineToggle.IsEnabled = _ready && !_failed;
         CollapsedToggle.IsEnabled = _ready && !_failed && !_textView;
         WhitespaceToggle.IsEnabled = _ready && !_failed && !_textView;
+        ViewButton.IsEnabled = InlineToggle.IsEnabled;
+        SyncModeText();
     }
 
     void SendLayout()
@@ -468,29 +498,30 @@ public sealed partial class DiffView : UserControl
         Post(new
         {
             command = "layout",
-            sideBySide = InlineToggle.IsChecked != true,
-            collapsed = CollapsedToggle.IsChecked == true,
-            ignoreWhitespace = WhitespaceToggle.IsChecked == true,
+            sideBySide = !InlineToggle.IsChecked,
+            collapsed = CollapsedToggle.IsChecked,
+            ignoreWhitespace = WhitespaceToggle.IsChecked,
         });
+        SyncModeText();
     }
 
     void WhitespaceToggle_Click(object sender, RoutedEventArgs e)
     {
-        Session.Settings.DiffIgnoreWhitespace = WhitespaceToggle.IsChecked == true;
+        Session.Settings.DiffIgnoreWhitespace = WhitespaceToggle.IsChecked;
         Session.Settings.Save();
         SendLayout();
     }
 
     void InlineToggle_Click(object sender, RoutedEventArgs e)
     {
-        Session.Settings.DiffInline = InlineToggle.IsChecked == true;
+        Session.Settings.DiffInline = InlineToggle.IsChecked;
         Session.Settings.Save();
         SendLayout();
     }
 
     void CollapsedToggle_Click(object sender, RoutedEventArgs e)
     {
-        Session.Settings.DiffCollapsed = CollapsedToggle.IsChecked == true;
+        Session.Settings.DiffCollapsed = CollapsedToggle.IsChecked;
         Session.Settings.Save();
         SendLayout();
     }

@@ -33,6 +33,13 @@ function Push-ScrollBottom {
     $null = Push-Editors "editors.forEach(e=>{e.setPosition({lineNumber:e.getModel().getLineCount(),column:1});e.revealLine(e.getModel().getLineCount());e.setScrollPosition({scrollTop:e.getScrollHeight(),scrollLeft:120},monaco.editor.ScrollType.Immediate);});"
     $null = Wait-For { Push-Editors 'return editors[1].getScrollTop()>100;' } 'Fixture did not scroll below the first change.'
 }
+function Toggle-View([string]$id) {
+    # The layout switches sit in the diff's View menu.
+    $view = (Wait-For { Find 'ViewButton' }).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $view.Expand()
+    (Wait-For { Find $id }).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    if ($view.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $view.Collapse() }
+}
 function Assert-PushTop([int]$firstChange = 5) {
     $null = Wait-For {
         Push-Editors "const at=editors[1]?.getScrolledVisiblePosition({lineNumber:$firstChange,column:1}); return editors.length===2 && editors.every(e=>e.getScrollTop()<2 && e.getScrollLeft()<2) && at && at.top>=0 && at.top<editors[1].getLayoutInfo().height;"
@@ -59,7 +66,7 @@ try {
     Start-UiScenario 'Back navigation restores the current Push reading position'
     Push-ScrollBottom
     $expectedTop = Push-Editors 'return editors[1].getScrollTop();'
-    Invoke-Control (Find 'AdvancedButton')
+    Open-More
     Invoke-Control (Wait-For { Find 'ReadinessButton' })
     Invoke-Control (Wait-For { Find 'PART_BackButton' })
     $browser.Dispose(); $browser = $null
@@ -70,8 +77,8 @@ try {
 
     foreach ($inline in @($false, $true)) {
         Start-UiScenario "Collapsed Push shows the first change after switching files (inline=$inline)"
-        if (!$inline) { (Find 'CollapsedToggle').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }
-        else { (Find 'InlineToggle').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }
+        if (!$inline) { Toggle-View 'CollapsedToggle' }
+        else { Toggle-View 'InlineToggle' }
         Pick-PushFile 'base.txt'; Push-ScrollBottom
         Pick-PushFile 'keep.txt'; Assert-PushTop
         Pick-PushFile 'small.txt'; Assert-PushTop

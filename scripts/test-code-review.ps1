@@ -143,9 +143,12 @@ try {
     $null = Wait-For { $c = Find 'CodeReviewComment'; if ($c -and $c.Current.IsEnabled) { $c } }
     Select-ReviewFile 'base.txt'
     $null = Wait-For { Find 'Explain the old base.' -Name }
-    $inline = Find 'Inline' -Name
+    $view = (Wait-For { $b = Find 'ViewButton'; if ($b -and $b.Current.IsEnabled) { $b } }).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $view.Expand()
+    $inline = Wait-For { Find 'Inline' -Name }
     $toggle = $inline.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
     if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On) { $toggle.Toggle() }
+    if ($view.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $view.Collapse() }
     Invoke-Control (Wait-For { Find 'Show in code' -Name })
     $null = Wait-For { Test-VisibleThread }
     if (!(Invoke-TestWebView $browser "document.querySelectorAll('.editor.original .sg-review-thread').length === 2 && document.querySelectorAll('.editor.modified .sg-review-thread').length === 0")) { throw 'Original-side threads appeared on the wrong code or lost their grouping.' }

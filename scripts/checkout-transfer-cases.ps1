@@ -1,6 +1,8 @@
 # Runs on the harness's private desktop, using only its disposable Git/SVN fixtures.
 $env:SG_UI_TEST_WINDOW_SIZE = '1100x1000'
 function Enter-TransferValue([string]$id, [string]$text) { (Find $id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text) }
+# One button previews, then copies or moves what it previewed: its words say which it does now.
+function Transfer-Action([string]$name) { $b = Find 'TransferApply'; if ($b -and $b.Current.IsEnabled -and $b.Current.Name -eq $name) { $b } }
 function Choose-Transfer([string]$id, [string]$text) {
     (Find $id).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     Select-Control (Wait-For { Find $text -Name })
@@ -12,8 +14,8 @@ Start-UiScenario 'Copy preview creates a new worktree and keeps checkout edits'
 Launch 'transfer' $checkout
 $null = Wait-For { Find 'TransferBranchName' }
 Enter-TransferValue 'TransferBranchName' 'received'
-Invoke-Control (Wait-For { $b=Find 'TransferPreview'; if ($b.Current.IsEnabled) { $b } })
-$null = Wait-For { (Find 'TransferApply').Current.IsEnabled }
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
+$null = Wait-For { Transfer-Action 'Copy changes' }
 if (!(Row 'TransferFiles' '*base.txt*') -or !(Row 'TransferFiles' '*draft.txt*')) { throw 'Transfer file tree is incomplete.' }
 Assert-Fits 'TransferApply'
 Invoke-Control (Find 'TransferApply')
@@ -27,10 +29,10 @@ Complete-UiScenario
 Start-UiScenario 'Conflicting destination blocks the transfer and changing options invalidates preview'
 Choose-Transfer 'TransferDestinationKind' 'Existing worktree'
 Choose-Transfer 'TransferExisting' 'feature'
-if ((Find 'TransferApply').Current.IsEnabled) { throw 'Changed destination retained a valid plan.' }
-Invoke-Control (Find 'TransferPreview')
+if ((Find 'TransferApply').Current.Name -like '* changes') { throw 'Changed destination retained a valid plan.' }
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
 $null = Wait-For { Find 'base.txt' -Name }
-if ((Find 'TransferApply').Current.IsEnabled) { throw 'Conflicts should block transfer.' }
+$null = Wait-For { $b = Find 'TransferApply'; $b -and !$b.Current.IsEnabled -and $b.Current.Name -eq 'Copy changes' } 'Conflicts should block transfer.'
 if ([IO.File]::ReadAllText((Join-Path $worktree 'base.txt')) -ne "Changed content`n") { throw 'Preview edited the destination.' }
 Complete-UiScenario
 
@@ -38,9 +40,8 @@ Start-UiScenario 'Move requires confirmation and preserves existing worktree edi
 & svn revert (Join-Path $checkout 'base.txt') | Out-File $setupLog -Append
 Check-Exit 'fixture source revert'
 (Find 'TransferMove').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-Invoke-Control (Find 'TransferPreview')
-$null = Wait-For { (Find 'TransferApply').Current.IsEnabled }
-Invoke-Control (Find 'TransferApply')
+Invoke-Control (Wait-For { Transfer-Action 'Preview transfer' })
+Invoke-Control (Wait-For { Transfer-Action 'Move changes' })
 Close-Dialog
 if (![IO.File]::Exists((Join-Path $checkout 'notes/draft.txt'))) { throw 'Cancelling move changed source.' }
 Invoke-Control (Find 'TransferApply')
@@ -53,7 +54,7 @@ Invoke-Control (Find 'TransferOpenWorktree')
 $null = Wait-For { Row 'Files' '*draft.txt*' }
 Complete-UiScenario
 
-Start-UiScenario 'Rename worktree and branch together through Advanced actions'
+Start-UiScenario 'Rename worktree and branch together through More actions'
 Stop-App
 Launch '' $fixture
 $card = Wait-For { Find 'feature' -Name }
@@ -69,7 +70,9 @@ Invoke-Control (Find 'PrimaryButton')
 $null = Wait-For { Find 'Rename worktree and branch?' -Name }
 Close-Dialog
 if (!(Test-Path -LiteralPath $worktree)) { throw 'Cancelling rename moved the folder.' }
-Invoke-Control (Find 'RenameWorktreeAction')
+# The menu closed when Rename was picked; open it again.
+Expand-Card (Wait-For { Find 'AdvancedWorktreeActions' })
+Invoke-Control (Wait-For { Find 'RenameWorktreeAction' })
 Enter-TransferValue 'RenameWorktreeName' 'renamed-feature'
 Invoke-Control (Find 'PrimaryButton')
 $null = Wait-For { Find 'Rename worktree and branch?' -Name }
@@ -117,12 +120,12 @@ $shelvesBefore = Shelf-Refs
 Check-Exit 'fixture scheduled addition'
 Invoke-Control (Find 'Refresh' -Name)
 $null = Wait-For { Row 'Files' '*added.txt*' }
-Invoke-Control (Find 'All' -Name)
-Invoke-Control (Find 'Discard' -Name)
+Set-AllCheck $true
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 Permanent-Choice
 Close-Dialog
 if ([IO.File]::ReadAllText((Join-Path $checkout 'base.txt')) -ne "Discard this edit`n" -or (Shelf-Refs) -ne $shelvesBefore) { throw 'Cancelling permanent discard changed files or shelves.' }
-Invoke-Control (Find 'Discard' -Name)
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 Permanent-Choice
 Save-UiWindow $window (Join-Path $ArtifactDirectory 'permanent-discard-warning.png')
 Invoke-Control (Find 'PrimaryButton')
@@ -136,8 +139,8 @@ Start-UiScenario 'A subsequent checkout discard defaults to recovery and Undo re
 [IO.File]::WriteAllText((Join-Path $checkout 'base.txt'), "Recover this edit`n")
 Invoke-Control (Find 'Refresh' -Name)
 $null = Wait-For { Row 'Files' '*base.txt*' }
-Invoke-Control (Find 'All' -Name)
-Invoke-Control (Find 'Discard' -Name)
+Set-AllCheck $true
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 $toggle = (Wait-For { Find 'DiscardPermanently' }).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
 if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) { throw 'Permanent discard persisted into the next confirmation.' }
 Invoke-Control (Find 'PrimaryButton')
@@ -155,9 +158,8 @@ Check-Exit 'fixture staged rename'
 Check-Exit 'fixture staged addition'
 Launch 'commit' $renamed
 $null = Wait-For { (Find 'CommitButton').Current.IsEnabled }
-Invoke-Control (Find 'AllButton')
-Invoke-Control (Find 'AdvancedButton')
-Invoke-Control (Wait-For { Find 'DiscardButton' })
+Set-AllCheck $true
+Open-CommitMenu; Invoke-Control (Wait-For { Find 'DiscardButton' })
 Permanent-Choice
 $shelvesBefore = Shelf-Refs
 Invoke-Control (Find 'PrimaryButton')

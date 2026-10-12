@@ -290,7 +290,7 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         : BackupRemote != null ? (BackupNewer ? ChipSeverity.Caution : ChipSeverity.Critical)
         : NotBackedUp == 0 ? ChipSeverity.Success : NotBackedUp > 0 ? ChipSeverity.Caution : ChipSeverity.Critical;
     public string BackupTip => BackupExcluded
-        ? "This worktree is excluded from the backup: its branch, its uncommitted changes and its shelves stay on this machine. Include, in the card's Backup row, puts it back in."
+        ? "This worktree is excluded from the backup: its branch, its uncommitted changes and its shelves stay on this machine. Include in backup, under the card's More actions, puts it back in."
         : Session.BackingUp
         ? "A backup is running. This badge says how it went when it ends."
         : BackupFailed != null
@@ -308,11 +308,12 @@ public sealed class WorktreeRow : INotifyPropertyChanged
             ? "This branch has never been sent to the backup repository. The timer sends it, or open Backup on the checkout."
             : "Commits on this branch that the backup does not hold yet. The timer sends them, or open Backup on the checkout.";
 
-    /// <summary>The Backup row on the card: what goes, or that nothing does, beside the one button that flips it.</summary>
-    public string ExcludeDescription => BackupExcluded
+    /// <summary>The tooltip of the menu item that flips it: what goes, or that nothing does, and what pressing it does.</summary>
+    public string ExcludeDescription => (BackupExcluded
         ? "Left out on purpose: nothing of this worktree goes to the backup repository, and what it already holds of it stays until Prune. Include puts it back in with the next backup."
-        : "The branch, its uncommitted changes and its shelves go with every backup. Exclude keeps all of it on this machine: for work too big for the remote, or work that must not leave here.";
-    public string ExcludeText => BackupExcluded ? "Include" : "Exclude";
+        : "The branch, its uncommitted changes and its shelves go with every backup. Exclude keeps all of it on this machine: for work too big for the remote, or work that must not leave here.")
+        + " Written to sg.json at once; nothing is sent or deleted by pressing it.";
+    public string ExcludeText => BackupExcluded ? "Include in backup" : "Exclude from backup";
     public string ExcludeGlyph => BackupExcluded ? "\uE74E" : "\uE711";
 
     /// <summary>" just now", " 5 min ago", " 3 h ago", " 4 days ago", with the leading space; empty for null.</summary>
@@ -456,9 +457,11 @@ public sealed class WorktreeRow : INotifyPropertyChanged
         : "Review the commits and files, then send the branch to SVN: sync, rebase, one svn commit per repository. Asks before it commits.";
     public string PullHeader => "Pull from " + Server;
     public string PullDescription => $"Save local edits, sync {ServerBranch}, replay commits, and recover edits.";
-    public string ExportDescription => GitServer
+    /// <summary>The tooltip of the Export menu item: what goes in the file, and how the far side takes it back.</summary>
+    public string ExportDescription => (GitServer
         ? $"Pack the commits this branch has that {ServerBranch} does not into one file, for a machine that has a clone of the same repository. Uncommitted work does not go in it."
-        : "Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.";
+        : "Pack the commits this branch has that SVN does not into one file, for a machine that has only the SVN repository in common. Uncommitted work does not go in it.")
+        + " The far side puts it back with Import a branch, or with sg import.";
     public string RemoveDescription => $"Delete the worktree folder and the git branch. Asks first. What was pushed stays in {ServerBranch}.";
 
     /// <summary>

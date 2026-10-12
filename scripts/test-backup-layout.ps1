@@ -1,4 +1,4 @@
-# Checks badge clipping and expansion layout on a private desktop using only UI Automation.
+# Checks badge and description clipping on a private desktop using only UI Automation.
 param([Parameter(Mandatory)][string]$FixtureRoot, [switch]$Worker, [string]$ArtifactDirectory)
 $ErrorActionPreference = 'Stop'
 if (!$Worker) {
@@ -71,7 +71,7 @@ try {
         $resizeHost = [System.Windows.Automation.TreeWalker]::RawViewWalker.GetParent($resizeHost)
     }
     if (!$transform -or !$transform.Current.CanResize) { throw 'The test window must support UI Automation resizing.' }
-    Start-UiScenario 'Backup badges fit and expanding a card keeps the column stable'
+    Start-UiScenario 'Backup badges fit and the card describes both copies without expanding'
     $search = Wait-For { $field = Find 'BackupSearch'; if ($field -and !$field.Current.IsOffscreen) { $field } }
     $resizeHost.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $window = Wait-For { Get-TestAppWindow $process }
@@ -84,20 +84,10 @@ try {
     Save-UiWindow $window (Join-Path $ArtifactDirectory 'card-collapsed.png')
     $bounds = $card.Current.BoundingRectangle
     $labels | ForEach-Object { @{ text = $_.Current.Name; bounds = $_.Current.BoundingRectangle.ToString() } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'bounds.json')
-    $columnBefore = (Find 'BackupSearch').Current.BoundingRectangle
-    $expander = $card.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true))
-    $expansion = $expander.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-    $expansion.Expand()
-    $null = Wait-For { Find 'BackupWorktreeSend_source' }
-    Start-Sleep -Milliseconds 500
-    $columnExpanded = (Find 'BackupSearch').Current.BoundingRectangle
-    Save-UiWindow $window (Join-Path $ArtifactDirectory 'card-expanded.png')
-    $expansion.Collapse()
-    Start-Sleep -Milliseconds 500
-    $columnAfter = (Find 'BackupSearch').Current.BoundingRectangle
-    @{ before = $columnBefore.ToString(); expanded = $columnExpanded.ToString(); after = $columnAfter.ToString() } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'column.json')
-    if ([Math]::Abs($columnBefore.X - $columnExpanded.X) -gt 1 -or [Math]::Abs($columnBefore.Width - $columnExpanded.Width) -gt 1 -or [Math]::Abs($columnBefore.X - $columnAfter.X) -gt 1) { throw 'Expanding a worktree changes the backup column position or width.' }
+    # The card no longer opens: its description says what the sub-cards said, and its actions are on its menu.
+    if ($card.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true))) { throw 'The worktree card still expands.' }
+    if (!($labels | Where-Object { $_.Current.Name -like '*The backup holds commits*' })) { throw 'The worktree card does not describe its remote copy.' }
     Assert-Header
     Start-UiScenario 'Confirmation text stays below both status badges'
     if (!$confirmed) { throw 'Fixture needs a recorded confirmation time.' }

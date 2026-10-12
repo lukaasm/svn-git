@@ -66,11 +66,19 @@
                             <TextBlock Text="Commit" />
                         </StackPanel>
                         <local:AccentSplitButton.Flyout>
+                            <!-- The other things to do with exactly the checkout's own changes: put them aside, or
+                                 carry them into a worktree. -->
                             <MenuFlyout Placement="BottomEdgeAlignedRight">
                                 <MenuFlyoutItem Text="Shelve the uncommitted changes" Click="ShelveAll_Click"
                                                 ToolTipService.ToolTip="Take every change made directly in the checkout out of it and keep them, to put back later. This is how a local edit stops blocking a push that wants to write the same file.">
                                     <MenuFlyoutItem.Icon>
                                         <FontIcon Glyph="&#xE7B8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Copy or move checkout changes…" Click="Transfer_Click"
+                                                ToolTipService.ToolTip="Pick files changed in the checkout and copy or move them into a new or existing worktree. A preview comes first.">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8C8;" />
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>
@@ -80,29 +88,23 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Everyday actions stay visible. Import, history maintenance, and configuration stay in
-                 More even on wide windows; dynamic overflow also accommodates narrower windows. -->
+            <!-- Everyday actions stay visible. The backup, the folder, import, history maintenance, and
+                 configuration stay in More even on wide windows; dynamic overflow also accommodates narrower windows. -->
             <CommandBar x:Name="Actions" DefaultLabelPosition="Right" Background="Transparent" HorizontalAlignment="Left" Margin="-8,2,0,0"
-                        IsDynamicOverflowEnabled="True">
+                        IsDynamicOverflowEnabled="True" local:MenuGate.Watch="True">
                 <!-- First, and so the last one the bar ever folds away: a checkout is opened to start work
                      in a worktree, and every other button here is about one that already exists. -->
                 <AppBarButton x:Name="NewWorktreeButton" Label="New worktree" Click="NewBranch_Click"
                               ToolTipService.ToolTip="A git branch from the latest snapshot, and a worktree folder for it. Work there with plain git, or let an agent.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE8F4;" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton x:Name="FolderButton" Label="Open folder" Click="OpenCheckout_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xED25;" /></AppBarButton.Icon>
-                </AppBarButton>
                 <AppBarButton x:Name="SvnLogButton" Label="SVN log" Click="SvnLog_Click"
                               ToolTipService.ToolTip="The SVN history of the checkout root and every external, with changed paths and diffs.">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE81C;" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton x:Name="BackupButton" Label="Backup" Click="Backup_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
-                </AppBarButton>
                 <CommandBar.SecondaryCommands>
-                    <AppBarButton Label="Copy or move checkout changes…" Click="Transfer_Click">
-                        <AppBarButton.Icon><FontIcon Glyph="&#xE8C8;" /></AppBarButton.Icon>
+                    <AppBarButton x:Name="BackupButton" Label="Backup" Click="Backup_Click">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
                     </AppBarButton>
                     <AppBarButton x:Name="ShelfButton" Label="Shelved changes" Click="Shelf_Click">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE7B8;" /></AppBarButton.Icon>
@@ -121,11 +123,14 @@
                         <AppBarButton.Icon><FontIcon Glyph="&#xE753;" /></AppBarButton.Icon>
                     </AppBarButton>
                     <AppBarSeparator />
+                    <AppBarButton x:Name="FolderButton" Label="Open folder" Click="OpenCheckout_Click">
+                        <AppBarButton.Icon><FontIcon Glyph="&#xED25;" /></AppBarButton.Icon>
+                    </AppBarButton>
                     <AppBarButton x:Name="EditButton" Label="Edit checkout" Click="Edit_Click"
                                   ToolTipService.ToolTip="Its name, the folders sg leaves alone, and where each external points.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE713;" /></AppBarButton.Icon>
                     </AppBarButton>
-                    <AppBarButton x:Name="RemoveCheckoutButton" Label="Remove checkout…" Click="RemoveCheckout_Click"
+                    <AppBarButton x:Name="RemoveCheckoutButton" Label="Remove checkout…" Click="RemoveCheckout_Click" local:MenuGate.Gated="True"
                                   ToolTipService.ToolTip="sg forgets this checkout, with every worktree and branch born from it. The folder stays on disk. Asks first.">
                         <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" /></AppBarButton.Icon>
                     </AppBarButton>
@@ -172,14 +177,9 @@
                 <InfoBar x:Name="BackupBar" Severity="Error" IsClosable="True" IsOpen="False" Margin="0,0,0,8" />
 
                 <TextBlock x:Name="WorktreesHeader" Text="Worktrees" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,0,0,4" Visibility="Collapsed" />
+                <!-- No button of its own: New worktree is first on the toolbar right above it. -->
                 <local:EmptyState x:Name="NoWorktrees" Visibility="Collapsed" Glyph="&#xE8F4;" Title="No worktrees yet" Margin="0,16,0,16"
-                                  Text="A worktree is a folder with a git branch born from this checkout's snapshot. Work there, then push it back to SVN as one commit per repository.">
-                    <local:EmptyState.Action>
-                        <local:TaskGate>
-                            <local:IconButton Glyph="&#xE8F4;" Text="New worktree" Click="NewBranch_Click" Style="{StaticResource AccentButtonStyle}" />
-                        </local:TaskGate>
-                    </local:EmptyState.Action>
-                </local:EmptyState>
+                                  Text="A worktree is a folder with a git branch born from this checkout's snapshot. Work there, then push it back to SVN as one commit per repository. New worktree, on the toolbar above, makes one." />
 
                 <local:PendingWorktrees x:Name="PendingTrees" />
                 <ItemsControl x:Name="WorktreeList">
@@ -189,6 +189,66 @@
                                  does it. Open, it is every other thing a worktree can do. A worktree with nothing to
                                  say keeps all of that but steps back, so the card that is asking is the one the eye lands on. -->
                             <controls:SettingsExpander Margin="0,0,0,4" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" Opacity="{x:Bind CardOpacity, Mode=OneWay}" AutomationProperties.Name="{x:Bind Branch}">
+                                <!-- Every action of the card in one menu, for a right click anywhere on it or Shift+F10
+                                     on its header: the hand already on the card should not have to open it to find a row.
+                                     The rows and the More actions button stay, so nothing is reachable only from here.
+                                     The tail is the same list More actions opens. -->
+                                <controls:SettingsExpander.ContextFlyout>
+                                    <MenuFlyout local:MenuGate.Watch="True">
+                                        <MenuFlyoutItem Text="Commit" Tag="{x:Bind}" Click="Commit_Click" ToolTipService.ToolTip="{x:Bind CommitDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE73E;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Log" Tag="{x:Bind}" Click="Log_Click" ToolTipService.ToolTip="The commits on the branch and the snapshots under it, with files and diffs.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE81C;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="{x:Bind PushHeader, Mode=OneWay}" IsEnabled="{x:Bind PushEnabled, Mode=OneWay}" Tag="{x:Bind}" Click="Push_Click"
+                                                        ToolTipService.ToolTip="{x:Bind PushDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE898;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="{x:Bind PullHeader, Mode=OneWay}" Visibility="{x:Bind RebaseVisibility, Mode=OneWay}" Tag="{x:Bind}" Click="Rebase_Click"
+                                                        ToolTipService.ToolTip="{x:Bind PullDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AB;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Pull from backup" Visibility="{x:Bind PullVisibility, Mode=OneWay}" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Pull_Click"
+                                                        ToolTipService.ToolTip="Put the commits the backup holds past this branch's own on top of it, and its uncommitted changes into the worktree, or on a shelf when both sides changed the same files.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE896;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Resolve conflicts" Visibility="{x:Bind ResolveVisibility, Mode=OneWay}" Tag="{x:Bind}" Click="Resolve_Click"
+                                                        ToolTipService.ToolTip="Whatever stopped here, a rebase or an import: pick a version per file, then continue, skip that one, or put it all back.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE90F;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator />
+                                        <MenuFlyoutItem Text="Shelved changes" Tag="{x:Bind}" Click="WorktreeShelf_Click" ToolTipService.ToolTip="{x:Bind ShelvedDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7B8;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Review code" Tag="{x:Bind}" Click="CodeReview_Click"
+                                                        ToolTipService.ToolTip="Leave comments on code, discuss fixes with agents, and resolve feedback.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE90A;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator />
+                                        <MenuFlyoutItem Text="Rename…" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Rename_Click"
+                                                        ToolTipService.ToolTip="Change the branch name and its folder together. Local edits, shelves, and code review comments are kept.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Review readiness" Tag="{x:Bind}" Click="Review_Click" ToolTipService.ToolTip="Review a branch version and run local checks.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE73E;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Backup coverage" Tag="{x:Bind}" Click="Coverage_Click" ToolTipService.ToolTip="Check coverage, test restoration, and create a handoff receipt.">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="{x:Bind ExcludeText, Mode=OneWay}" Visibility="{x:Bind BackupVisibility, Mode=OneWay}" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Exclude_Click"
+                                                        ToolTipService.ToolTip="{x:Bind ExcludeDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="{x:Bind ExcludeGlyph, Mode=OneWay}" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Export…" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Export_Click" ToolTipService.ToolTip="{x:Bind ExportDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEDE1;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator />
+                                        <MenuFlyoutItem Text="Remove…" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Remove_Click" ToolTipService.ToolTip="{x:Bind RemoveDescription, Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                    </MenuFlyout>
+                                </controls:SettingsExpander.ContextFlyout>
                                 <!-- No icon on the left: the chips on the right already wear the glyph and the colour of
                                      every state, and a glyph that repeated the loudest of them was the same fact twice.
                                      The sentence that used to run under the name is the first row inside the card, so
@@ -277,12 +337,6 @@
                                             <FontIcon Glyph="&#xE73E;" />
                                         </controls:SettingsCard.HeaderIcon>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Shelved changes" Description="{x:Bind ShelvedDescription, Mode=OneWay}"
-                                                           IsClickEnabled="True" Tag="{x:Bind}" Click="WorktreeShelf_Click">
-                                        <controls:SettingsCard.HeaderIcon>
-                                            <FontIcon Glyph="&#xE7B8;" />
-                                        </controls:SettingsCard.HeaderIcon>
-                                    </controls:SettingsCard>
                                       <controls:SettingsCard Header="Log" Description="The commits on the branch and the snapshots under it, with files and diffs."
                                                            IsClickEnabled="True" Tag="{x:Bind}" Click="Log_Click">
                                         <controls:SettingsCard.HeaderIcon>
@@ -335,60 +389,51 @@
                                             <local:IconButton MinWidth="124" Glyph="&#xE70F;" Text="Editor" Tag="{x:Bind}" Click="Editor_Click" ToolTipService.ToolTip="Open the worktree in the editor set in Settings, or the Windows default for a folder." />
                                         </StackPanel>
                                     </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Code review" Description="Leave comments on code, discuss fixes with agents, and resolve feedback.">
-                                        <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE90A;" /></controls:SettingsCard.HeaderIcon>
-                                        <local:IconButton MinWidth="124" Text="Review code" Glyph="&#xE90A;" Tag="{x:Bind}" Click="CodeReview_Click" AutomationProperties.AutomationId="CodeReviewAction" />
-                                    </controls:SettingsCard>
-                                    <controls:SettingsCard Padding="0" HorizontalContentAlignment="Stretch" ContentAlignment="Vertical">
-                                    <controls:SettingsExpander Header="Advanced" Description="Review checks, backup coverage, export, and worktree settings." HorizontalAlignment="Stretch" AutomationProperties.Name="Advanced" AutomationProperties.AutomationId="AdvancedWorktreeActions">
-                                      <controls:SettingsExpander.HeaderIcon><FontIcon Glyph="&#xE713;" /></controls:SettingsExpander.HeaderIcon>
-                                      <controls:SettingsExpander.Items>
-                                        <controls:SettingsCard Header="Rename worktree and branch" Description="Change the branch name and its folder together. Local edits, shelves, and code review comments are kept.">
-                                            <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE8AC;" /></controls:SettingsCard.HeaderIcon>
-                                            <local:TaskGate>
-                                                <local:IconButton MinWidth="124" Text="Rename…" Glyph="&#xE8AC;" Tag="{x:Bind}" Click="Rename_Click" AutomationProperties.AutomationId="RenameWorktreeAction" />
-                                            </local:TaskGate>
-                                        </controls:SettingsCard>
-                                        <controls:SettingsCard Header="Review readiness" Description="Review a branch version and run local checks.">
-                                            <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE73E;" /></controls:SettingsCard.HeaderIcon>
-                                            <local:IconButton MinWidth="124" Text="Review" Glyph="&#xE73E;" Tag="{x:Bind}" Click="Review_Click" AutomationProperties.AutomationId="ReviewReadinessAction" />
-                                        </controls:SettingsCard>
-                                        <controls:SettingsCard Header="Backup coverage" Description="Check coverage, test restoration, and create a handoff receipt.">
-                                            <controls:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE74E;" /></controls:SettingsCard.HeaderIcon>
-                                            <local:IconButton MinWidth="124" Text="Coverage" Glyph="&#xE74E;" Tag="{x:Bind}" Click="Coverage_Click" AutomationProperties.AutomationId="BackupCoverageAction" />
-                                        </controls:SettingsCard>
-                                    <!-- Whether this worktree goes with the backup at all. On the card rather than in Settings: the
-                                         choice is about one worktree, and the chip that says "excluded" is on this same card. -->
-                                    <controls:SettingsCard Header="Backup" Description="{x:Bind ExcludeDescription, Mode=OneWay}"
-                                                           Visibility="{x:Bind BackupVisibility, Mode=OneWay}">
+                                    <!-- The rarer things a worktree can do, behind one button: the card shows the ones a
+                                         day needs. The same items end the card's right-click menu. -->
+                                    <controls:SettingsCard Header="More actions" Description="Shelved changes, code review, rename, review readiness, backup coverage, export, and remove.">
                                         <controls:SettingsCard.HeaderIcon>
-                                            <FontIcon Glyph="&#xE74E;" />
+                                            <FontIcon Glyph="&#xE712;" />
                                         </controls:SettingsCard.HeaderIcon>
-                                        <local:TaskGate>
-                                            <local:IconButton MinWidth="124" Glyph="{x:Bind ExcludeGlyph, Mode=OneWay}" Text="{x:Bind ExcludeText, Mode=OneWay}" Tag="{x:Bind}" Click="Exclude_Click"
-                                                              ToolTipService.ToolTip="Leave this worktree out of every backup, or put it back in. Written to sg.json at once; nothing is sent or deleted by pressing it." />
-                                        </local:TaskGate>
-                                    </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Export the branch"
-                                                           Description="{x:Bind ExportDescription, Mode=OneWay}">
-                                        <controls:SettingsCard.HeaderIcon>
-                                            <FontIcon Glyph="&#xEDE1;" />
-                                        </controls:SettingsCard.HeaderIcon>
-                                        <local:TaskGate>
-                                            <local:IconButton MinWidth="124" Glyph="&#xEDE1;" Text="Export" Tag="{x:Bind}" Click="Export_Click"
-                                                              ToolTipService.ToolTip="Write the branch to a file. The far side puts it back with Import a branch, or with sg import." />
-                                        </local:TaskGate>
-                                    </controls:SettingsCard>
-                                    <controls:SettingsCard Header="Remove worktree and branch" Description="{x:Bind RemoveDescription, Mode=OneWay}">
-                                        <controls:SettingsCard.HeaderIcon>
-                                            <FontIcon Glyph="&#xE74D;" />
-                                        </controls:SettingsCard.HeaderIcon>
-                                        <local:TaskGate>
-                                            <local:IconButton MinWidth="124" Glyph="&#xE74D;" Text="Remove" Tag="{x:Bind}" Click="Remove_Click" />
-                                        </local:TaskGate>
-                                    </controls:SettingsCard>
-                                      </controls:SettingsExpander.Items>
-                                    </controls:SettingsExpander>
+                                        <DropDownButton MinWidth="124" Content="More" AutomationProperties.Name="More actions" AutomationProperties.AutomationId="AdvancedWorktreeActions">
+                                            <DropDownButton.Flyout>
+                                                <MenuFlyout Placement="BottomEdgeAlignedRight" local:MenuGate.Watch="True">
+                                                    <MenuFlyoutItem Text="Shelved changes" Tag="{x:Bind}" Click="WorktreeShelf_Click" ToolTipService.ToolTip="{x:Bind ShelvedDescription, Mode=OneWay}">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7B8;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutItem Text="Review code" Tag="{x:Bind}" Click="CodeReview_Click" AutomationProperties.AutomationId="CodeReviewAction"
+                                                                    ToolTipService.ToolTip="Leave comments on code, discuss fixes with agents, and resolve feedback.">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE90A;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutSeparator />
+                                                    <MenuFlyoutItem Text="Rename…" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Rename_Click" AutomationProperties.AutomationId="RenameWorktreeAction"
+                                                                    ToolTipService.ToolTip="Change the branch name and its folder together. Local edits, shelves, and code review comments are kept.">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutItem Text="Review readiness" Tag="{x:Bind}" Click="Review_Click" AutomationProperties.AutomationId="ReviewReadinessAction"
+                                                                    ToolTipService.ToolTip="Review a branch version and run local checks.">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE73E;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutItem Text="Backup coverage" Tag="{x:Bind}" Click="Coverage_Click" AutomationProperties.AutomationId="BackupCoverageAction"
+                                                                    ToolTipService.ToolTip="Check coverage, test restoration, and create a handoff receipt.">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <!-- Whether this worktree goes with the backup at all. On the card rather than in Settings:
+                                                         the choice is about one worktree, and the chip that says "excluded" is on this same card. -->
+                                                    <MenuFlyoutItem Text="{x:Bind ExcludeText, Mode=OneWay}" Visibility="{x:Bind BackupVisibility, Mode=OneWay}" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Exclude_Click"
+                                                                    ToolTipService.ToolTip="{x:Bind ExcludeDescription, Mode=OneWay}">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="{x:Bind ExcludeGlyph, Mode=OneWay}" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutItem Text="Export…" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Export_Click" ToolTipService.ToolTip="{x:Bind ExportDescription, Mode=OneWay}">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEDE1;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutSeparator />
+                                                    <MenuFlyoutItem Text="Remove…" local:MenuGate.Gated="True" Tag="{x:Bind}" Click="Remove_Click" ToolTipService.ToolTip="{x:Bind RemoveDescription, Mode=OneWay}">
+                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                </MenuFlyout>
+                                            </DropDownButton.Flyout>
+                                        </DropDownButton>
                                     </controls:SettingsCard>
                                 </controls:SettingsExpander.Items>
                             </controls:SettingsExpander>

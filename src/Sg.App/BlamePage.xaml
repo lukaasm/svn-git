@@ -57,10 +57,9 @@
             </Grid>
         </Grid>
 
-        <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8" Margin="0,8,0,0">
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,8,0,0">
             <local:IconButton Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Blame the file again. F5 does the same." />
-            <Button Grid.Column="1" Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from." />
-            <TextBlock Grid.Column="2" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="1" x:Name="Summary" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
         </Grid>
 
         <local:StatusStrip x:Name="Pane" Grid.Row="3" Margin="0,8,0,0" />

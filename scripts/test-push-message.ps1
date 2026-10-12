@@ -59,7 +59,7 @@ function Select-Range([int]$count) {
     $null = Wait-For { (Find 'Header').Current.Name -like "Sending $count of $script:fixtureCommits commit*" }
 }
 function Open-Readiness {
-    Invoke-Control (Find 'AdvancedButton')
+    Invoke-Control (Wait-For { $bar = Find 'Actions'; if ($bar) { Find 'MoreButton' -within $bar } })
     Invoke-Control (Wait-For { Find 'ReadinessButton' })
     $null = Wait-For { !(Find 'ReadinessButton') }
 }
@@ -155,6 +155,8 @@ try {
     }
     $env:SG_UI_COMMAND_GATE = (New-Item -ItemType Directory -Path (Join-Path $ArtifactDirectory 'command-gate')).FullName
     [IO.File]::WriteAllText((Join-Path $env:SG_UI_COMMAND_GATE 'executable.txt'), (Get-Command git).Source)
+# The worktree's status is read on every preview; the top level is read once and remembered.
+[IO.File]::WriteAllText((Join-Path $env:SG_UI_COMMAND_GATE 'match.txt'), 'status')
     $source = [Security.SecurityElement]::Escape((Join-Path $PSScriptRoot 'UiCommandGate.cs'))
     $project = Join-Path $env:SG_UI_COMMAND_GATE 'UiCommandGate.csproj'
     [IO.File]::WriteAllText($project, "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Include=`"$source`" /></ItemGroup></Project>")
@@ -176,8 +178,8 @@ try {
             $r = $element.Current.BoundingRectangle; $bounds = $window.Current.BoundingRectangle
             if ($element.Current.IsOffscreen -or $r.Width -le 0 -or $r.Left -lt $bounds.Left -or $r.Right -gt $bounds.Right -or $r.Bottom -gt $bounds.Bottom) { throw "Clipped narrow Push control: $id ($r) in $bounds" }
         }
-        foreach ($id in @('PushButton', 'AdvancedButton', 'CommitFilterBox', 'AllCommitsButton', 'Filter', 'ChangesTab', 'DiffTab')) { Assert-Fits $id }
-        if (Find 'ReadinessButton') { throw 'Advanced review readiness is exposed before opening Advanced.' }
+        foreach ($id in @('PushButton', 'MoreButton', 'CommitFilterBox', 'Filter', 'ChangesTab', 'DiffTab')) { Assert-Fits $id }
+        if (Find 'ReadinessButton') { throw 'Review readiness is exposed before opening More.' }
         Select-Range 2
         (Find 'DiffTab').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
         $null = Wait-For { (Find 'TitleText') -and !(Find 'TitleText').Current.IsOffscreen }
@@ -471,7 +473,7 @@ try {
     Return-ToPush
     if ((Find 'Header').Current.Name -ne 'Select the commits to push') { throw 'A missing boundary silently selected a different range.' }
     if ((Find 'PushButton').Current.IsEnabled -or (Find 'PushButton').Current.HelpText -notlike '*no longer*') { throw 'A missing boundary does not block and explain Push.' }
-    if (!(Find 'AllCommitsButton').Current.IsEnabled) { throw 'Send all is not available to recover from a missing boundary.' }
+    if (!(Find 'RangeAllCommitsButton').Current.IsEnabled) { throw 'Pushing the whole branch is not available to recover from a missing boundary.' }
     Invoke-Control (Find 'RefreshPreviewButton')
     $null = Wait-For { (Find 'Header').Current.Name -eq 'Select the commits to push' }
     Open-Readiness

@@ -103,11 +103,13 @@ Stop-App
 
 Start-UiScenario 'Backup comparison retains independent list positions away from the selected commit'
 Launch 'overview' $fixture
+# Backup is in the checkout toolbar's More menu.
+Invoke-Control (Wait-For { $bar = Find 'Actions'; if ($bar) { Find 'MoreButton' -within $bar } })
 Invoke-Control (Wait-For { Find 'BackupButton' })
-$card = Wait-For { Find 'BackupWorktree_feature' }
-$condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
-$card.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-Invoke-Control (Wait-For { Find 'BackupWorktreeCompare_feature' })
+# The card's own menu is a right click; the worktree's page has Compare behind its "...".
+Invoke-Control (Wait-For { Find 'BackupWorktreeOpen_feature' })
+Invoke-Control (Wait-For { Find 'MoreButton' })
+Invoke-Control (Wait-For { $b = Find 'CompareButton'; if ($b -and $b.Current.IsEnabled) { $b } })
 $null = Wait-For { (Find 'ComparedAt').Current.Name -like 'feature*Compared*' }
 Select-Control (List-Rows 'BackupCompareRemote' | Select-Object -First 1)
 $null = Wait-For { (Find 'TitleText').Current.Name -like 'Backup*' }
@@ -163,5 +165,8 @@ Select-Control (Find 'SettingsItem')
 Check-Exit 'fixture history replacement'
 Invoke-Control (Wait-For { Find 'NavigationViewBackButton' })
 $null = Wait-For { (Find 'TitleText').Current.Name -eq 'pick a commit to see what it changed' }
-if ((Find 'RewordButton').Current.IsEnabled -or (Find 'RevertButton').Current.IsEnabled -or (List-Rows 'Files').Count) { throw 'Missing commits left stale files or rewrite actions.' }
+# The commit actions are in the row menu; the line under the list says what the pick allows, and with
+# nothing picked it only says how to reach them.
+$hint = Wait-For { Find 'PickHint' }
+if ($hint.Current.Name -notlike 'Right-click a commit to *' -or (List-Rows 'Files').Count) { throw 'Missing commits left stale files or rewrite actions.' }
 Complete-UiScenario

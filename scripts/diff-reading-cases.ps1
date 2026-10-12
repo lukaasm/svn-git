@@ -49,7 +49,7 @@ function Assert-Reading($expected, [int]$added = 0) {
     }
 }
 function Leave-Commit {
-    Invoke-Control (Wait-For { Find 'AdvancedButton' }); Invoke-Control (Wait-For { Find 'ShelfButton' })
+    Open-More; Invoke-Control (Wait-For { Find 'ShelfButton' })
     $null = Wait-For { !(Find 'CommitButton') -and (Find 'PART_BackButton') }
 }
 function Return-Commit {

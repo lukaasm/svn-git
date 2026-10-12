@@ -178,7 +178,7 @@ public sealed partial class CommitPage : SgPage
             Checked = view == null ? e.Tracked : view.Checked.GetValueOrDefault(e.Path),
             Display = $"{e.BothCodes}  {e.Path}" + (e.OldPath != null ? $"  (was {e.OldPath})" : ""),
         }).ToList();
-        // Not during All and None: the summary walks every row, counts them and re-cleans the message, and
+        // Not during the All box: the summary walks every row, counts them and re-cleans the message, and
         // running that once per tick made a thousand file worktree freeze on one press. Each handler ends
         // with the one call that all of them stood in for.
         foreach (var r in _rows) r.PropertyChanged += (_, a) => { if (!_bulk && a.PropertyName == nameof(ChangeRow.Checked)) SyncCommitButton(); };
@@ -423,12 +423,12 @@ public sealed partial class CommitPage : SgPage
         await LoadAsync();
     }
 
+    /// <summary>From the menu of Commit, so the split button is what shows the work running.</summary>
     async void Shelve_Click(object sender, RoutedEventArgs e) =>
-        await RunCheckedActionAsync(sender, () => ShelveAsync(Checked().Select(p => p.Path).ToList()));
+        await RunCheckedActionAsync(CommitButton, () => ShelveAsync(Checked().Select(p => p.Path).ToList()));
 
     void Shelf_Click(object sender, RoutedEventArgs e)
     {
-        AdvancedFlyout.Hide();
         var branch = Branch;
         Go(() => new ShelfPage(null, _worktree, branch) { Checkout = Checkout, Branch = branch }, "shelf:" + _worktree);
     }
@@ -444,8 +444,8 @@ public sealed partial class CommitPage : SgPage
         SyncCommitButton();
     }
 
-    void All_Click(object sender, RoutedEventArgs e) => SetAll(true);
-    void None_Click(object sender, RoutedEventArgs e) => SetAll(false);
+    /// <summary>The box over the list: anything unchecked checks everything, and a full list unchecks it all.</summary>
+    void All_Click(object sender, RoutedEventArgs e) => SetAll(_rows.Any(r => !r.Checked));
 
     List<StatusEntry> Checked() => _rows.Where(r => r.Checked).Select(r => r.Entry).ToList();
 
@@ -455,7 +455,8 @@ public sealed partial class CommitPage : SgPage
         var picked = Checked();
         var amending = Amend.IsChecked == true;
         var ready = !_reading && (picked.Count > 0 || amending);
-        AllButton.IsEnabled = NoneButton.IsEnabled = !_reading;
+        AllCheck.IsEnabled = !_reading && _rows.Count > 0;
+        AllCheck.IsChecked = picked.Count == 0 ? false : picked.Count == _rows.Count ? true : null;
         CommitButton.IsEnabled = ready;
         ActionHint.SetHelp(CommitButton, _reading ? "Wait for the current changes to load." : ready ? "Review the commit message and save the selected changes locally."
             : _rows.Count == 0 ? "There are no local changes to commit. Enable Amend to edit the last commit." : "Select at least one changed file to commit.");
@@ -474,7 +475,7 @@ public sealed partial class CommitPage : SgPage
             : $"{_rows.Count} change(s), untracked files are unchecked."
               + (partly == 0 ? "" : $"  {partly} of them {(partly == 1 ? "goes" : "go")} in as staged only.");
 
-        void SetAction(IconButton button, bool enabled, string help, string disabled = "Check at least one changed file first.")
+        void SetAction(Control button, bool enabled, string help, string disabled = "Check at least one changed file first.")
         {
             button.IsEnabled = enabled && !_reading;
             ActionHint.SetHelp(button, _reading ? "Wait for the current changes to load." : enabled ? help : disabled);
@@ -501,7 +502,6 @@ public sealed partial class CommitPage : SgPage
 
     void Amend_Click(object sender, RoutedEventArgs e)
     {
-        AdvancedFlyout.Hide();
         // The message of the commit being replaced starts the new one, the way git commit --amend does.
         if (Amend.IsChecked == true && Message.Text.Trim().Length == 0) Message.Text = _lastMessage;
         else if (Amend.IsChecked != true && Message.Text.TrimEnd() == _lastMessage.TrimEnd()) Message.Text = "";
@@ -519,7 +519,8 @@ public sealed partial class CommitPage : SgPage
         Amend_Click(sender, e);
     }
 
-    async void Commit_Click(object sender, RoutedEventArgs e) => await CommitAsync();
+    /// <summary>The left half of the split button. Its right half drops the menu and never gets here.</summary>
+    async void Commit_Click(SplitButton sender, SplitButtonClickEventArgs e) => await CommitAsync();
 
     async Task CommitAsync()
     {
@@ -636,11 +637,10 @@ public sealed partial class CommitPage : SgPage
         await RunCheckedActionAsync(sender, () => UnstageAsync(Checked().Where(p => p.Staged).Select(p => p.Path).ToList()));
 
     async void Discard_Click(object sender, RoutedEventArgs e) =>
-        await RunCheckedActionAsync(sender, () => DiscardAsync(Checked()));
+        await RunCheckedActionAsync(CommitButton, () => DiscardAsync(Checked()));
 
     async Task RunCheckedActionAsync(object sender, Func<Task> action)
     {
-        AdvancedFlyout.Hide();
         // Availability follows the fresh selection, including after a cancelled dialog or failure.
         try { await Busy.During(sender, action, restoreEnabled: false); }
         finally { SyncCommitButton(); }

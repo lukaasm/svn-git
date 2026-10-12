@@ -134,7 +134,8 @@ try {
         Remove-Item -LiteralPath $recoveryFile
         $recoveryFile = $null
         Start-Sleep -Milliseconds 400
-        Invoke-Element (By-Id 'RefreshButton')
+        Invoke-Element (By-Id 'RootMenu')
+        Invoke-Element (Wait-For 'refresh all in the root menu' { By-Name 'Refresh all' })
         $null = Wait-For 'recovery notice clears after reconciliation' { $b = By-Id 'RecoveryButton'; !$b -or $b.Current.IsOffscreen }
     }
     Start-Sleep -Milliseconds 400
@@ -165,7 +166,18 @@ try {
     Select-Element (Wait-For 'settings navigation item' { By-Id 'SettingsItem' })
     $null = Wait-For 'progress survives navigation' { (By-Id 'TaskQueueSummary').Current.Name -like '*1 active*' }
     $null = Wait-For 'repository settings disabled' { $b = By-Id 'MinLength'; $b -and !$b.Current.IsEnabled }
-    if (!(By-Id 'Verbose').Current.IsEnabled) { throw 'Unrelated settings were disabled.' }
+    # Verbose log is one of the settings folded under Advanced, whose rows are made only on screen.
+    $advancedSettings = Wait-For 'advanced settings' { By-Id 'AdvancedSettings' }
+    $scroller = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($advancedSettings)
+    while ($scroller -and !$scroller.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsScrollPatternAvailableProperty)) {
+        $scroller = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scroller)
+    }
+    $settingsScroll = $scroller.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    $settingsScroll.SetScrollPercent(-1, 100)
+    $advancedSettings.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty, $true)
+    ).GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    if (!(Wait-For 'verbose log setting' { $settingsScroll.SetScrollPercent(-1, 100); By-Id 'Verbose' }).Current.IsEnabled) { throw 'Unrelated settings were disabled.' }
     Invoke-Element (Wait-For 'global task cancellation' { By-Name 'Cancel task' })
     Select-TaskFilter 0
     $null = Wait-For 'cancellation result retained' { Task-Buttons | Where-Object { $_.Current.Name -like 'Cancelled*' } }
@@ -288,20 +300,19 @@ try {
     $expand = $branchControl.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
     $expand.Expand()
     if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
-    $advanced = Wait-For 'advanced worktree menu' { By-Id 'AdvancedWorktreeActions' }
+    $advanced = Wait-For 'more actions button' { By-Id 'AdvancedWorktreeActions' }
     $advancedControl = $advanced.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $expandable)
     $advancedPattern = $advancedControl.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-    if ($advancedPattern.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { throw 'Advanced options must start collapsed.' }
+    if ($advancedPattern.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { throw 'More actions must start collapsed.' }
     $advancedPattern.Expand()
-    if ($scroll) { $scroll.SetScrollPercent(-1, 100) }
-    $review = Wait-For 'visible review action in expanded menu' {
+    # The menu is a popup over the page, not part of the scrolled list: it only has to be inside the window.
+    $review = Wait-For 'visible review action in the open menu' {
         $action = By-Id 'ReviewReadinessAction'
         if ($action) {
             $bounds = $action.Current.BoundingRectangle
-            $viewport = $parent.Current.BoundingRectangle
+            $viewport = $script:window.Current.BoundingRectangle
             if ($bounds.Height -gt 0 -and $bounds.Top -ge $viewport.Top -and $bounds.Bottom -le $viewport.Bottom) { return $action }
         }
-        if ($scroll) { $scroll.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount, [System.Windows.Automation.ScrollAmount]::SmallDecrement) }
     }
     if ($ReportDirectory) { try { Save-UiWindow $script:window (Join-Path $ReportDirectory 'advanced-menu.png') } catch { Write-Host "Optional preview capture: $_" } }
     Invoke-Element $review
@@ -350,6 +361,7 @@ try {
     $null = Wait-For 'automatic backups disabled' { (Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json).BackupMinutes -eq 0 }
     $null = Wait-For 'disabled status updates immediately' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' -and !(By-Id 'BackupNextRun').Current.HelpText }
     Invoke-Element (Wait-For 'back button' { By-Id 'NavigationViewBackButton' })
+    Invoke-Element (Wait-For 'checkout More menu' { By-Id 'MoreButton' })
     Invoke-Element (Wait-For 'backup page action' { By-Id 'BackupButton' })
     $null = Wait-For 'same schedule status on Backup' { (By-Id 'BackupNextRun').Current.Name -eq 'Automatic backups are off' }
     # The schedule sits under the worktree cards: with enough of them, and the task pane open, it is

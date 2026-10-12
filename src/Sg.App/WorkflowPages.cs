@@ -360,9 +360,9 @@ public sealed class CoveragePage : WorkflowPage
         Action("Check current coverage", () => Execute("Check backup refs", () => _receipt = Backup.Coverage(root, _path)), true, mutates: true, glyph: "\uE72C");
         Link("View branch history", "\uE81C", () => new LogPage(_path), "log:" + _path);
         Link("Review readiness", "\uE73E", () => new ReviewPage(_path), "review:" + _path);
-        if (_receipt != null)
+        var receipt = _receipt;
+        if (receipt != null)
         {
-            var receipt = _receipt;
             Text($"{receipt.Branch} · checked {receipt.Checked.LocalDateTime:g}", true);
             var local = await generation.Run(Pane, () => new[] { Backup.LocalReceiptStatus(root, _path, receipt) });
             if (!Current(generation)) return;
@@ -382,7 +382,12 @@ public sealed class CoveragePage : WorkflowPage
             }
             Status(receipt.RestoreTested == null ? "Restore not verified" : $"Restore tested {receipt.RestoreTested.Value.LocalDateTime:g}",
                 receipt.RestoreTested == null ? ChipSeverity.Caution : ChipSeverity.Success, receipt.RestoreTested == null ? "\uE7BA" : "\uE73E");
-            var advancedStart = Body.Children.Count;
+        }
+        // Handing the work over sits in one closed section, there before any receipt is: previewing
+        // someone else's receipt is one way a first one gets onto this page.
+        var advancedStart = Body.Children.Count;
+        if (receipt != null)
+        {
             if (receipt.RestorePath != null) Text("Rehearsal retained at " + receipt.RestorePath);
             if (receipt.TestedSnapshot != null) Text("Tested snapshot: " + receipt.TestedSnapshot);
             Action("Test restore in a separate branch", () =>
@@ -402,7 +407,6 @@ public sealed class CoveragePage : WorkflowPage
                     await Execute("Save handoff", () => Backup.WriteReceipt(receipt, file));
                 }
             }, mutates: true, glyph: "\uE74E");
-            CollapseActions(advancedStart, "Restore testing and handoff");
         }
         Action("Preview handoff receipt", async () =>
         {
@@ -411,6 +415,7 @@ public sealed class CoveragePage : WorkflowPage
             await Execute("Read handoff", () => _receipt = Backup.ReadReceipt(file));
             if (_receipt != null) await Execute("Check handoff refs", () => { foreach (var issue in Backup.ValidateReceipt(root, _receipt)) root.Log.Warn(issue); });
         }, mutates: true, glyph: "\uE8E5");
+        CollapseActions(advancedStart, "Restore testing and handoff");
         Details("Coverage limits", ["Upload history, remote-ref checks, and restore tests are separate results.", "Ignored and shared files are outside backup coverage. A receipt records a point in time; check again after making changes."]);
         Link("Open backup restore preview", "\uE74E", () => new BackupPage(), "backup");
         Link("Activity and checkpoints", "\uE81C", () => new ActivityPage(), "activity");

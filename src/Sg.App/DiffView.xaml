@@ -11,15 +11,23 @@
                        TextWrapping="NoWrap" FontFamily="Cascadia Mono, Consolas" Text="select a file to see its diff" Margin="0,0,8,0"
                        ToolTipService.ToolTip="{x:Bind TitleText.Text, Mode=OneWay}" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <!-- Also the short hint for a View choice that is not at its default, since the menu hides them. -->
                 <TextBlock x:Name="ModeText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="loading" />
-                <ToggleButton x:Name="WhitespaceToggle" Content="Ignore space" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False" Click="WhitespaceToggle_Click"
-                              ToolTipService.ToolTip="Stop showing a line as changed when only the space at its ends moved. It changes what you read, not what a block holds: a block still carries every byte git or svn put in it." />
-                <!-- Only a single file's diff has unchanged parts to hide; a patch is already only changes. -->
-                <ToggleButton x:Name="CollapsedToggle" Content="Collapsed" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False" Click="CollapsedToggle_Click"
-                              ToolTipService.ToolTip="Hide the parts of the file nothing changed in, keeping a few lines around each change. Press a hidden band to open it." />
-                <ToggleButton x:Name="InlineToggle" Content="Inline" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False" Click="InlineToggle_Click"
-                              ToolTipService.ToolTip="Show the diff as one column with removed and added lines, instead of side by side." />
+                <DropDownButton x:Name="ViewButton" Content="View" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False"
+                                ToolTipService.ToolTip="How the diff is laid out. It changes what you read, never a file.">
+                    <DropDownButton.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <ToggleMenuFlyoutItem x:Name="WhitespaceToggle" Text="Ignore space" IsEnabled="False" Click="WhitespaceToggle_Click"
+                                                  ToolTipService.ToolTip="Stop showing a line as changed when only the space at its ends moved. It changes what you read, not what a block holds: a block still carries every byte git or svn put in it." />
+                            <!-- Only a single file's diff has unchanged parts to hide; a patch is already only changes. -->
+                            <ToggleMenuFlyoutItem x:Name="CollapsedToggle" Text="Collapsed" IsEnabled="False" Click="CollapsedToggle_Click"
+                                                  ToolTipService.ToolTip="Hide the parts of the file nothing changed in, keeping a few lines around each change. Press a hidden band to open it." />
+                            <ToggleMenuFlyoutItem x:Name="InlineToggle" Text="Inline" IsEnabled="False" Click="InlineToggle_Click"
+                                                  ToolTipService.ToolTip="Show the diff as one column with removed and added lines, instead of side by side." />
+                        </MenuFlyout>
+                    </DropDownButton.Flyout>
+                </DropDownButton>
             </StackPanel>
         </Grid>
 
@@ -27,7 +35,7 @@
              is what a reader looks for first and six buttons beside it left nothing of it. Off screen
              entirely on a page that only reads, and on a patch over many files, where none of it applies. -->
         <Grid x:Name="ActionRow" Grid.Row="1" Visibility="Collapsed" Padding="12,0,8,6" ColumnSpacing="8"
-              ColumnDefinitions="Auto,Auto,Auto,*" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+              ColumnDefinitions="Auto,Auto,Auto,Auto,*" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
             <StackPanel x:Name="Extras" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center" />
             <StackPanel x:Name="Actions" Grid.Column="1" Orientation="Horizontal" Spacing="6" />
             <!-- Only while the text in the editor is ahead of the file on disk. -->
@@ -36,6 +44,8 @@
                     ToolTipService.ToolTip="The editor holds changes that are not on disk yet. Ctrl+S writes them.">
                 <TextBlock Text="unsaved" FontSize="11" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
             </Border>
+            <!-- Save and Undo edits, beside the chip and only while it shows: with nothing typed they had nothing to do. -->
+            <StackPanel x:Name="EditActions" Grid.Column="3" Orientation="Horizontal" Spacing="6" />
         </Grid>
 
         <ProgressBar x:Name="LoadingBar" Grid.Row="2" Style="{StaticResource LoadingBar}" />

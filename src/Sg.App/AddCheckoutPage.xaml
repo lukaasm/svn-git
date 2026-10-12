@@ -12,20 +12,16 @@
                 <Border Style="{StaticResource Card}">
                     <local:CheckoutFields x:Name="Fields" />
                 </Border>
-
-                <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
-                           Text="An SVN working copy gets one file: .git, a one-line pointer back to the root, and every versioned file is hashed once, which on a 16 GB checkout takes minutes. A git clone keeps its own .git; the branch's history is copied into the store once. The server never sees any of it." />
             </StackPanel>
         </ScrollViewer>
 
+        <!-- No Close: the back button over the page leaves it, and nothing is registered unless it was added.
+             What adding costs is on the button, where the decision is; Sync writes it into the tooltip. -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
             <local:TaskGate>
                 <local:IconButton Glyph="&#xE896;" Text="Add the checkout"
-                    x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="Add_Click" IsEnabled="False"
-                    ToolTipService.ToolTip="Same as 'sg checkout add'. From a URL, svn checkout or git clone runs first. Then the first snapshot is taken, which is the long step." />
+                    x:Name="AddButton" Style="{StaticResource AccentButtonStyle}" Click="Add_Click" IsEnabled="False" />
             </local:TaskGate>
-            <Button x:Name="CloseButton" Content="Close" Click="Close_Click"
-                    ToolTipService.ToolTip="Back to the overview. Nothing is registered unless you added it." />
             <TextBlock x:Name="Result" Style="{StaticResource Secondary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
         </StackPanel>
 

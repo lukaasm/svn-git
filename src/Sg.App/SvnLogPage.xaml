@@ -22,14 +22,22 @@
         </local:EmptyState>
 
         <Grid x:Name="Filled" RowDefinitions="Auto,*">
+            <!-- The buttons sit level with the closed Options header, which is taller than a button. -->
             <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-                <NumberBox x:Name="Limit" Header="Revisions per working copy" Value="100" Minimum="10" Maximum="2000" SpinButtonPlacementMode="Compact" Width="220"
-                           ToolTipService.ToolTip="How many revisions to read from the server for each working copy." />
-                <local:IconButton Glyph="&#xE72C;" Text="Reload"
-                    VerticalAlignment="Bottom" Click="Reload_Click" ToolTipService.ToolTip="Read the log from the server again." />
+                <local:IconButton Glyph="&#xE72C;" Text="Reload" VerticalAlignment="Top" Margin="0,8,0,0"
+                    Click="Reload_Click" ToolTipService.ToolTip="Read the log from the server again. F5 does the same." />
                 <!-- Only when the page opened to answer "what would a sync bring in?". -->
-                <local:IconButton Glyph="&#xE895;" Text="Sync now"
-                    x:Name="SyncButton" Visibility="Collapsed" VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click" ToolTipService.ToolTip="Bring the checkout up to the server and take a new snapshot. This page closes and sg does the work." />
+                <local:IconButton Glyph="&#xE895;" Text="Sync now" VerticalAlignment="Top" Margin="0,8,0,0"
+                    x:Name="SyncButton" Visibility="Collapsed" Style="{StaticResource AccentButtonStyle}" Click="Sync_Click" ToolTipService.ToolTip="Bring the checkout up to the server and take a new snapshot. This page closes and sg does the work." />
+                <!-- How far back to read changes what Reload reads, and is rarely changed: closed, and the
+                     line over the revisions says so when it is not the default. -->
+                <Expander x:Name="Options" VerticalAlignment="Top" AutomationProperties.Name="Log options">
+                    <Expander.Header>
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" FontSize="16" /><TextBlock Text="Options" /></StackPanel>
+                    </Expander.Header>
+                    <NumberBox x:Name="Limit" Header="Revisions per working copy" Value="100" Minimum="10" Maximum="2000" SpinButtonPlacementMode="Compact" Width="220"
+                               ToolTipService.ToolTip="How many revisions to read from the server for each working copy. The next Reload reads that many." />
+                </Expander>
             </StackPanel>
 
             <Grid x:Name="Body" Grid.Row="1" Padding="0,8,0,0">

@@ -18,10 +18,10 @@ public static class DiffBlocks
     public const string Undo = "undo";
 
     public static DiffView.DiffAction SaveAction => new(Save, "Save", "\uE74E",
-        "Write what is in the editor to the file on disk. The diff is read again after it.", "ctrl+s");
+        "Write what is in the editor to the file on disk. The diff is read again after it.", "ctrl+s", HideWhenOff: true);
 
     public static DiffView.DiffAction UndoAction => new(Undo, "Undo edits", "\uE7A7",
-        "Throw away what was typed here and read the file off disk again.");
+        "Throw away what was typed here and read the file off disk again.", HideWhenOff: true);
 
     public static DiffView.DiffAction StageAction => new(Stage, "Stage", "\uE710",
         "Put this block in the index. A commit then holds it and leaves the rest of the file for later.", "ctrl+shift+s");

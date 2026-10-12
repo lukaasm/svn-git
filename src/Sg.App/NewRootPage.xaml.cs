@@ -32,6 +32,18 @@ public sealed partial class NewRootPage : SgPage
         TaskGate.SetHelp(CreateRootButton, _root != null ? "The root has already been created." : RootBox.Text.Trim().Length == 0 ? "Choose a folder for the new root." : "Create the shared SG store in this folder.");
         TaskGate.SetHelp(AddButton, _root == null ? "Create the root first." : _adding ? "The checkout is being added. Follow its progress in Tasks." : _added ? "The first checkout has already been added." : Fields.Ready ? "Register the first checkout and build its snapshot." : Fields.ReadyReason);
         Step2.Opacity = _root == null ? 0.5 : 1.0;
+        // One loud button on the page: the step to take now. Making the root, then its first checkout.
+        var accent = (Style)Application.Current.Resources["AccentButtonStyle"];
+        CreateRootButton.Style = _root == null ? accent : null;
+        AddButton.Style = _root != null ? accent : null;
+    }
+
+    /// <summary>The closed Options section says on its header when fsmonitor is not the default.</summary>
+    void FsMonitor_Changed(object sender, RoutedEventArgs e)
+    {
+        // The box's own IsChecked in the markup can raise this while the page is still being built.
+        if (OptionsHint == null) return;
+        OptionsHint.Visibility = FsMonitor.IsChecked == true ? Visibility.Collapsed : Visibility.Visible;
     }
 
     async void BrowseRoot_Click(object sender, RoutedEventArgs e)
@@ -92,8 +104,5 @@ public sealed partial class NewRootPage : SgPage
         _added = true;
         Step2Tick.Visibility = Visibility.Visible;
         Sync();
-        FinishButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
     }
-
-    void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

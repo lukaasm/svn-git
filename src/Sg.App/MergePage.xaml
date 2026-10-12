@@ -50,7 +50,8 @@
                 <Grid x:Name="RevisionsPane" Grid.Column="0" RowDefinitions="Auto,Auto,*" RowSpacing="6">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                         <TextBlock x:Name="RevisionsHeader" Text="Revisions on that branch" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                        <Button x:Name="ClearPickButton" Grid.Column="1" Content="Pick none" Click="ClearPick_Click" FontSize="12" Padding="8,2" MinHeight="0" IsEnabled="False"
+                        <!-- Only while something is picked, or while a saved pick is missing: then it is the way on. -->
+                        <Button x:Name="ClearPickButton" Grid.Column="1" Content="Clear selection" Click="ClearPick_Click" FontSize="12" Padding="8,2" MinHeight="0" Visibility="Collapsed"
                                 ToolTipService.ToolTip="Go back to merging everything this branch has not got yet, instead of named revisions." />
                     </Grid>
                     <TextBlock Grid.Row="1" x:Name="PickHint" Style="{StaticResource Secondary}" TextWrapping="Wrap"
@@ -76,35 +77,43 @@
 
             <StackPanel Grid.Row="4" Spacing="8">
                 <TextBlock x:Name="Summary" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                <!-- Merge, and the same merge run backwards in its dropdown; the preview beside them; what is
+                     only looked at, and the reread F5 also does, in More. -->
                 <local:WrapRow Spacing="8">
                 <local:TaskGate>
-                    <Button x:Name="MergeButton" Style="{StaticResource AccentButtonStyle}" Click="Merge_Click" AutomationProperties.Name="Merge"
-                            IsEnabled="False"
+                    <local:AccentSplitButton x:Name="MergeButton" Click="Merge_Click" AutomationProperties.Name="Merge" IsEnabled="False"
                             ToolTipService.ToolTip="Bring the changes into the checkout. They land as local changes there; nothing is committed until you commit them.">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE8AB;" FontSize="14" />
                             <TextBlock x:Name="MergeLabel" Text="Merge" />
                         </StackPanel>
-                    </Button>
+                        <local:AccentSplitButton.Flyout>
+                            <MenuFlyout Placement="TopEdgeAlignedLeft" local:MenuGate.Watch="True">
+                                <MenuFlyoutItem x:Name="TakeOutButton" Text="Take back out…" Click="TakeOut_Click" IsEnabled="False" local:MenuGate.Gated="True"
+                                                ToolTipService.ToolTip="Reverse the selected revisions as local checkout changes. Asks before applying.">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7A7;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </local:AccentSplitButton.Flyout>
+                    </local:AccentSplitButton>
                 </local:TaskGate>
                 <local:ActionHint><local:IconButton x:Name="TestButton" Glyph="&#xE9D9;" Text="Preview merge" Click="Test_Click" IsEnabled="False"
                                   ToolTipService.ToolTip="Run the merge without writing anything, and list what it would change." /></local:ActionHint>
-                <local:IconButton x:Name="RefreshButton" Glyph="&#xE72C;" Text="Refresh" Click="Refresh_Click" ToolTipService.ToolTip="Read the branches and their revisions again. F5 does the same." />
-                <local:IconButton x:Name="AdvancedButton" Glyph="&#xE712;" Text="Advanced" ToolTipService.ToolTip="Inspect checkout changes or reverse selected revisions.">
+                <local:IconButton x:Name="MoreButton" Glyph="&#xE712;" Text="More" AutomationProperties.Name="More actions">
                     <Button.Flyout>
-                        <Flyout x:Name="AdvancedFlyout" Placement="TopEdgeAlignedLeft">
-                            <StackPanel Spacing="8">
-                                <local:TaskGate>
-                                    <local:IconButton x:Name="TakeOutButton" Glyph="&#xE7A7;" Text="Take back out…" Click="TakeOut_Click" IsEnabled="False"
-                                                      ToolTipService.ToolTip="Reverse the selected revisions as local checkout changes. Asks before applying." />
-                                </local:TaskGate>
-                                <local:IconButton x:Name="CheckoutChangesButton" Glyph="&#xE8A5;" Text="Checkout changes" Click="CheckoutChanges_Click"
-                                                  ToolTipService.ToolTip="Review local checkout edits. Your merge selection is kept when you return." />
-                            </StackPanel>
-                        </Flyout>
+                        <MenuFlyout Placement="TopEdgeAlignedLeft">
+                            <MenuFlyoutItem x:Name="CheckoutChangesButton" Text="Checkout changes" Click="CheckoutChanges_Click"
+                                            ToolTipService.ToolTip="Review local checkout edits. Your merge selection is kept when you return.">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem x:Name="RefreshButton" Text="Refresh" Click="Refresh_Click"
+                                            ToolTipService.ToolTip="Read the branches and their revisions again. F5 does the same.">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72C;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
                     </Button.Flyout>
                 </local:IconButton>
-                <Button Content="Close" Click="Close_Click" ToolTipService.ToolTip="Back to where you came from. Nothing is undone by leaving." />
                 </local:WrapRow>
             </StackPanel>
         </Grid>

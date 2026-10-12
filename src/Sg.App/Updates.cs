@@ -50,10 +50,10 @@ public static class Updates
     }
 
     /// <summary>
-    /// Starts sg.exe, which waits for this process to close, installs the build, and starts the app again.
-    /// The caller must close the app right after this returns true.
+    /// Starts sg.exe, which waits for this process to close, installs the build the app already fetched,
+    /// and starts the app again. The caller must close the app right after this returns true.
     /// </summary>
-    public static bool StartInstaller()
+    public static bool StartInstaller(FetchedUpdate fetched)
     {
         var sg = SgExe();
         if (!File.Exists(sg)) throw new SgException("sg.exe is not next to the app: " + sg);
@@ -65,6 +65,8 @@ public static class Updates
             WorkingDirectory = Path.GetTempPath(),   // never hold a handle on the folder being replaced
         };
         psi.ArgumentList.Add("update");
+        psi.ArgumentList.Add("--payload");
+        psi.ArgumentList.Add(fetched.Folder);
         psi.ArgumentList.Add("--wait-pid");
         psi.ArgumentList.Add(Environment.ProcessId.ToString());
         psi.ArgumentList.Add("--relaunch");

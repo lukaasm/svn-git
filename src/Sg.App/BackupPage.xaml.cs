@@ -55,7 +55,6 @@ public sealed partial class BackupPage : SgPage
     List<BackupWorktree> _matchingWorktrees = [];
     int _shownWorktrees = WorktreePageSize;
     int _otherMatches;
-    readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
     List<BackupRow> _entries = new();
     BackupCatalog? _catalog;
     BackupPreview? _preview;
@@ -68,7 +67,7 @@ public sealed partial class BackupPage : SgPage
     bool _hidden;
     readonly BranchTargetValidation _targetValidation = new();
     sealed record RestoreDraft(DestinationDraft Destination, bool WithEdits, bool Replace);
-    sealed record ViewState(string Destination, string Query, int Filter, int Shown, double Offset, string[] Expanded,
+    sealed record ViewState(string Destination, string Query, int Filter, int Shown, double Offset,
         RestoreDraft? Restore, bool Advanced);
     RestoreDraft? _draft;
     ViewState? _returning;
@@ -85,14 +84,15 @@ public sealed partial class BackupPage : SgPage
         Title = "Backup";
         Branch = Worktree;
         var overview = Overview ? Visibility.Visible : Visibility.Collapsed;
-        ScheduleOverview.Visibility = BackupToolbar.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = BackupActions.Visibility = overview;
-        // The overview is a place, like the checkout page: the back button leaves it. Close stays on a
-        // worktree's page, where it is the other half of Restore.
-        LeaveButton.Visibility = Overview ? Visibility.Collapsed : Visibility.Visible;
+        var worktree = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleOverview.Visibility = BackupToolbar.Visibility = BackupMatches.Visibility = BranchesHeader.Visibility = Branches.Visibility = overview;
+        // Behind "...": every worktree at once on the overview, and this one's rare actions on its own page.
+        BackupAllButton.Visibility = PruneAllButton.Visibility = overview;
+        BackupNowButton.Visibility = CompareButton.Visibility = PruneButton.Visibility = worktree;
+        BackupActions.Visibility = Overview || Worktree != null ? Visibility.Visible : Visibility.Collapsed;
+        if (Worktree != null) AutomationProperties.SetName(BackupActions, Worktree);
         Loaded += (_, _) => { Session.Tasks.StateChanged += GateAll; GateAll(); };
         Unloaded += (_, _) => Session.Tasks.StateChanged -= GateAll;
-        BackupNowButton.Visibility = PruneButton.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
-        AdvancedOptions.Visibility = Worktree != null ? Visibility.Visible : Visibility.Collapsed;
         Session.Log.Sink = Pane;
     }
     public override void OnShown(bool returning) { _hidden = false; _ = LoadAsync(); }
@@ -115,7 +115,7 @@ public sealed partial class BackupPage : SgPage
     }
     string Destination => Session.Root?.Config.Backup is { } cfg ? cfg.Url + "\n" + cfg.Prefix : "";
     internal override object? CaptureViewState() => new ViewState(Destination, BackupSearch.Text, BackupFilter.SelectedIndex,
-        _shownWorktrees, _returning?.Offset ?? _restoringTo ?? ContentScroll.VerticalOffset, _expanded.ToArray(), CurrentDraft(), AdvancedOptions.IsExpanded);
+        _shownWorktrees, _returning?.Offset ?? _restoringTo ?? ContentScroll.VerticalOffset, CurrentDraft(), AdvancedOptions.IsExpanded);
     RestoreDraft? CurrentDraft() => _picked is { Kind: "branch", Unreadable: null }
         ? new(DestinationDraft.Capture(NameBox.Text, Into), WipBox.IsChecked == true, !_form.Running && ForceBox.IsChecked == true)
         : _draft;
@@ -128,7 +128,6 @@ public sealed partial class BackupPage : SgPage
         BackupSearch.Text = view.Query;
         BackupFilter.SelectedIndex = view.Filter;
         _shownWorktrees = view.Shown;
-        _expanded.UnionWith(view.Expanded);
         _restoring = false;
     }
 
@@ -150,7 +149,7 @@ public sealed partial class BackupPage : SgPage
         ExistingDestination.Update(null, null);
         _picked = null;
         Summary.Text = "";
-        RestoreButton.Visibility = Visibility.Collapsed;
+        RestoreButton.Visibility = FirstBackupButton.Visibility = Visibility.Collapsed;
         RestoreButton.IsEnabled = false;
         var root = Session.Require();
         var cfg = root.Config.Backup;
@@ -158,10 +157,11 @@ public sealed partial class BackupPage : SgPage
         NoBackup.Visibility = configured ? Visibility.Collapsed : Visibility.Visible;
         Filled.Visibility = Nothing.Visibility = Visibility.Collapsed;
         RestoreRow.Visibility = Visibility.Collapsed;
-        RestoreOptions.Visibility = Visibility.Collapsed;
-        AdvancedOptions.Visibility = configured && Worktree != null ? Visibility.Visible : Visibility.Collapsed;
-        BackupNowButton.IsEnabled = false;
-        PruneButton.IsEnabled = _configured = configured;
+        RestoreOptions.Visibility = AdvancedOptions.Visibility = Visibility.Collapsed;
+        BackupNowButton.IsEnabled = FirstBackupButton.IsEnabled = CompareButton.IsEnabled = false;
+        _configured = configured;
+        // Off on the overview, where it is not shown: the menu's task gate would otherwise count it.
+        PruneButton.IsEnabled = configured && Worktree != null;
         GateAll();
         RestoreButton.IsEnabled = false;
         if (!configured)
@@ -252,9 +252,11 @@ public sealed partial class BackupPage : SgPage
         }
         Filled.Visibility = Visibility.Visible;
         var local = _worktrees.FirstOrDefault(w => w.Name == Worktree);
-        BackupNowButton.IsEnabled = local?.CanBackUp == true;
-        TaskGate.SetHelp(BackupNowButton, local?.CanBackUp == true ? $"Back up only {Worktree}, including its shelves and enabled uncommitted changes."
-            : local?.Excluded == true ? "This worktree is excluded from backup. Include it in its worktree settings first." : "No local worktree folder is available to back up.");
+        var backupHelp = local?.CanBackUp == true ? $"Back up only {Worktree}, including its shelves and enabled uncommitted changes."
+            : local?.Excluded == true ? "This worktree is excluded from backup. Include it in its worktree settings first." : "No local worktree folder is available to back up.";
+        BackupNowButton.IsEnabled = FirstBackupButton.IsEnabled = local?.CanBackUp == true;
+        TaskGate.SetHelp(BackupNowButton, backupHelp);
+        TaskGate.SetHelp(FirstBackupButton, backupHelp);
         // What needs doing, not a census: the counts of everything are in the list's own line below.
         var attention = _worktrees.Count(w => w.NeedsAttention);
         Headline.Text = !Overview ? _itemName!
@@ -270,8 +272,20 @@ public sealed partial class BackupPage : SgPage
         else
         {
             var selected = _entries.FirstOrDefault(e => e.Reference.Kind == _itemKind && e.Name == _itemName);
+            CompareButton.IsEnabled = selected != null;
+            TaskGate.SetHelp(CompareButton, selected != null ? "Compare local and saved commit histories; read a patch only when selected."
+                : "Back up this worktree to create its first remote copy.");
+            // With no remote copy there is nothing to restore, so its first backup takes Restore's place
+            // in the bottom row, and the menu does not offer it a second time.
+            var first = Worktree != null && selected == null;
+            FirstBackupButton.Visibility = first ? Visibility.Visible : Visibility.Collapsed;
+            BackupNowButton.Visibility = Worktree != null && !first ? Visibility.Visible : Visibility.Collapsed;
             if (selected != null) { await PreviewAsync(selected); if (_separate && _draft == null) await SuggestSeparateNameAsync(); }
-            else SelectionHint.Text = "No remote backup of this worktree is available. Back it up to create the first copy.";
+            else
+            {
+                SelectionHint.Text = "No remote backup of this worktree is available. Back it up to create the first copy.";
+                SelectionHint.Visibility = Visibility.Visible;
+            }
         }
         if (_returning is { } view) { RestoreScroll(view.Offset); _returning = null; }
     }
@@ -358,7 +372,7 @@ public sealed partial class BackupPage : SgPage
         _picked = entry;
         var has = entry != null && entry.Unreadable == null;
         RestoreRow.Visibility = has && entry!.Kind == "branch" ? Visibility.Visible : Visibility.Collapsed;
-        RestoreOptions.Visibility = RestoreRow.Visibility;
+        RestoreOptions.Visibility = AdvancedOptions.Visibility = RestoreRow.Visibility;
         RestoreButton.Visibility = RestoreRow.Visibility;
         SelectionHint.Visibility = entry == null && SelectionHint.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         CommitsHeader.Visibility = CommitsCard.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
@@ -520,7 +534,7 @@ public sealed partial class BackupPage : SgPage
         entry.ExistsHere = true;
         _selectedRow?.Loaded(entry);
         RestoreButton.IsEnabled = false;
-        ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. Close this and the worktree is on the checkout's card."
+        ExplainTarget(outcome.State == TaskState.Succeeded ? "Done. The worktree is on the checkout's card."
             : res.Waiting ? "Resume the operation to finish, skip a commit, or cancel." : "Review the result above for saved work or edits that need attention.");
     }
 
@@ -689,6 +703,12 @@ public sealed partial class BackupPage : SgPage
     }
 
     async void Prune_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => PruneAsync(Worktree));
+
+    void Compare_Click(object sender, RoutedEventArgs e)
+    {
+        if (Worktree is not { } name || _catalog is not { } catalog) return;
+        Go(() => new BackupComparePage(name, catalog), "backup-compare:" + name);
+    }
 
     void Settings_Click(object sender, RoutedEventArgs e)
     {

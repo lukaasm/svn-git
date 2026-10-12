@@ -51,6 +51,8 @@ function Wait-For([string]$description, [scriptblock]$read, [int]$seconds = 15) 
 }
 function Invoke-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Select-Element($element) { $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() }
+# Backup is in the checkout toolbar's More menu.
+function More-Button { $bar = Find 'Actions'; if ($bar) { $bar.FindFirst([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'MoreButton')) } }
 $process = $null; $window = $null; $originalConfig = $null
 Initialize-UiReport $ArtifactDirectory 'Backup feedback'
 try {
@@ -84,6 +86,7 @@ try {
         $reason = (Find 'BackupSkippedReason').Current.Name
         if ($reason -notlike '*Replay:*') { throw 'Skipped backup does not name the blocking task.' }
         Invoke-Element (Find 'NavigationViewBackButton')
+        Invoke-Element (Wait-For 'checkout More menu' { More-Button })
         Invoke-Element (Wait-For 'backup action on overview' { Find 'BackupButton' })
         $null = Wait-For 'same skip visible on Backup' {
             $scroller = Find 'ContentScroll'; $scroll = $null
@@ -126,6 +129,7 @@ try {
         $fixtureConfig | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configPath
         $process = Start-Process -FilePath $app -ArgumentList @('overview', ('"' + $FixtureRoot + '"')) -WindowStyle Hidden -PassThru
         $window = Wait-For 'restarted debug window' { Get-TestAppWindow $process }
+        Invoke-Element (Wait-For 'checkout More menu' { More-Button })
         Invoke-Element (Wait-For 'backup action' { Find 'BackupButton' })
         $null = Wait-For 'backup read error' { $b = Find 'BackupRetryRead'; if ($b -and !$b.Current.IsOffscreen) { $b } }
         if ((Find 'NameBox') -and !(Find 'NameBox').Current.IsOffscreen) { throw 'Restore form is visible before a backup can be selected.' }

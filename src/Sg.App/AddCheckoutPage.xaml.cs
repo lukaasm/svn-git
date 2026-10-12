@@ -30,6 +30,15 @@ public sealed partial class AddCheckoutPage : SgPage
         Fields.Revalidate();
     }
 
+    /// <summary>
+    /// What adding does to the folder and how long it takes. It was a paragraph under the form; it is read
+    /// when deciding to press, so it is the button's own tooltip.
+    /// </summary>
+    const string Cost = "Same as 'sg checkout add'. From a URL, svn checkout or git clone runs first. "
+        + "An SVN working copy gets one file: .git, a one-line pointer back to the root, and every versioned file is hashed once, "
+        + "which on a 16 GB checkout takes minutes. A git clone keeps its own .git; the branch's history is copied into the store once. "
+        + "The server never sees any of it.";
+
     /// <summary>A control that cannot do anything is disabled, never a dialog explaining why.</summary>
     void Sync()
     {
@@ -37,7 +46,7 @@ public sealed partial class AddCheckoutPage : SgPage
         TaskGate.SetHelp(AddButton, _running ? "Adding this checkout. Follow progress in Tasks."
             : Added ? "This checkout has already been added."
             : _root == null || Session.Root != _root ? "Open the target root before adding a checkout."
-            : Fields.Ready ? "Register this checkout and build its first snapshot." : Fields.ReadyReason);
+            : Fields.Ready ? "Register this checkout and build its first snapshot. " + Cost : Fields.ReadyReason);
     }
 
     async void Add_Click(object sender, RoutedEventArgs e)
@@ -82,10 +91,7 @@ public sealed partial class AddCheckoutPage : SgPage
         foreach (var w in r.Snapshot.Warnings) Pane.Append("warn: " + w);
         // Registration creates the .git pointer that preflight rejects. The submitted form is
         // complete now; validating it again would turn a successful result into an ownership error.
-        CloseButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         if (Window is MainWindow main) main.CheckoutRegistered(this, root, r.Checkout.Name);
         else if (Session.Root == root) Close();
     }
-
-    void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

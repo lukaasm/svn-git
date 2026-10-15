@@ -70,7 +70,7 @@ public static class MonitorService
     static bool _busy;
     const int RecentCount = 60;
 
-    public static int TotalUnread => Store.Items.Sum(i => i.Unread);
+    public static int TotalUnread => Enabled ? Store.Items.Sum(i => i.Unread) : 0;
 
     /// <summary>
     /// The reader for one watched URL: svn against the server, or git through a cache repository kept
@@ -81,9 +81,27 @@ public static class MonitorService
             DebugTestRun.UserFile("monitor.git"), Session.Root?.Log ?? new NullLog());
     public static IEnumerable<string> Categories => Store.Items.Select(i => i.Category).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(c => c, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Turned off in Settings: nothing is checked, no toast comes, and the pages that show it are gone.</summary>
+    public static bool Enabled => Session.Settings.ProjectMonitor;
+
+    /// <summary>Starts or stops the timer to match the setting. Safe to call again after the setting changes.</summary>
+    public static void Apply(DispatcherQueue? queue = null)
+    {
+        _queue ??= queue;
+        if (Enabled && _queue != null) Start(_queue);
+        else Stop();
+        Raise();
+    }
+
+    public static void Stop()
+    {
+        _timer?.Stop();
+        _timer = null;
+    }
+
     public static void Start(DispatcherQueue queue)
     {
-        if (_timer != null) return;
+        if (!Enabled || _timer != null) return;
         _queue = queue;
         _timer = queue.CreateTimer();
         _timer.Interval = TimeSpan.FromSeconds(60);
@@ -124,7 +142,7 @@ public static class MonitorService
     /// </summary>
     static async Task CheckAsync(List<MonitorItem> items)
     {
-        if (_busy || items.Count == 0) return;
+        if (!Enabled || _busy || items.Count == 0) return;
         _busy = true;
         try
         {
@@ -220,6 +238,13 @@ public static class MonitorService
     public static void Remove(MonitorItem item)
     {
         Store.Items.Remove(item);
+        Save();
+    }
+
+    /// <summary>Stops watching every repository of one category, which is one checkout's root and externals.</summary>
+    public static void RemoveCategory(string category)
+    {
+        Store.Items.RemoveAll(i => i.Category.Equals(category, StringComparison.OrdinalIgnoreCase));
         Save();
     }
 

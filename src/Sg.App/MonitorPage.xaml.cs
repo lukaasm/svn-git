@@ -74,6 +74,11 @@ public sealed partial class MonitorPage : SgPage
         // area, not a window of its own: this is the one page that lives behind the navigation pane.
         ColumnSplitter.Attach(TreeSplitter, minLeft: 170, minRight: 700);
         ColumnSplitter.Attach(ListSplitter, minLeft: 330, minRight: 360);
+        new SectionStack(Column, "Monitor")
+            .Add("revisions", 0, RevisionsBody, splitterBelow: RevisionsSplitter)
+            .Add("message", 3, MessageBody, MessageChevron, MessageSplitter)
+            .Add("paths", 6, PathsBody, PathsChevron)
+            .Apply();
         Shortcuts.DiffNavigation(this, Diff);
         _paths = new ListFilter(PathsFilter, Paths, PathsHeader, r => ((SvnPathRow)r).Display);
         _paths.Picked += OnPicked;
@@ -384,9 +389,14 @@ public sealed partial class MonitorPage : SgPage
     /// </summary>
     MenuFlyout? RepositoryMenu(DependencyObject source)
     {
-        if (NodeOf(source) is not { Item: { } item } node) return null;
+        if (NodeOf(source) is not { } node) return null;
         if (!ReferenceEquals(Tree.SelectedItem, node)) Tree.SelectedItem = node;
         var menu = new MenuFlyout();
+        if (node.Item is not { } item)
+        {
+            menu.Items.Add(MenuItem("Remove checkout…", "", RemoveCheckout_Click, "Stop watching every repository in this category. Asks first."));
+            return menu;
+        }
         menu.Items.Add(MenuItem("Edit…", "\uE70F", Edit_Click, "Change the name, URL, category, interval, or notification of this repository."));
         menu.Items.Add(MenuItem("Mark read", "\uE73E", MarkRead_Click,
             "You have seen the new commits of this repository. The badge goes away. Clicking a commit marks it and the older ones read too."));
@@ -463,6 +473,23 @@ public sealed partial class MonitorPage : SgPage
         // and the rebuild reads this state. The message and the diff of the repository that just went
         // used to stay on screen, under a header that no longer named anything.
         var gone = _selected;
+        ClearShown();
+        MonitorService.Remove(gone);
+    }
+
+    async void RemoveCheckout_Click(object sender, RoutedEventArgs e)
+    {
+        var name = _category ?? _selected?.Category;
+        if (name == null) { await Dialogs.Info(this, "Nothing selected", "Pick a checkout or a repository in the tree first."); return; }
+        var count = MonitorService.Store.Items.Count(i => i.Category.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (!await Dialogs.Confirm(this, "Stop watching", $"Stop watching {name}? This removes its {count} repositor{(count == 1 ? "y" : "ies")}.", "Remove")) return;
+        ClearShown();
+        MonitorService.RemoveCategory(name);
+    }
+
+    /// <summary>Puts the detail side away, so it names nothing that is about to go.</summary>
+    void ClearShown()
+    {
         _selected = null;
         _category = null;
         _rowItem.Clear();
@@ -478,7 +505,6 @@ public sealed partial class MonitorPage : SgPage
         CheckingRing.Visibility = Visibility.Collapsed;
         Detail.Visibility = Visibility.Collapsed;
         NoRevisions.Visibility = Visibility.Collapsed;
-        MonitorService.Remove(gone);
     }
 
     async void CheckNow_Click(object sender, RoutedEventArgs e) => await Busy.During(sender, () => MonitorService.CheckAllAsync());

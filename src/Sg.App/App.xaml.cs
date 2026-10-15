@@ -44,7 +44,7 @@ public partial class App : Application
         var window = toast != null ? HandleToast(toast) : OpenFor(hidden ? "overview" : action, path, activate: !hidden);
         // A crash dialog needs a window to live in, and this is the first one there is.
         Crash.Owner(window);
-        MonitorService.Start(window.DispatcherQueue);
+        MonitorService.Apply(window.DispatcherQueue);
         if (_main != null && (Session.Settings.Tray || hidden)) EnsureTray();
         WarnIfElevated(window, hidden);
     }
@@ -145,9 +145,18 @@ public partial class App : Application
         }
     }
 
+    /// <summary>The Settings switch for the project monitor: the timer, the pane entry and the tray menu follow it.</summary>
+    public static void ApplyProjectMonitor()
+    {
+        MonitorService.Apply(_main?.DispatcherQueue);
+        _main?.ApplyProjectMonitor();
+        if (_tray != null) { RemoveTray(); EnsureTray(); }
+    }
+
     /// <summary>The project monitor is a page of the overview, so a toast brings the overview up and turns it to that page.</summary>
     static void ShowMonitor(string? id)
     {
+        if (!MonitorService.Enabled) { ShowMain(); return; }
         var main = EnsureMain(null, null);
         main.ShowMonitor(id);
         WindowHelper.Show(main);
@@ -259,7 +268,7 @@ public partial class App : Application
             case "monitor":
             {
                 var main = EnsureMain(null, null);
-                main.ShowMonitor(null);
+                if (MonitorService.Enabled) main.ShowMonitor(null);
                 window = main;
                 break;
             }
@@ -308,15 +317,10 @@ public partial class App : Application
     {
         if (_tray != null || _main == null) return;
         var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "sg.ico");
-        _tray = new TrayIcon("sg", icon, ShowMain, new (int, string)[]
-        {
-            (MenuOpen, "Open sg"),
-            (MenuMonitor, "Project monitor"),
-            (MenuCheck, "Check repositories now"),
-            (MenuSettings, "Settings"),
-            (0, ""),
-            (MenuExit, "Exit"),
-        }, OnTrayCommand);
+        var menu = new List<(int, string)> { (MenuOpen, "Open sg") };
+        if (MonitorService.Enabled) menu.AddRange([(MenuMonitor, "Project monitor"), (MenuCheck, "Check repositories now")]);
+        menu.AddRange([(MenuSettings, "Settings"), (0, ""), (MenuExit, "Exit")]);
+        _tray = new TrayIcon("sg", icon, ShowMain, menu.ToArray(), OnTrayCommand);
         MonitorService.Changed += UpdateTrayTip;
         UpdateTrayTip();
     }

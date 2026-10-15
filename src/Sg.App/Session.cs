@@ -67,6 +67,10 @@ public sealed class AppSettings
     public bool Notify { get; set; } = true;
     /// <summary>Closing the overview hides it into the tray. The app keeps running and keeps checking.</summary>
     public bool Tray { get; set; } = true;
+    /// <summary>The sections the user folded away on the review pages, as "Page.Section". The page keeps them folded.</summary>
+    public List<string> CollapsedSections { get; set; } = new();
+    /// <summary>Watches the URLs of the project monitor. Off hides the monitor everywhere and stops its checks.</summary>
+    public bool ProjectMonitor { get; set; } = true;
     /// <summary>How often the app asks GitHub for a newer build. 0 turns it off.</summary>
     public int UpdateCheckMinutes { get; set; } = 60;
     /// <summary>How often the app sends what changed to the backup repository. 0 turns the timer off.</summary>

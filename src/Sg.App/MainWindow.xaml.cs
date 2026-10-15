@@ -106,6 +106,7 @@ public sealed partial class MainWindow : Window
             Session.Tasks.StateChanged -= TasksChanged;
         };
         UpdateMonitorBadge();
+        MonitorItem.Visibility = MonitorService.Enabled ? Visibility.Visible : Visibility.Collapsed;
         Updates.Sweep();
         ShowOverview((CheckoutRow?)null);
         _ = RefreshAsync(runStartAction: true);
@@ -490,9 +491,18 @@ public sealed partial class MainWindow : Window
         return p;
     }, "settings");
 
+    /// <summary>Follows the Settings switch: the pane entry shows or goes, and a monitor page still open gives way to the overview.</summary>
+    public void ApplyProjectMonitor()
+    {
+        MonitorItem.Visibility = MonitorService.Enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (!MonitorService.Enabled && Host.Current is MonitorPage) ShowOverview((CheckoutRow?)null);
+        UpdateMonitorBadge();
+    }
+
     /// <summary>The project monitor, opened from the pane, the tray, or a toast that names a repository.</summary>
     public void ShowMonitor(string? selectId)
     {
+        if (!MonitorService.Enabled) return;
         if (Host.Current is MonitorPage open && Host.CurrentKey == "monitor")
         {
             if (selectId != null) open.SelectById(selectId);
@@ -1160,7 +1170,7 @@ public sealed partial class MainWindow : Window
                 () => GoUnder(row, () => new ShelfPage(null, wt.Path, wt.Branch) { Branch = wt.Branch }, "shelf:" + wt.Path)));
             list.Add(new QuickJump.Entry(wt.Branch + ": Open folder", wt.Path, "", () => Session.OpenInExplorer(wt.Path)));
         }
-        list.Add(new QuickJump.Entry("Project monitor", "SVN URLs watched for new commits", "", () => ShowMonitor(null)));
+        if (MonitorService.Enabled) list.Add(new QuickJump.Entry("Project monitor", "SVN URLs watched for new commits", "", () => ShowMonitor(null)));
         if (Session.Root != null) list.Add(new QuickJump.Entry("Review inbox", "Open feedback across local worktrees", "\uE90A", () => Host.Go(() => new ReviewInboxPage(), "review-inbox")));
         list.Add(new QuickJump.Entry("Settings", "the app, the bridge, the backup", "", ShowSettings));
         list.Add(new QuickJump.Entry("Log window", "every git and svn command the app ran", "", () => OutputWindow.Show()));

@@ -75,6 +75,13 @@
                     </controls:SettingsCard.HeaderIcon>
                     <ToggleSwitch x:Name="Tray" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
                 </controls:SettingsCard>
+                <controls:SettingsCard Header="Project monitor"
+                                       Description="Watches SVN URLs and shows a toast on new commits. Off stops the checks and hides the monitor in the pane, the tray and the quick jump. The watched list stays saved.">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE7BA;" />
+                    </controls:SettingsCard.HeaderIcon>
+                    <ToggleSwitch x:Name="ProjectMonitor" OnContent="" OffContent="" MinWidth="0" Toggled="Changed" />
+                </controls:SettingsCard>
                 <controls:SettingsCard Header="Start with Windows"
                                        Description="Starts sg hidden in the tray when you log in. A Run entry for this user, pointing at this exe.">
                     <controls:SettingsCard.HeaderIcon>

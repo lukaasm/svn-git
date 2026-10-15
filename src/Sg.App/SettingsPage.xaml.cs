@@ -40,6 +40,7 @@ public sealed partial class SettingsPage : SgPage
         EditorCommand.Text = Session.Settings.EditorCommand;
         Notify.IsOn = Session.Settings.Notify;
         Tray.IsOn = Session.Settings.Tray;
+        ProjectMonitor.IsOn = Session.Settings.ProjectMonitor;
         Startup.IsOn = Shell.IsStartup();
         ShowMenuState();
         ShowNotifyState();
@@ -225,7 +226,10 @@ public sealed partial class SettingsPage : SgPage
         Session.Settings.EditorCommand = EditorCommand.Text.Trim();
         Session.Settings.Notify = Notify.IsOn;
         Session.Settings.Tray = Tray.IsOn;
+        var monitorChanged = Session.Settings.ProjectMonitor != ProjectMonitor.IsOn;
+        Session.Settings.ProjectMonitor = ProjectMonitor.IsOn;
         Session.Settings.Save();
+        if (monitorChanged) App.ApplyProjectMonitor();
         // Before the early return below: the registration line matters most on the path that fails.
         ShowNotifyState();
         if (Tray.IsOn) App.EnsureTray(); else App.RemoveTray();

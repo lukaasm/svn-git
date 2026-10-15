@@ -25,6 +25,11 @@ public sealed partial class LogPage : SgPage
         Title = "Log";
         Subtitle = worktree;
         ColumnSplitter.Attach(Splitter);
+        new SectionStack(Column, "Log")
+            .Add("commits", 2, CommitsBody, splitterBelow: CommitsSplitter)
+            .Add("details", 5, DetailsBody, DetailsChevron, DetailsSplitter)
+            .Add("files", 8, FilesBody, FilesChevron)
+            .Apply();
         Shortcuts.DiffNavigation(this, Diff);
         // Blame belongs here as much as in the commit window: this is where a file is read rather than
         // changed, and "who wrote this line" is a question you ask while reading.

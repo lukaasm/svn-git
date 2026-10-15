@@ -24,7 +24,7 @@
 
             <!-- The commits and the details take the height they need, up to a cap; the files get the rest.
                  A branch with seven commits used to leave half the column empty over a tree of seventy files. -->
-            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="6">
+            <Grid x:Name="Column" Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="6">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                     <TextBlock x:Name="CommitsHeader" Text="Commits on the branch, then the snapshots under it" Style="{StaticResource BodyStrongTextBlockStyle}"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
@@ -36,15 +36,20 @@
                      on the branch's own commits, so none touches a snapshot: those are what SVN said. -->
                 <TextBlock x:Name="PickHint" Grid.Row="1" Style="{StaticResource Secondary}" TextWrapping="Wrap"
                            Text="Right-click a commit to squash, reword, revert, push alone, shelve or discard. Ctrl or Shift picks more than one." />
-                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4" MaxHeight="320">
+                <Border x:Name="CommitsBody" Grid.Row="2" Style="{StaticResource Card}" Padding="4" MaxHeight="320">
                     <Grid>
                         <local:RowListView x:Name="Commits" SelectionMode="Extended" SelectionChanged="Commits_SelectionChanged" ItemTemplate="{StaticResource CommitRowTemplate}" />
                         <local:Skeleton x:Name="CommitsSkeleton" RowCount="7" Badges="False" Visibility="Collapsed" />
                     </Grid>
                 </Border>
 
-                <TextBlock Grid.Row="3" Text="Details" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                <Border Grid.Row="4" Style="{StaticResource Card}" Padding="12,8" MaxHeight="200">
+                <Thumb x:Name="CommitsSplitter" Grid.Row="3" Style="{StaticResource SplitterRow}" />
+
+                <Grid Grid.Row="4" ColumnDefinitions="Auto,*" Margin="0,6,0,0">
+                    <local:SectionChevron x:Name="DetailsChevron" />
+                    <TextBlock Grid.Column="1" Text="Details" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                </Grid>
+                <Border x:Name="DetailsBody" Grid.Row="5" Style="{StaticResource Card}" Padding="12,8" MaxHeight="200">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="6">
                             <TextBlock x:Name="DetailHead" Style="{StaticResource Secondary}" IsTextSelectionEnabled="True" />
@@ -53,12 +58,15 @@
                     </ScrollViewer>
                 </Border>
 
-                <Grid Grid.Row="5" ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,6,0,0">
-                    <TextBlock x:Name="FilesHeader" Text="Files" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                    <TextBox x:Name="Filter" Grid.Column="1" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
+                <Thumb x:Name="DetailsSplitter" Grid.Row="6" Style="{StaticResource SplitterRow}" />
+
+                <Grid Grid.Row="7" ColumnDefinitions="Auto,*,Auto" Margin="0,6,0,0">
+                    <local:SectionChevron x:Name="FilesChevron" />
+                    <TextBlock x:Name="FilesHeader" Grid.Column="1" Text="Files" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                    <TextBox x:Name="Filter" Grid.Column="2" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
                              ToolTipService.ToolTip="Show only the rows whose status or path contains this text." />
                 </Grid>
-                <Border Grid.Row="6" Style="{StaticResource Card}" Padding="4">
+                <Border x:Name="FilesBody" Grid.Row="8" Style="{StaticResource Card}" Padding="4">
                     <Grid>
                         <local:RowTreeView x:Name="Files" ItemTemplate="{StaticResource FileTreeTemplate}" />
                         <local:Skeleton x:Name="FilesSkeleton" RowCount="5" Visibility="Collapsed" />

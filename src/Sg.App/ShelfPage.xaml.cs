@@ -43,6 +43,11 @@ public sealed partial class ShelfPage : SgPage
         Branch = branch;
         Subtitle = branch != null ? $"{branch}   {worktree}" : co != null ? $"{co.Name}   {co.Path}" : "every shelf in this root";
         ColumnSplitter.Attach(Splitter);
+        new SectionStack(Column, "Shelf")
+            .Add("shelves", 2, ShelvesBody, splitterBelow: ShelvesSplitter)
+            .Add("details", 5, DetailsBody, DetailsChevron, DetailsSplitter)
+            .Add("files", 8, FilesBody, FilesChevron)
+            .Apply();
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync());
         RowMenu.Attach(Shelves, ShelfMenu);

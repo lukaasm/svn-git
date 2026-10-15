@@ -128,6 +128,15 @@
         <Setter Property="Background" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
     </Style>
 
+    <!-- The same handle between two panes stacked one over the other. SectionStack gives it its behaviour. -->
+    <Style x:Key="SplitterRow" TargetType="Thumb">
+        <Setter Property="Height" Value="4" />
+        <Setter Property="Margin" Value="0,3" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+    </Style>
+
     <!-- The container every list row sits in. -->
     <Style x:Key="CompactItem" TargetType="ListViewItem">
         <Setter Property="MinHeight" Value="{StaticResource RowMinHeight}" />

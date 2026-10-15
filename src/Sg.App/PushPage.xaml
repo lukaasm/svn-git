@@ -63,7 +63,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- The commits take the height they need, up to a cap; the files get the rest. -->
-                <Grid x:Name="ChangesPane" Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
+                <Grid x:Name="ChangesPane" Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="6">
                     <!-- Pick where the push stops. The list is newest first, so picking a line sends
                          everything from the snapshot up to it and leaves the lines above it behind.
                          A line's menu, on a right click or Shift+F10, acts on that commit alone: send it on
@@ -74,7 +74,7 @@
                         <TextBox x:Name="CommitFilterBox" PlaceholderText="Filter commits  (Ctrl+Shift+F)" FontSize="12"
                                  ToolTipService.ToolTip="Show only the commits whose message, author, date or sha has this text. It changes the list, never what gets pushed: the cut stays on the commit it was on." />
                     </StackPanel>
-                    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4" MaxHeight="260">
+                    <Border x:Name="CommitsBody" Grid.Row="1" Style="{StaticResource Card}" Padding="4" MaxHeight="260">
                         <Grid>
                             <local:RowListView x:Name="Commits" SelectionMode="Single" SelectionChanged="Commits_SelectionChanged"
                                                ItemTemplate="{StaticResource CommitRowTemplate}"
@@ -89,12 +89,16 @@
                                     ToolTipService.ToolTip="Go back to sending the whole branch in one push." />
                         </InfoBar.ActionButton>
                     </InfoBar>
-                    <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
-                        <TextBlock x:Name="FilesHeader" Text="Files, one SVN commit per working copy" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
-                        <TextBox x:Name="Filter" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12"
+                    <Thumb x:Name="CommitsSplitter" Grid.Row="3" Style="{StaticResource SplitterRow}" />
+
+                    <Grid Grid.Row="4" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" RowSpacing="6" Margin="0,6,0,0">
+                        <local:SectionChevron x:Name="FilesChevron" />
+                        <TextBlock x:Name="FilesHeader" Grid.Column="1" Text="Files, one SVN commit per working copy" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                   TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <TextBox x:Name="Filter" Grid.Row="1" Grid.ColumnSpan="2" PlaceholderText="Filter files  (Ctrl+F)" Visibility="Collapsed" FontSize="12"
                                  ToolTipService.ToolTip="Show only the rows whose status or path contains this text. It changes the list, never what gets pushed." />
-                    </StackPanel>
-                    <Border Grid.Row="4" Style="{StaticResource Card}" Padding="4">
+                    </Grid>
+                    <Border x:Name="FilesBody" Grid.Row="5" Style="{StaticResource Card}" Padding="4">
                         <Grid>
                             <!-- One root per working copy, the same cut the push commits in. -->
                             <local:RowTreeView x:Name="Files" ItemTemplate="{StaticResource FileTreeTemplate}" />

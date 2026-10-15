@@ -32,6 +32,11 @@ public sealed partial class SvnLogPage : SgPage
         _incoming = incoming;
         SyncButton.Visibility = EmptySync.Visibility = incoming ? Visibility.Visible : Visibility.Collapsed;
         ColumnSplitter.Attach(Splitter);
+        new SectionStack(Column, "SvnLog")
+            .Add("revisions", 1, RevisionsBody, splitterBelow: RevisionsSplitter)
+            .Add("message", 4, MessageBody, MessageChevron, MessageSplitter)
+            .Add("paths", 7, PathsBody, PathsChevron)
+            .Apply();
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync());
         // The one file list in the app that had no right click at all. Reading a revision is exactly when

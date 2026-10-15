@@ -51,20 +51,25 @@
                 <!-- The revisions take twice what the changed paths do: a log is hundreds of lines long
                      and one revision touches a handful of files, so an even split starved the list
                      that the page is for. -->
-                <Grid Grid.Column="0" RowDefinitions="Auto,2*,Auto,Auto,Auto,*" RowSpacing="6">
+                <Grid x:Name="Column" Grid.Column="0" RowDefinitions="Auto,2*,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="6">
                     <StackPanel Spacing="2">
                         <TextBlock x:Name="RevisionsHeader" Text="Revisions, newest first" Style="{StaticResource BodyStrongTextBlockStyle}" />
                         <TextBlock x:Name="WcState" Style="{StaticResource Secondary}" />
                     </StackPanel>
-                    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4">
+                    <Border x:Name="RevisionsBody" Grid.Row="1" Style="{StaticResource Card}" Padding="4">
                         <Grid>
                             <local:RowListView x:Name="Revisions" SelectionChanged="Revisions_SelectionChanged" ItemTemplate="{StaticResource RevisionRowTemplate}" />
                             <local:Skeleton x:Name="RevisionsSkeleton" RowCount="8" Badges="False" Visibility="Collapsed" />
                         </Grid>
                     </Border>
 
-                    <TextBlock Grid.Row="2" Text="Message" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,6,0,0" />
-                    <Border Grid.Row="3" Style="{StaticResource Card}" Padding="12,8" MaxHeight="180">
+                    <Thumb x:Name="RevisionsSplitter" Grid.Row="2" Style="{StaticResource SplitterRow}" />
+
+                    <Grid Grid.Row="3" ColumnDefinitions="Auto,*" Margin="0,6,0,0">
+                        <local:SectionChevron x:Name="MessageChevron" />
+                        <TextBlock Grid.Column="1" Text="Message" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                    </Grid>
+                    <Border x:Name="MessageBody" Grid.Row="4" Style="{StaticResource Card}" Padding="12,8" MaxHeight="180">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Spacing="6">
                                 <TextBlock x:Name="DetailHead" Style="{StaticResource Secondary}" IsTextSelectionEnabled="True" />
@@ -73,12 +78,15 @@
                         </ScrollViewer>
                     </Border>
 
-                    <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,6,0,0">
-                        <TextBlock x:Name="PathsHeader" Text="Changed paths" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                        <TextBox x:Name="PathsFilter" Grid.Column="1" PlaceholderText="Filter paths  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
+                    <Thumb x:Name="MessageSplitter" Grid.Row="5" Style="{StaticResource SplitterRow}" />
+
+                    <Grid Grid.Row="6" ColumnDefinitions="Auto,*,Auto" Margin="0,6,0,0">
+                        <local:SectionChevron x:Name="PathsChevron" />
+                        <TextBlock x:Name="PathsHeader" Grid.Column="1" Text="Changed paths" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <TextBox x:Name="PathsFilter" Grid.Column="2" PlaceholderText="Filter paths  (Ctrl+F)" Visibility="Collapsed" FontSize="12" MinWidth="200"
                                  ToolTipService.ToolTip="Show only the rows whose action or path contains this text." />
                     </Grid>
-                    <Border Grid.Row="5" Style="{StaticResource Card}" Padding="4">
+                    <Border x:Name="PathsBody" Grid.Row="7" Style="{StaticResource Card}" Padding="4">
                         <local:RowTreeView x:Name="Paths" ItemTemplate="{StaticResource FileTreeTemplate}" />
                     </Border>
                 </Grid>

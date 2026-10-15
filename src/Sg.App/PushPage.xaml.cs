@@ -78,6 +78,10 @@ public sealed partial class PushPage : SgPage
         Title = "Push to SVN";
         Subtitle = worktree;
         _layout = new ReviewLayout(this, Body, ChangesPane, DiffPane, Splitter, CompactViews);
+        new SectionStack(ChangesPane, "Push")
+            .Add("commits", 1, CommitsBody, splitterBelow: CommitsSplitter)
+            .Add("files", 5, FilesBody, FilesChevron)
+            .Apply();
         Shortcuts.DiffNavigation(this, Diff);
         Shortcuts.Add(this, VirtualKey.Enter, VirtualKeyModifiers.Control, () => { if (PushButton.IsEnabled) _ = PushAsync(); });
         Shortcuts.Add(this, VirtualKey.F5, () => _ = LoadAsync());

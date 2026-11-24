@@ -26,6 +26,14 @@ public sealed class PushHalfwayTests : IDisposable
 
     List<string> OnBranch() => Git.Log(_wt, f.Root.SnapshotRef(f.Co) + "..HEAD", 20).Select(c => c.Subject).ToList();
 
+    /// <summary>The checkout with the nested external written: fort/builds/data_engine and schmetterling/sub are one server folder.</summary>
+    void SetupWithOneFolderTwice()
+    {
+        f.Root = Ops.Init(f.RootDir, f.Log, fsmonitor: false);
+        f.Co = Ops.CheckoutAdd(f.Root, f.Checkout, skip: [], junctions: [], optional: []).Checkout;
+        _wt = Ops.Branch(f.Root, "feature-twice", f.Co).Path;
+    }
+
     [Fact]
     public void A_commit_that_sent_nothing_stays_a_commit_and_so_do_the_ones_above_it()
     {
@@ -150,5 +158,92 @@ public sealed class PushHalfwayTests : IDisposable
         Assert.Equal(["schmetterling/engine.cpp"], Git.ConflictedFiles(_wt));
         Assert.Equal("int engine = 9;", Git.Ok(_wt, "show", "HEAD:schmetterling/engine.cpp").StdOut.Trim());
         Assert.Contains("a rebase stopped part way", Assert.Single(r.Warnings));
+    }
+
+    [Fact]
+    public void A_server_folder_that_is_in_the_checkout_twice_is_sent_once()
+    {
+        SetupWithOneFolderTwice();
+        Commit("data", ("fort/builds/data_engine/data.txt", "new data\n"), ("schmetterling/sub/data.txt", "new data\n"),
+            ("fort/builds/data_engine/added.txt", "added\n"), ("schmetterling/sub/added.txt", "added\n"));
+        Commit("second", ("fort/dev/two.cpp", "two\n"));
+        var before = f.Revision(f.EngineUrl);
+
+        var r = Push.Run(f.Root, _wt, "change the engine data", interactive: true, scope: PushScope.First(1));
+
+        Assert.True(r.Batches.Single().AllCommitted, string.Join("\n", r.Groups.Select(g => $"{g.Wc} {g.State} {g.Error}")));
+        Assert.Equal(before + 1, f.Revision(f.EngineUrl));
+        Assert.Equal("new data", f.Cat(f.EngineUrl + "/branches/fort/dev/sub/data.txt").Trim());
+        Assert.Equal("added", f.Cat(f.EngineUrl + "/branches/fort/dev/sub/added.txt").Trim());
+        Assert.Equal(["second"], OnBranch());
+        Assert.Empty(f.CheckoutChanges());
+        Assert.Equal("new data", File.ReadAllText(Path.Combine(f.Checkout, "schmetterling", "sub", "data.txt")).Trim());
+        Assert.Equal("new data", File.ReadAllText(Path.Combine(f.Checkout, "fort", "builds", "data_engine", "data.txt")).Trim());
+    }
+
+    [Fact]
+    public void The_rest_of_a_working_copy_goes_without_the_files_another_one_sent()
+    {
+        SetupWithOneFolderTwice();
+        Commit("data and engine", ("fort/builds/data_engine/data.txt", "new data\n"), ("schmetterling/sub/data.txt", "new data\n"),
+            ("schmetterling/engine.cpp", "int engine = 2;\n"));
+
+        var r = Push.Run(f.Root, _wt, "change the engine and its data", interactive: true);
+
+        Assert.True(r.AllCommitted, string.Join("\n", r.Groups.Select(g => $"{g.Wc} {g.State} {g.Error}")));
+        Assert.Equal("int engine = 2;", f.Cat(f.EngineUrl + "/branches/fort/dev/engine.cpp").Trim());
+        Assert.Equal("new data", f.Cat(f.EngineUrl + "/branches/fort/dev/sub/data.txt").Trim());
+        Assert.Empty(f.CheckoutChanges());
+    }
+
+    [Fact]
+    public void A_file_deleted_through_both_of_its_places_is_deleted_once()
+    {
+        SetupWithOneFolderTwice();
+        File.Delete(Path.Combine(_wt, "fort", "builds", "data_engine", "data.txt"));
+        File.Delete(Path.Combine(_wt, "schmetterling", "sub", "data.txt"));
+        Commit("no data");
+
+        var r = Push.Run(f.Root, _wt, "delete the engine data", interactive: true);
+
+        Assert.True(r.AllCommitted, string.Join("\n", r.Groups.Select(g => $"{g.Wc} {g.State} {g.Error}")));
+        Assert.False(f.Svn.UrlExists(f.EngineUrl + "/branches/fort/dev/sub/data.txt"));
+        Assert.Empty(f.CheckoutChanges());
+    }
+
+    [Fact]
+    public void A_second_batch_that_repeats_a_file_of_the_first_in_its_other_place_sends_nothing_again()
+    {
+        SetupWithOneFolderTwice();
+        Commit("data, first place", ("fort/builds/data_engine/data.txt", "new data\n"));
+        var first = Git.HeadSha(_wt);
+        Commit("data, second place", ("schmetterling/sub/data.txt", "new data\n"));
+        var before = f.Revision(f.EngineUrl);
+
+        var r = Push.Run(f.Root, _wt, [
+            new PushBatch(first, "data through the builds"),
+            new PushBatch(Git.HeadSha(_wt), "data through the engine"),
+        ], null, interactive: true);
+
+        Assert.True(r.AllCommitted, string.Join("\n", r.Groups.Select(g => $"{g.Wc} {g.State} {g.Error}")));
+        Assert.Equal(before + 1, f.Revision(f.EngineUrl));
+        Assert.Empty(f.CheckoutChanges());
+    }
+
+    [Fact]
+    public void One_server_file_with_two_contents_is_refused_before_anything_is_sent()
+    {
+        SetupWithOneFolderTwice();
+        Commit("data", ("fort/builds/data_engine/data.txt", "one\n"), ("schmetterling/sub/data.txt", "two\n"), ("fort/dev/game.cpp", "int game = 2;\n"));
+        var before = f.Revision(f.EngineUrl);
+
+        var ex = Assert.Throws<SgException>(() => Push.Run(f.Root, _wt, "two contents for one file", interactive: true));
+
+        Assert.Contains("one file on the server", ex.Message);
+        Assert.Contains("fort/builds/data_engine/data.txt", ex.Message);
+        Assert.Contains("schmetterling/sub/data.txt", ex.Message);
+        Assert.Equal(before, f.Revision(f.EngineUrl));
+        Assert.Equal("int game = 1;", f.Cat(f.GameUrl + "/branches/fort/dev/game.cpp").Trim());
+        Assert.Equal(["data"], OnBranch());
     }
 }

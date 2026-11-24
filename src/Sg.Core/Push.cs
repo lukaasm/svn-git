@@ -17,6 +17,11 @@ public sealed class PushGroup
     public List<DiffEntry> Entries = new();
     internal List<string> Targets = new();
     internal List<string> AddedDirs = new();
+    /// <summary>
+    /// The folder of the server this working copy is, as the repository's id and the path in it. Two
+    /// working copies can be one folder, under two host names too. Empty when the server does not say.
+    /// </summary>
+    internal string ServerFolder = "";
     /// <summary>The working copy that pins what this one commits: a git submodule's parent. Null for SVN.</summary>
     internal string? PinnedIn;
     /// <summary>New commits of the submodules this one pins, by path, filled in as they are made.</summary>
@@ -276,9 +281,10 @@ public static class Push
         var scan = vcs.Scan(root, co);
         var bad = Refusals(going, co, scan.LocalEdits);
         bad.AddRange(vcs.WriteBlockers(root, co));
-        if (bad.Count > 0) throw new SgException("push refused:\n  " + string.Join("\n  ", bad));
-
         var wcs = WorkingCopies(scan.Externals);
+        var files = ServerFiles.Of(root, co, vcs, GroupsFor(going, wcs, co));
+        bad.AddRange(files.TwoContents(lastSent));
+        if (bad.Count > 0) throw new SgException("push refused:\n  " + string.Join("\n  ", bad));
 
         // 3. Or stop before the server: write the change into the checkout and leave it there. No
         // message is asked for, because nothing is being committed, and the branch does not move,
@@ -327,6 +333,18 @@ public static class Push
             foreach (var g in br.Groups)
             {
                 var label = g.Wc.Length == 0 ? "root" : g.Wc;
+                if (files.TakeOutSent(g, b.Through) is { } other)
+                {
+                    var through = other.Wc.Length == 0 ? "root" : other.Wc;
+                    if (g.Entries.Count == 0)
+                    {
+                        g.Revision = other.Revision;
+                        g.State = "committed";
+                        log.Info($"nothing to commit in {label}: {through} sent the same server folder as {g.Label}");
+                        continue;
+                    }
+                    log.Info($"some of {label} went with {through}, which is the same server folder");
+                }
                 log.Info((g.Entries.Count == 0 ? $"committing the new pin(s) in {label}" : $"committing {g.Entries.Count} change(s) in {label}")
                          + $" ({g.ReposRoot})" + (own.ContainsKey(g.Wc) ? ", under its own message" : ""));
                 try
@@ -337,6 +355,7 @@ public static class Push
                     g.Revision = made.Revision;
                     g.Commit = made.Commit;
                     g.State = "committed";
+                    files.Sent(g, b.Through);
                     if (g.PinnedIn != null && br.Groups.FirstOrDefault(x => x.Wc.Equals(g.PinnedIn, StringComparison.OrdinalIgnoreCase)) is { } around)
                         around.Pins[g.Wc] = made.Commit;
                     Operations.Receipt(root, server + " revision published", "", ["Branch: " + branch, "Working copy: " + g.Wc, "Repository: " + g.ReposRoot, "Revision: " + g.Label]);
@@ -508,6 +527,86 @@ public static class Push
 
     /// <summary>Whether a commit is what a push that failed half way left behind.</summary>
     internal static bool IsPending(string subject) => subject.StartsWith(NotPushed, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The server files of a push whose working copies overlap. One folder of a server can be in a
+    /// checkout twice, through two externals, and a branch changes both places alike. That is one change
+    /// to the server: the first working copy sends it, and for the second one the file is out of date
+    /// from then on, with the same content. It gets that with the update the push ends with.
+    /// </summary>
+    sealed class ServerFiles
+    {
+        readonly Git _git;
+        readonly List<PushGroup> _overlapping;
+        readonly Dictionary<string, (string? Blob, PushGroup By)> _sent = new(StringComparer.Ordinal);
+
+        ServerFiles(Git git, List<PushGroup> overlapping)
+        {
+            _git = git;
+            _overlapping = overlapping;
+        }
+
+        /// <summary>groups are all the working copies a push writes, whatever batch they are in.</summary>
+        public static ServerFiles Of(SgRoot root, CheckoutConfig co, ICheckoutVcs vcs, List<PushGroup> groups)
+        {
+            if (groups.Count > 1) vcs.FillRepositories(root, co, groups);
+            return new ServerFiles(root.Git, groups.Where(g => g.ServerFolder.Length > 0 && groups.Any(o => o != g && o.ServerFolder.Length > 0
+                && (PathUtil.IsUnder(o.ServerFolder, g.ServerFolder) || PathUtil.IsUnder(g.ServerFolder, o.ServerFolder)))).ToList());
+        }
+
+        /// <summary>The files that are one file on the server and that the branch leaves with two contents.</summary>
+        public IEnumerable<string> TwoContents(string tip)
+        {
+            var seen = new Dictionary<string, Left>(StringComparer.Ordinal);
+            foreach (var f in _overlapping.SelectMany(g => Leaves(g, tip).Values.SelectMany(f => f)))
+                if (!seen.TryAdd(f.File, f) && seen[f.File].Blob != f.Blob)
+                    yield return $"{seen[f.File].Path} and {f.Path} (one file on the server, and the branch gives it two contents)";
+        }
+
+        /// <summary>
+        /// Takes out of a group the changes an earlier one put on the server, and says which one it was.
+        /// Null when the group is sent as it is.
+        /// </summary>
+        public PushGroup? TakeOutSent(PushGroup g, string tip)
+        {
+            if (!Overlaps(g) || _sent.Count == 0) return null;
+            PushGroup? by = null;
+            foreach (var (e, left) in Leaves(g, tip))
+            {
+                if (!left.All(f => _sent.TryGetValue(f.File, out var s) && s.Blob == f.Blob)) continue;
+                by = _sent[left[0].File].By;
+                g.Entries.Remove(e);
+            }
+            return by;
+        }
+
+        /// <summary>A group is on the server now.</summary>
+        public void Sent(PushGroup g, string tip)
+        {
+            if (!Overlaps(g)) return;
+            foreach (var f in Leaves(g, tip).Values.SelectMany(f => f)) _sent[f.File] = (f.Blob, g);
+        }
+
+        bool Overlaps(PushGroup g) => _overlapping.Any(o => o.Wc.Equals(g.Wc, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>A file as a change leaves it: its place on the server, its content there, or null when it goes away, and its path in the checkout.</summary>
+        sealed record Left(string File, string? Blob, string Path);
+
+        /// <summary>What each change of a group leaves on the server.</summary>
+        Dictionary<DiffEntry, List<Left>> Leaves(PushGroup g, string tip)
+        {
+            string File(string path) => g.ServerFolder + "/" + (g.Wc.Length == 0 ? path : path[(g.Wc.Length + 1)..]);
+            var written = g.Entries.Where(e => e.Status != 'D').Select(e => e.Path).ToList();
+            var blobs = written.Count == 0 ? [] : _git.LsTree(tip, written).Where(e => e.Type == "blob")
+                .ToDictionary(e => e.Path, e => e.Sha, StringComparer.Ordinal);
+            return g.Entries.ToDictionary(e => e, e =>
+            {
+                var left = new List<Left> { new(File(e.Path), e.Status == 'D' ? null : blobs.GetValueOrDefault(e.Path), e.Path) };
+                if (e is { Status: 'R', OldPath: { } old }) left.Add(new(File(old), null, old));
+                return left;
+            });
+        }
+    }
 
     /// <summary>
     /// The last commit this push will send, worked out before any message is asked for so the refusals

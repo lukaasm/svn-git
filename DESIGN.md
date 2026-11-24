@@ -232,6 +232,9 @@ After the loop:
 1. `svn update`. New snapshot. `svn/<checkout>` moves.
 2. All groups done: in the worktree, `git reset --hard svn/<checkout>`. The branch now equals SVN, including any eol or keyword normalizing SVN did.
 3. A batch failed with part of it sent: build one commit on top of the new snapshot. Its tree is a three way merge in memory of the batch's own change onto the snapshot, so it holds what did not go and nothing anybody else committed is put back. Nothing left is no commit. Every commit above the batch is replayed onto it, one for one. A batch that sent nothing gets no such commit: it is replayed too. A commit that meets somebody else's change in the same lines stops the replay the way any rebase stops, to be settled with `sg resolve`; the branch's files are never written over the snapshot. The old tip stays in the reflog. Report which repositories got a commit and which did not.
+
+A server folder can be in a checkout twice, through two externals. A change of it through both is one change to the server: the first working copy commits it, and the other one drops those files from its own commit and gets them with the update. Which folder of which repository a working copy is comes from the repository's uuid, because one server can have two host names. The same server file with two contents is refused before anything is sent.
+
 ### New server branch
 
 Input: a source checkout and a new name. Each external can also get a name of its own, or be kept: then it is not copied, and the `svn:externals` line that brings it in stays as it is. An external inside a kept one is kept with it. A repository with nothing left to copy gets no revision.

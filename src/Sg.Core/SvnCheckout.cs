@@ -621,7 +621,13 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
         {
             var roots = svn.InfoMany(co.Path, groups.Select(g => g.Wc.Length == 0 ? "." : g.Wc), recursive: false);
             foreach (var g in groups)
-                g.ReposRoot = roots.FirstOrDefault(i => i.Path.Equals(g.Wc, StringComparison.OrdinalIgnoreCase))?.ReposRoot ?? "";
+            {
+                if (roots.FirstOrDefault(i => i.Path.Equals(g.Wc, StringComparison.OrdinalIgnoreCase)) is not { } info) continue;
+                g.ReposRoot = info.ReposRoot;
+                // The id and not the address: one repository can be reached under two host names.
+                if (info.Uuid.Length > 0 && info.Url.StartsWith(info.ReposRoot, StringComparison.OrdinalIgnoreCase))
+                    g.ServerFolder = info.Uuid + Uri.UnescapeDataString(info.Url[info.ReposRoot.Length..].TrimEnd('/'));
+            }
         }
         catch (SgException) { /* shown as empty */ }
     }

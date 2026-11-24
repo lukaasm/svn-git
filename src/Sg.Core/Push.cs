@@ -297,15 +297,17 @@ public static class Push
         // finishes and reports, including the rollback of a group that fails.
         using var uncancellable = Cancellation.Use(CancellationToken.None);
 
-        // 4. Each batch in turn: its own diff, its own groups, its own commits.
-        var from = snapRef;
-        string? stoppedAfter = null;
+        // 4. Each batch in turn: its own diff, its own groups, its own commits. The first starts at the
+        // snapshot's commit and not at its name: the sync at the end moves the name, and what came in
+        // with it would then read as work of this branch.
+        var from = snapSha;
+        var failed = false;
         for (var i = 0; i < plan.Count; i++)
         {
             var b = plan[i];
             var br = new PushBatchResult { Message = b.Message, From = from, To = b.Through };
             result.Batches.Add(br);
-            if (stoppedAfter != null) continue;   // an earlier batch failed; this one was never tried
+            if (failed) continue;   // an earlier batch failed; this one was never tried
 
             var entries = git.DiffNameStatus(worktree, from, b.Through);
             if (entries.Count == 0)
@@ -349,11 +351,11 @@ public static class Push
                     // an earlier batch may already be in SVN and on disk.
                     vcs.Rollback(root, co, g, from, result.Warnings);
                     foreach (var rest in br.Groups.Where(x => x.State == "pending")) rest.State = "skipped";
-                    stoppedAfter = from;
+                    failed = true;
                     break;
                 }
             }
-            if (stoppedAfter == null) from = b.Through;
+            if (!failed) from = b.Through;
         }
 
         // 5. New snapshot, then put the branch where it belongs.
@@ -363,14 +365,14 @@ public static class Push
 
         // Everything from here on did not reach SVN: the batch that failed, or the tail of a push that
         // was asked to stop early. Both are the same shape, and both are rebuilt onto the new snapshot.
-        var sent = stoppedAfter ?? plan[^1].Through;
-        var sentAll = picked == null && stoppedAfter == null && git.ResolveCommit(worktree, plan[^1].Through) == tip;
+        // Never by writing the branch's files over it: it can hold what somebody else committed meanwhile.
+        var sentAll = picked == null && !failed && git.ResolveCommit(worktree, plan[^1].Through) == tip;
         if (picked != null)
         {
             // Every commit of the branch stays but the one that went, and stays the commit it was. When
             // only part of it went, it stays too: replayed onto a snapshot that has that part, it keeps
             // what has not gone yet.
-            var went = stoppedAfter == null;
+            var went = !failed;
             var rest = git.RevList(worktree, snapSha + ".." + tip).AsEnumerable().Reverse().Where(c => !went || c != picked).ToList();
             if (rest.Count == 0)
             {
@@ -378,7 +380,7 @@ public static class Push
                 result.AllCommitted = true;
                 result.BranchState = "reset to " + snapRef;
             }
-            else if (Ops.ReplayOnto(git, sync.Sha, rest) is { StoppedAt: null } replay)
+            else if (Ops.ReplayOnto(git, sync.Sha, rest, dropEmpty: true) is { StoppedAt: null } replay)
             {
                 git.ResetHard(worktree, replay.Tip);
                 var left = git.CountCommits(snapRef, "refs/heads/" + branch);
@@ -387,13 +389,8 @@ public static class Push
             }
             else
             {
-                result.Warnings.Add("the commits that were not pushed do not replay onto the new snapshot cleanly, so they were kept as one commit instead");
-                var restPaths = git.DiffNameStatus(worktree, snapSha, tip)
-                    .SelectMany(e => e.OldPath != null ? new[] { e.Path, e.OldPath } : new[] { e.Path })
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                var sha = PendingCommit(root, co, sync.Sha, tip, restPaths, "not pushed yet: the rest of the branch\n\n" + plan[^1].Message + "\n");
-                git.ResetHard(worktree, sha);
-                result.BranchState = "pending commit " + sha[..10] + " holds what did not go";
+                // What went is in the snapshot, so a rebase leaves it out and stops where the rest does not fit.
+                ReplayRest(git, worktree, branch, sync.Sha, snapSha, result);
             }
         }
         else if (sentAll)
@@ -402,24 +399,15 @@ public static class Push
             result.AllCommitted = true;
             result.BranchState = "reset to " + snapRef;
         }
-        else if (stoppedAfter == null && ReplayRest(git, worktree, branch, snapRef, sync.Sha, sent, result))
-        {
-            // Said everything it needs to inside ReplayRest.
-        }
         else
         {
-            var restPaths = git.DiffNameStatus(worktree, sent, tip)
-                .SelectMany(e => e.OldPath != null ? new[] { e.Path, e.OldPath } : new[] { e.Path })
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var why = stoppedAfter != null
-                ? "not pushed yet: " + string.Join(", ", result.Batches.SelectMany(x => x.Groups).Where(g => g.State != "committed").Select(g => g.Wc.Length == 0 ? "root" : g.Wc).Distinct())
-                : "not pushed yet: the rest of the branch";
-            var sha = PendingCommit(root, co, sync.Sha, tip, restPaths, why + "\n\n" + plan[^1].Message + "\n");
-            git.ResetHard(worktree, sha);
-            result.BranchState = "pending commit " + sha[..10] + " holds what did not go";
+            var (onto, sent) = failed
+                ? AfterFailure(git, sync.Sha, result.Batches.First(b => b.Attempted && !b.AllCommitted))
+                : (sync.Sha, plan[^1].Through);
+            ReplayRest(git, worktree, branch, onto, sent, result, pending: onto != sync.Sha);
         }
         // A push that stopped where it was asked to stop sent all it was asked for. Only a failure is not that.
-        result.OnPurpose = !result.AllCommitted && stoppedAfter == null;
+        result.OnPurpose = !result.AllCommitted && !failed;
         Operations.Receipt(root, "Push to " + server, worktree, result.Batches.SelectMany(x => x.Groups).Select(g => g.Wc + ": " + g.State + (g.Label.Length == 0 ? "" : " " + g.Label)).Append(result.BranchState));
         return result;
     }
@@ -481,22 +469,45 @@ public static class Push
     /// commits: replayed one for one onto the new snapshot. That is what makes "send the first two" a
     /// thing you can do again tomorrow for the next two, instead of a thing that flattens the rest into
     /// one blob. Their changes are already in the snapshot up to what went, so the replay is normally
-    /// empty of conflict; if it is not, it is undone and the caller falls back to the one pending commit.
+    /// empty of conflict. Where somebody else's change is in the way it stops the way any rebase does.
     /// </summary>
-    static bool ReplayRest(Git git, string worktree, string branch, string snapRef, string newSnap, string sent, PushResult result)
+    static void ReplayRest(Git git, string worktree, string branch, string onto, string sent, PushResult result, bool pending = false)
     {
-        var replay = git.RebaseOnto(worktree, newSnap, sent, branch);
-        if (!replay.Ok)
+        var replay = git.RebaseOnto(worktree, onto, sent, branch);
+        if (replay.Ok)
         {
-            git.RebaseAbort(worktree);
-            result.Warnings.Add("the commits that were not pushed do not replay onto the new snapshot cleanly, "
-                                + "so they were kept as one commit instead: " + (replay.StdErr.Trim() + " " + replay.StdOut.Trim()).Trim());
-            return false;
+            var left = git.CountCommits(onto, "refs/heads/" + branch);
+            var commits = left == 1 ? "1 commit" : $"{left} commits";
+            result.BranchState = !pending ? commits + " still on the branch"
+                : "pending commit " + onto[..10] + " holds what did not go" + (left == 0 ? "" : ", " + commits + " above it");
+            return;
         }
-        var left = git.CountCommits(snapRef, "refs/heads/" + branch);
-        result.BranchState = left == 1 ? "1 commit still on the branch" : $"{left} commits still on the branch";
-        return true;
+        if (!git.RebaseInProgress(worktree)) replay.EnsureOk();
+        result.Warnings.Add("the commits that were not pushed do not replay onto the new snapshot cleanly: " + Conflicts.Note(git, worktree) + ". " + Conflicts.Where);
+        result.BranchState = "the commits still on the branch wait for their conflicts to be settled";
     }
+
+    /// <summary>
+    /// What the rest of a branch goes onto after a push that failed, and the last commit that is not part
+    /// of the rest. A batch that went in part leaves one pending commit with what of it did not go: its
+    /// change merged onto the new snapshot, which has the other part already and whatever anybody else
+    /// committed. A batch that sent nothing is part of the rest.
+    /// </summary>
+    static (string Onto, string Sent) AfterFailure(Git git, string newSnap, PushBatchResult stopped)
+    {
+        if (stopped.Groups.All(g => g.State != "committed")) return (newSnap, stopped.From);
+        var m = git.MergeTree(stopped.From, newSnap, stopped.To);
+        if (!m.Clean) return (newSnap, stopped.From);
+        if (m.Tree == git.TreeOf(newSnap)) return (newSnap, stopped.To);
+        var left = string.Join(", ", stopped.Groups.Where(g => g.State != "committed").Select(g => g.Wc.Length == 0 ? "root" : g.Wc));
+        return (git.CommitTree(m.Tree, newSnap, NotPushed + ": " + left + "\n\n" + stopped.Message + "\n"), stopped.To);
+    }
+
+    /// <summary>The first words of the commit a push that failed half way leaves behind.</summary>
+    const string NotPushed = "not pushed yet";
+
+    /// <summary>Whether a commit is what a push that failed half way left behind.</summary>
+    internal static bool IsPending(string subject) => subject.StartsWith(NotPushed, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The last commit this push will send, worked out before any message is asked for so the refusals
@@ -683,16 +694,6 @@ public static class Push
             g.PinnedIn = o.PinnedIn;
             return g;
         }).ToList();
-    }
-
-    /// <summary>A commit on top of the new snapshot that carries the paths of the failed groups as they were on the old tip.</summary>
-    static string PendingCommit(SgRoot root, CheckoutConfig co, string newSnap, string tip, List<string> paths, string message)
-    {
-        var git = root.Git;
-        var existing = git.LsTree(tip, paths).Where(e => e.Type == "blob")
-            .ToDictionary(e => e.Path, e => e, StringComparer.OrdinalIgnoreCase);
-        var infos = paths.Select(p => existing.TryGetValue(p, out var e) ? (e.Mode, e.Sha, p) : ("0", new string('0', 40), p)).ToList();
-        return git.CommitTree(git.EditTree(newSnap, infos), newSnap, message);
     }
 
     /// <summary>

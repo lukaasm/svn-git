@@ -86,7 +86,7 @@ public sealed class PushBatchTests : IDisposable
         Assert.False(f.Root.Svn.UrlExists(f.GameUrl + "/branches/fort/dev/late.cpp"));
 
         // What did not go is still its own commit, replayed onto the new snapshot, and the file is
-        // still in the worktree. Only a push that failed half way flattens the rest into one commit.
+        // still in the worktree.
         Assert.Equal("late", git.Subject(git.HeadSha(wt)));
         Assert.Equal(1, git.CountCommits(f.Root.SnapshotRef(f.Co), git.HeadSha(wt)));
         Assert.Equal("late", Read(wt, "fort/dev/late.cpp"));
@@ -130,7 +130,9 @@ public sealed class PushBatchTests : IDisposable
         Assert.Equal("int engine = 1;", f.Cat(f.EngineUrl + "/branches/fort/dev/engine.cpp").Trim());
         Assert.Empty(f.CheckoutChanges());
 
-        Assert.StartsWith("not pushed yet", git.Subject(git.HeadSha(wt)));
+        // Nothing of the second batch went, so its commit is still the commit it was.
+        Assert.Equal("the rejected one", git.Subject(git.HeadSha(wt)));
+        Assert.Equal(1, git.CountCommits(f.Root.SnapshotRef(f.Co), git.HeadSha(wt)));
         Assert.Equal("int engine = 9;", Read(wt, "schmetterling/engine.cpp"));
         Assert.True(git.IsClean(wt));
 

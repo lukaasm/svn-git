@@ -846,9 +846,10 @@ public static class Ops
     /// Replays commits onto another one without a worktree, oldest first: each one's own change, merged
     /// three ways onto what the replay has made so far, under its own message and author. Nothing on disk
     /// moves and no ref changes, so a commit that does not fit is a refusal and never a stopped rebase.
-    /// A commit that already sits where it would go is kept as it is.
+    /// A commit that already sits where it would go is kept as it is. dropEmpty leaves out one whose
+    /// change is all there already, the way a rebase does.
     /// </summary>
-    internal static Replayed ReplayOnto(Git git, string onto, IEnumerable<string> oldestFirst)
+    internal static Replayed ReplayOnto(Git git, string onto, IEnumerable<string> oldestFirst, bool dropEmpty = false)
     {
         var tip = onto;
         foreach (var c in oldestFirst)
@@ -857,6 +858,7 @@ public static class Ops
             if (under == tip) { tip = c; continue; }
             var m = git.MergeTree(under, tip, c);
             if (!m.Clean) return new Replayed(tip, c, m.Conflicted);
+            if (dropEmpty && m.Tree == git.TreeOf(tip) && git.TreeOf(c) != git.TreeOf(under)) continue;
             tip = git.CommitTreeAs(m.Tree, tip, git.Body(c).TrimEnd() + "\n", git.AuthorOf(c));
         }
         return new Replayed(tip, null, []);
@@ -1035,7 +1037,7 @@ public static class Ops
             ws.DirtyFiles = dirty;
             if (rebasing) ws.Conflicts = git.ConflictedFiles(info.Path).Count;
         }
-        if (refs.TryGetValue("refs/heads/" + branch, out var head)) ws.Pending = head.Subject.StartsWith("not pushed yet", StringComparison.OrdinalIgnoreCase);
+        if (refs.TryGetValue("refs/heads/" + branch, out var head)) ws.Pending = Push.IsPending(head.Subject);
         return ws;
     }
 
@@ -1066,6 +1068,8 @@ public static class Ops
         ws.Ahead = ahead;
         ws.Behind = behind;
         ws.NeedsRebase = ws.Behind > 0 && !ws.RebaseInProgress;
+        // The tip is read with every ref. What a half push left can sit under later commits too.
+        if (!ws.Pending && ws.Ahead > 1) ws.Pending = git.Subjects(snapRef + ".." + branchRef).Any(Push.IsPending);
         ws.BackedUp = Backup.BackedUpAt(backedUp.GetValueOrDefault(ws.Branch));
         ws.NotBackedUp = Backup.NotBackedUp(git, ws.Branch, head.Sha, ws.Ahead, refs.GetValueOrDefault(Backup.PushedRef("branch", ws.Branch)));
         return ws;

@@ -53,7 +53,7 @@ public static class CheckoutRemoval
             if (path == null && !hasHead) continue;
             var ahead = hasHead && snapshot.Length > 0 ? git.CountBoth(snapRef, "refs/heads/" + branch).Right : 0;
             var dirty = path != null && Directory.Exists(path) ? git.DirtyCount(path) : 0;
-            var halfPushed = hasHead && head!.Subject.StartsWith("not pushed yet", StringComparison.OrdinalIgnoreCase);
+            var halfPushed = hasHead && (Push.IsPending(head!.Subject) || ahead > 1 && git.Subjects(snapRef + "..refs/heads/" + branch).Any(Push.IsPending));
             branches.Add(new CheckoutRemovalBranch(branch, path, ahead, dirty, halfPushed));
         }
 

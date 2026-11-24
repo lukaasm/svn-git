@@ -1172,6 +1172,10 @@ public sealed class Git
     public List<string> RevList(string? worktree, string range) =>
         Ok(worktree, "rev-list", range).StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
 
+    /// <summary>The first lines of the commits of a range, newest first.</summary>
+    public List<string> Subjects(string range) =>
+        Ok(null, "log", "--format=%s", range).StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(Msg.Subject).ToList();
+
     /// <summary>
     /// How every replay merges. The histogram diff lines the two sides up on the lines that matter
     /// rather than on the braces and blank lines C++ repeats, so fewer commits stop on a conflict that

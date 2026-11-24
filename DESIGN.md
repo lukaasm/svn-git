@@ -63,7 +63,7 @@ Working name `sg`. Change it later.
 | 16 | The tool creates server branches. Generic URL rule. Per-repository override in config. |
 | 17 | Fixes between server branches use `svn merge` in the checkout, as today. |
 | 18 | First target is `monorepo_proto`. |
-| 19 | A push that spans repositories makes one SVN commit per repository, in a fixed order. It stops at the first failure. Committed parts stay. The rest stays on the branch as one "not pushed yet" commit. |
+| 19 | A push that spans repositories makes one SVN commit per repository, in a fixed order. It stops at the first failure. Committed parts stay. What is left of the commits that went in part stays on the branch as one "not pushed yet" commit, and every other commit stays the commit it was. |
 | 20 | `fort/builds` is never tracked by git. `fort/tools` is tracked. A worktree can leave it out. |
 | 21 | `asset_src` is out of scope. |
 | 22 | The diff viewer is built in: WebView2 with the Monaco diff editor. An external tool is a config option. |
@@ -74,7 +74,7 @@ Working name `sg`. Change it later.
 | 27 | v1 GUI: Overview, Sync, New branch, Rebase, Push, Commit with diff, Log, Discard, New server branch, New server checkout, Settings. v2: conflict resolver, SVN commit, SVN log and blame. Never icon overlays. |
 | 28 | The commit windows work the way Tortoise's do, one block of a diff at a time. A block is a hunk of the unified patch git or svn wrote, so what a button acts on is exactly what those tools would place. Git commits can hold part of a file, through the index; SVN has no index, so there a block is only reverted. The file itself is edited in the diff and written back. |
 | 29 | The branch's own commits can be joined into one, and any of them given a new message. A snapshot of SVN never can: it is what the server said. A rewrite replaces an unbroken run with one commit that has the run's own last tree, so replaying what sat above it cannot conflict; if it somehow does, the rebase is undone and nothing changed. |
-| 30 | A push can send the oldest few commits instead of the whole branch. The boundary is a count, not a commit: a push rebases first and that renames every commit. What is left over stays as the commits it was, replayed onto the new snapshot, so the next push can take a few more. Only a push that failed half way still flattens the rest into one commit. |
+| 30 | A push can send the oldest few commits instead of the whole branch. The boundary is a count, not a commit: a push rebases first and that renames every commit. What is left over stays as the commits it was, replayed onto the new snapshot, so the next push can take a few more. A push that fails leaves the rest the same way: a batch that sent nothing is not touched, and only what is left of a batch that went in part becomes one commit, under the ones above it. |
 | 31 | Merging between server branches happens in the checkout, through svn, with the tool driving it: all of a branch, or named revisions, and the same run backwards to take a revision out again. It never commits. What a merge brings in is a local change of the checkout, and the changes window sends it, so a merge and an edit made by hand leave the same way. Changed 2026-09-06; decision 17 left this to be done by hand. |
 | 32 | A commit is undone by adding one that takes its changes back out, never by rewriting it. Squash and reword rewrite, and both refuse anything that has left the machine; revert does not, so it is the one that works on a commit somebody else may already have. |
 | 33 | Blame answers with the SVN view. A worktree's git history is one commit per sync, so plain `git blame` names the sync and not the change; the lines that came in with a snapshot are handed to `svn blame`, through the original line number git gives for each one, and the lines the branch itself changed keep git's answer. This is the `sg blame` the notes promised. |
@@ -231,8 +231,7 @@ After the loop:
 
 1. `svn update`. New snapshot. `svn/<checkout>` moves.
 2. All groups done: in the worktree, `git reset --hard svn/<checkout>`. The branch now equals SVN, including any eol or keyword normalizing SVN did.
-3. Some groups failed: build one commit on top of the new snapshot. Its tree is the snapshot tree, with the paths of the failed groups taken from the old branch tip. In the worktree, `git reset --hard` onto it. The branch is now "snapshot plus one not-pushed-yet commit". The old tip stays in the reflog. Report which repositories got a commit and which did not.
-
+3. A batch failed with part of it sent: build one commit on top of the new snapshot. Its tree is a three way merge in memory of the batch's own change onto the snapshot, so it holds what did not go and nothing anybody else committed is put back. Nothing left is no commit. Every commit above the batch is replayed onto it, one for one. A batch that sent nothing gets no such commit: it is replayed too. A commit that meets somebody else's change in the same lines stops the replay the way any rebase stops, to be settled with `sg resolve`; the branch's files are never written over the snapshot. The old tip stays in the reflog. Report which repositories got a commit and which did not.
 ### New server branch
 
 Input: a source checkout and a new name. Each external can also get a name of its own, or be kept: then it is not copied, and the `svn:externals` line that brings it in stays as it is. An external inside a kept one is kept with it. A repository with nothing left to copy gets no revision.

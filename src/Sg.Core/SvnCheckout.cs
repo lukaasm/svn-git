@@ -642,19 +642,29 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
         var git = root.Git;
         var svn = root.Svn;
         var cwd = co.Path;
-        var renames = g.Entries.Where(e => e.Status == 'R' && e.OldPath != null).ToList();
+        var renames = g.Entries.Where(e => e.Status == 'R' && e.OldPath != null).Select(e => (Old: e.OldPath!, New: e.Path)).ToList();
         var adds = g.Entries.Where(e => e.Status == 'A').Select(e => e.Path).ToList();
         var mods = g.Entries.Where(e => e.Status is 'M' or 'T').Select(e => e.Path).ToList();
         var dels = g.Entries.Where(e => e.Status == 'D').Select(e => e.Path).ToList();
 
+        // A delete and an add that differ only in letter case are one file on a case-insensitive disk:
+        // deleting the old name would delete the new one. svn mv is the only way to send that.
+        foreach (var d in dels.ToList())
+        {
+            if (adds.FirstOrDefault(a => a.Equals(d, StringComparison.OrdinalIgnoreCase) && !a.Equals(d, StringComparison.Ordinal)) is not { } a) continue;
+            renames.Add((d, a));
+            dels.Remove(d);
+            adds.Remove(a);
+        }
+
         g.Targets = new List<string>();
         foreach (var r in renames)
         {
-            svn.Mv(cwd, r.OldPath!, r.Path);
-            g.Targets.Add(r.OldPath!);
-            g.Targets.Add(r.Path);
+            svn.Mv(cwd, r.Old, r.New);
+            g.Targets.Add(r.Old);
+            g.Targets.Add(r.New);
         }
-        var write = adds.Concat(mods).Concat(renames.Select(r => r.Path)).ToList();
+        var write = adds.Concat(mods).Concat(renames.Select(r => r.New)).ToList();
         git.CheckoutPaths(cwd, tip, write);
         foreach (var d in dels)
         {
@@ -667,12 +677,14 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
         g.Targets.AddRange(dels);
 
         // Folders that svn add --parents or svn mv --parents just created must be in the commit too.
-        var ancestors = adds.Concat(renames.Select(r => r.Path)).SelectMany(PathUtil.Ancestors)
+        var ancestors = adds.Concat(renames.Select(r => r.New)).SelectMany(PathUtil.Ancestors)
             .Where(a => PathUtil.IsUnder(a, g.Wc) && !a.Equals(g.Wc, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (ancestors.Count > 0)
             g.AddedDirs = svn.StatusTargets(cwd, ancestors).Where(s => s.Item == "added").Select(s => s.Path).ToList();
-        g.Targets = g.AddedDirs.Concat(g.Targets).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // Ordinal: a case-only rename has two targets that differ only in case, and svn refuses a move
+        // whose two sides are not committed together.
+        g.Targets = g.AddedDirs.Concat(g.Targets).Distinct(StringComparer.Ordinal).ToList();
     }
 
     /// <summary>
@@ -690,14 +702,24 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
             var renames = g.Entries.Where(e => e.Status == 'R' && e.OldPath != null).ToList();
             var restore = g.Entries.Where(e => e.Status is 'M' or 'T' or 'D').Select(e => e.Path).Concat(renames.Select(r => r.OldPath!)).ToList();
             var drop = g.Entries.Where(e => e.Status == 'A').Select(e => e.Path).Concat(renames.Select(r => r.Path)).ToList();
-            var all = g.Targets.Concat(restore).Concat(drop).Concat(g.AddedDirs).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            // A case-only rename: on a case-insensitive disk the new name and the old name are one file.
+            // It goes before the revert, so svn restores the old name from its pristine copy, and it is
+            // not deleted after the restore, which would delete the old file again.
+            var restoreFolded = restore.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var caseTwins = drop.Where(d => restoreFolded.Contains(d) && !restore.Contains(d, StringComparer.Ordinal)).ToList();
+            foreach (var t in caseTwins)
+            {
+                var abs = PathUtil.Join(cwd, t);
+                if (File.Exists(abs)) File.Delete(abs);
+            }
+            var all = g.Targets.Concat(restore).Concat(drop).Concat(g.AddedDirs).Distinct(StringComparer.Ordinal).ToList();
             if (all.Count > 0)
             {
                 var r = svn.Revert(cwd, all);
                 if (!r.Ok) warnings.Add($"svn revert in {label} said: " + r.StdErr.Trim());
             }
             if (restore.Count > 0) git.CheckoutPaths(cwd, restoreFrom, restore);
-            foreach (var d in drop)
+            foreach (var d in drop.Except(caseTwins, StringComparer.Ordinal))
             {
                 var abs = PathUtil.Join(cwd, d);
                 if (File.Exists(abs)) File.Delete(abs);

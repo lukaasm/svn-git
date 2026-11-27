@@ -983,7 +983,9 @@ public sealed class Git
             var f = WritePathspecFile(specs);
             try
             {
-                var args = new List<string> { "-C", worktree, "add", "-A", "-f", "--pathspec-from-file=" + f, "--pathspec-file-nul" };
+                // Case-sensitive, so a file whose letter case changed on disk comes in under its new name.
+                // The old name stays in the index too; CaseStaleIndexPaths finds it.
+                var args = new List<string> { "-c", "core.ignorecase=false", "-C", worktree, "add", "-A", "-f", "--pathspec-from-file=" + f, "--pathspec-file-nul" };
                 if (onAdded != null) args.Add("-v");
                 var r = Proc.RunStreaming(_exe, args, worktree, _log,
                     onAdded == null ? null : line =>
@@ -1008,6 +1010,29 @@ public sealed class Git
             finally { File.Delete(f); }
         }
         throw new SgException("git add gave up: too many invalid paths in " + worktree);
+    }
+
+    /// <summary>
+    /// Index entries whose name differs only in letter case from another entry and is not the case the
+    /// file has on disk. A case-insensitive disk holds one file for all of them; only the disk's name is real.
+    /// </summary>
+    public List<string> CaseStaleIndexPaths(string worktree)
+    {
+        var paths = Ok(worktree, "ls-files", "-z").StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var stale = new List<string>();
+        foreach (var group in paths.GroupBy(p => p, StringComparer.OrdinalIgnoreCase).Where(g => g.Skip(1).Any()))
+        {
+            if (PathUtil.CaseOnDisk(worktree, group.Key) is not { } real) continue;
+            stale.AddRange(group.Where(p => !p.Equals(real, StringComparison.Ordinal)));
+        }
+        return stale;
+    }
+
+    /// <summary>Takes exactly these paths out of the index. Unlike a pathspec, the match is case-sensitive.</summary>
+    public void ForceRemoveFromIndex(string worktree, IEnumerable<string> relPaths)
+    {
+        foreach (var chunk in relPaths.Chunk(200))
+            Ok(worktree, ["update-index", "--force-remove", "--", .. chunk]);
     }
 
     /// <summary>A killed git add leaves index.lock behind. Remove it when it is older than a minute.</summary>

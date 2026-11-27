@@ -142,6 +142,14 @@ public static class Snapshot
         // 3. Drop stale index entries for things that must not be tracked any more.
         git.RmCached(wt, excludedEntries.Concat(co.Skip).Concat(invalid).Distinct(StringComparer.OrdinalIgnoreCase));
 
+        // A case-only rename leaves the old name in the index next to the new one.
+        var caseStale = git.CaseStaleIndexPaths(wt);
+        if (caseStale.Count > 0)
+        {
+            git.ForceRemoveFromIndex(wt, caseStale);
+            log.Info($"took {caseStale.Count} path(s) out whose letter case is not the one on disk");
+        }
+
         // 4. Local edits: put the pristine (BASE) content in the index instead of the working file.
         var candidates = status
             .Where(e => e.Path.Length > 0 && OverlayItems.Contains(e.Item) && !co.Skip.Any(s => PathUtil.IsUnder(e.Path, s)))

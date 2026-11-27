@@ -24,6 +24,22 @@ public static class PathUtil
     public static string Join(string root, string rel) =>
         rel.Length == 0 ? root : Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
 
+    /// <summary>rel spelled the way the disk spells it, or null when no such entry is on disk.</summary>
+    public static string? CaseOnDisk(string root, string rel)
+    {
+        var dir = new DirectoryInfo(root);
+        var parts = new List<string>();
+        foreach (var part in rel.Split('/'))
+        {
+            if (!dir.Exists) return null;
+            var hit = dir.EnumerateFileSystemInfos().FirstOrDefault(i => i.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+            if (hit == null) return null;
+            parts.Add(hit.Name);
+            dir = new DirectoryInfo(hit.FullName);
+        }
+        return string.Join('/', parts);
+    }
+
     /// <summary>True when rel equals prefix or lies below it. An empty prefix matches everything.</summary>
     public static bool IsUnder(string rel, string prefix) =>
         prefix.Length == 0

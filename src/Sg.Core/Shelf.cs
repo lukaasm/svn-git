@@ -181,7 +181,9 @@ public static class Shelf
         // property change stays where it is, whole: svn revert takes the property with the text, and
         // only the text would come back. The reader is told which, rather than finding them gone.
         var props = picked.Where(HasPropertyEdit).Select(c => c.Path).ToList();
-        var files = picked.Where(c => !HasPropertyEdit(c)).ToList();
+        var nested = picked.Where(c => c.Item == "unversioned" && HoldsRepository(PathUtil.Join(co.Path, c.Path))).Select(c => c.Path).ToList();
+        if (nested.Count > 0) root.Log.Warn("left in place, a shelf cannot hold a folder with its own git repository: " + Names(nested));
+        var files = picked.Where(c => !HasPropertyEdit(c) && !nested.Contains(c.Path)).ToList();
         if (files.Count == 0)
             throw new SgException("every picked change is an svn property change, and a shelf holds file content: " + Names(props));
 
@@ -221,6 +223,12 @@ public static class Shelf
             throw new SgException(Conflicts.Note(git, worktree) + ". " + Conflicts.Where + " Then shelve.");
         var branch = git.CurrentBranch(worktree);
         var picked = Under(git.StatusEntries(worktree, untracked: true), paths, e => e.Path);
+        var nested = picked.Where(e => e.Untracked && HoldsRepository(PathUtil.Join(worktree, e.Path))).ToList();
+        if (nested.Count > 0)
+        {
+            root.Log.Warn("left in place, a shelf cannot hold a folder with its own git repository: " + Names(nested.Select(e => e.Path).ToList()));
+            picked = picked.Except(nested).ToList();
+        }
         if (picked.Count == 0) throw new SgException($"nothing to shelve: {branch} has no change to those paths.");
         var stuck = picked.Where(e => e.X == "U" || e.Y == "U").Select(e => e.Path).ToList();
         if (stuck.Count > 0) throw new SgException("these are in conflict: " + Names(stuck) + "\nSolve that first, then shelve them.");
@@ -774,6 +782,17 @@ public static class Shelf
 
     static string Names(List<string> paths) =>
         string.Join(", ", paths.Take(5)) + (paths.Count > 5 ? $" and {paths.Count - 5} more" : "");
+
+    /// <summary>
+    /// A folder with a .git in it or anywhere below. git add keeps such a repository as a bare pointer,
+    /// so a shelf would hold none of its files and the cleanup after it would delete them all.
+    /// </summary>
+    static bool HoldsRepository(string abs)
+    {
+        if (!Directory.Exists(abs)) return false;
+        var deep = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true };
+        return Directory.EnumerateFileSystemEntries(abs, ".git", deep).Any();
+    }
 
     static void Delete(string abs)
     {

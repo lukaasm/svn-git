@@ -269,10 +269,10 @@ public sealed class Svn
         finally { File.Delete(tf); }
     }
 
-    public void Rm(string cwd, IEnumerable<string> paths)
+    public void Rm(string cwd, IEnumerable<string> paths, bool keepLocal = false)
     {
         var tf = WriteTargets(paths);
-        try { Ok(cwd, "rm", "--force", "--non-interactive", "--targets", tf); }
+        try { Ok(cwd, "rm", keepLocal ? "--keep-local" : "--force", "--non-interactive", "--targets", tf); }
         finally { File.Delete(tf); }
     }
 

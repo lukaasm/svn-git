@@ -169,11 +169,14 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
         IReadOnlyDictionary<string, string> pins)
     {
         var svn = root.Svn;
-        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Ordinal: the two sides of a case-only rename differ only in case and must go in one commit.
+        var targets = new HashSet<string>(StringComparer.Ordinal);
         var unversioned = changes.Where(c => c.Item == "unversioned").Select(c => c.Path).ToList();
         var missing = changes.Where(c => c.Item == "missing").Select(c => c.Path).ToList();
         if (unversioned.Count > 0) svn.Add(co.Path, unversioned);
-        if (missing.Count > 0) svn.Rm(co.Path, missing);
+        // Missing is gone from disk already. --keep-local, because a missing name with a case twin on
+        // disk is that twin's file, and svn rm --force would delete it.
+        if (missing.Count > 0) svn.Rm(co.Path, missing, keepLocal: true);
         foreach (var c in changes) targets.Add(c.Path);
         foreach (var p in unversioned)
             foreach (var e in svn.StatusOf(co.Path, p).Where(e => e.Item == "added"))
@@ -710,7 +713,9 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
             foreach (var t in caseTwins)
             {
                 var abs = PathUtil.Join(cwd, t);
-                if (File.Exists(abs)) File.Delete(abs);
+                if (!File.Exists(abs)) continue;
+                File.SetAttributes(abs, FileAttributes.Normal);
+                File.Delete(abs);
             }
             var all = g.Targets.Concat(restore).Concat(drop).Concat(g.AddedDirs).Distinct(StringComparer.Ordinal).ToList();
             if (all.Count > 0)

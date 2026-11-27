@@ -915,8 +915,8 @@ public static class Ops
             if (Operations.Pending(root, wt.Path) != null) throw new SgException("An unfinished operation protects this worktree. Finish or dismiss it in Activity first.");
             if (Directory.Exists(wt.Path))
             {
-                if (!force && !git.IsClean(wt.Path))
-                    throw new SgException("worktree has uncommitted changes. Use --force to drop them: " + wt.Path);
+                if (!force && git.StatusEntries(wt.Path, untracked: true).Count > 0)
+                    throw new SgException("worktree has uncommitted changes or new files git does not track. Use --force to drop them: " + wt.Path);
                 RemoveReparsePoints(wt.Path, 3);
                 // Windows holds a folder open for anything running in it, and this step is the one that
                 // fails. It used to fail as git's own sentence, which named a file and not the situation,

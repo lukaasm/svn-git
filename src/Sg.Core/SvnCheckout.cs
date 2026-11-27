@@ -660,6 +660,8 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
             adds.Remove(a);
         }
 
+        g.Created = adds.Concat(renames.Select(r => r.New))
+            .Where(p => !File.Exists(PathUtil.Join(cwd, p)) && !Directory.Exists(PathUtil.Join(cwd, p))).ToList();
         g.Targets = new List<string>();
         foreach (var r in renames)
         {
@@ -724,7 +726,8 @@ public sealed class SvnCheckoutVcs : ICheckoutVcs
                 if (!r.Ok) warnings.Add($"svn revert in {label} said: " + r.StdErr.Trim());
             }
             if (restore.Count > 0) git.CheckoutPaths(cwd, restoreFrom, restore);
-            foreach (var d in drop.Except(caseTwins, StringComparer.Ordinal))
+            // Only what this write made: a file that was there before is the user's, never sg's to delete.
+            foreach (var d in drop.Except(caseTwins, StringComparer.Ordinal).Intersect(g.Created, StringComparer.Ordinal))
             {
                 var abs = PathUtil.Join(cwd, d);
                 if (File.Exists(abs)) File.Delete(abs);

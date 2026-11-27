@@ -17,6 +17,8 @@ public sealed class PushGroup
     public List<DiffEntry> Entries = new();
     internal List<string> Targets = new();
     internal List<string> AddedDirs = new();
+    /// <summary>The files WriteInto made where nothing was before. A rollback deletes these and no other.</summary>
+    internal List<string> Created = new();
     /// <summary>
     /// The folder of the server this working copy is, as the repository's id and the path in it. Two
     /// working copies can be one folder, under two host names too. Empty when the server does not say.
@@ -885,7 +887,7 @@ public static class Push
         var unsupported = entries.Where(e => e.Status is not ('A' or 'M' or 'D' or 'R' or 'T' or 'C'))
             .Select(e => $"{e.Path} ({e.Status})").ToList();
         var unwritable = paths.Where(x => co.Skip.Any(sk => PathUtil.IsUnder(x, sk)) || PathUtil.HasReservedName(x)).ToList();
-        var collisions = paths.Where(localEdits.Contains).ToList();
+        var collisions = paths.Where(localEdits.Contains).Concat(Occupied(entries, co)).Distinct().ToList();
 
         p.Checks =
         [
@@ -928,8 +930,9 @@ public static class Push
     /// <summary>Every reason this set of changes cannot go to SVN. Empty means it can.</summary>
     static List<string> Refusals(IEnumerable<DiffEntry> entries, CheckoutConfig co, HashSet<string> localEdits)
     {
-        var bad = new List<string>();
-        foreach (var e in entries)
+        var list = entries.ToList();
+        var bad = Occupied(list, co).Select(p => p + " (a file the server does not have is already there in the checkout, move it away first)").ToList();
+        foreach (var e in list)
         {
             if (e.Status is not ('A' or 'M' or 'D' or 'R' or 'T' or 'C'))
                 bad.Add(e.Path + " (unsupported change type " + e.Status + ")");
@@ -942,6 +945,22 @@ public static class Push
             }
         }
         return bad.Distinct().ToList();
+    }
+
+    /// <summary>
+    /// Paths the push adds that are already on disk in the checkout: an unversioned or ignored file of the
+    /// user's, which the push would write over. A case twin of a path the push removes is that path's own
+    /// file, not one of these.
+    /// </summary>
+    static List<string> Occupied(IReadOnlyList<DiffEntry> entries, CheckoutConfig co)
+    {
+        var leaving = entries.Where(e => e.Status == 'D').Select(e => e.Path)
+            .Concat(entries.Where(e => e.Status == 'R' && e.OldPath != null).Select(e => e.OldPath!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return entries.Where(e => e.Status is 'A' or 'R' or 'C').Select(e => e.Path)
+            .Where(p => !leaving.Contains(p))
+            .Where(p => File.Exists(PathUtil.Join(co.Path, p)) || Directory.Exists(PathUtil.Join(co.Path, p)))
+            .ToList();
     }
 
     static PushCheck Check(string id, string name, IReadOnlyList<string> offenders, string clear)

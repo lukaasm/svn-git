@@ -395,16 +395,17 @@ public static class Push
             var rest = git.RevList(worktree, snapSha + ".." + tip).AsEnumerable().Reverse().Where(c => !went || c != picked).ToList();
             if (rest.Count == 0)
             {
-                git.ResetHard(worktree, snapRef);
                 result.AllCommitted = true;
-                result.BranchState = "reset to " + snapRef;
+                if (MoveBranch(git, worktree, snapRef, result)) result.BranchState = "reset to " + snapRef;
             }
             else if (Ops.ReplayOnto(git, sync.Sha, rest, dropEmpty: true) is { StoppedAt: null } replay)
             {
-                git.ResetHard(worktree, replay.Tip);
-                var left = git.CountCommits(snapRef, "refs/heads/" + branch);
-                result.BranchState = (went ? "sent " + Short(picked) + " on its own; " : "")
-                                     + (left == 1 ? "1 commit still on the branch" : $"{left} commits still on the branch");
+                if (MoveBranch(git, worktree, replay.Tip, result))
+                {
+                    var left = git.CountCommits(snapRef, "refs/heads/" + branch);
+                    result.BranchState = (went ? "sent " + Short(picked) + " on its own; " : "")
+                                         + (left == 1 ? "1 commit still on the branch" : $"{left} commits still on the branch");
+                }
             }
             else
             {
@@ -414,9 +415,8 @@ public static class Push
         }
         else if (sentAll)
         {
-            git.ResetHard(worktree, snapRef);
             result.AllCommitted = true;
-            result.BranchState = "reset to " + snapRef;
+            if (MoveBranch(git, worktree, snapRef, result)) result.BranchState = "reset to " + snapRef;
         }
         else
         {
@@ -490,6 +490,18 @@ public static class Push
     /// one blob. Their changes are already in the snapshot up to what went, so the replay is normally
     /// empty of conflict. Where somebody else's change is in the way it stops the way any rebase does.
     /// </summary>
+    /// <summary>
+    /// Puts the branch on what the push left. A push takes minutes, and a file saved in the worktree
+    /// meanwhile must not be thrown away: when one is in the way the branch stays where it was.
+    /// </summary>
+    static bool MoveBranch(Git git, string worktree, string target, PushResult result)
+    {
+        if (git.ResetKeep(worktree, target)) return true;
+        result.Warnings.Add("files in the worktree changed while the push ran. The branch was left where it was, so nothing was lost. Commit or shelve those edits, then run sg rebase.");
+        result.BranchState = "left as it was: the worktree has edits made during the push";
+        return false;
+    }
+
     static void ReplayRest(Git git, string worktree, string branch, string onto, string sent, PushResult result, bool pending = false)
     {
         var replay = git.RebaseOnto(worktree, onto, sent, branch);

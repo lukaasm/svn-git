@@ -1775,6 +1775,9 @@ public sealed class Git
         else Ok(worktree, "reset", "--hard", "-q", target);
     }
 
+    /// <summary>git reset --keep: moves like --hard but keeps local edits, and refuses (false) when one is in the way.</summary>
+    public bool ResetKeep(string worktree, string target) => Run(worktree, "reset", "--keep", "-q", target).Ok;
+
     public void SparseSetCone(string worktree, IEnumerable<string> dirs)
     {
         var a = new List<string> { "sparse-checkout", "set", "--cone" };

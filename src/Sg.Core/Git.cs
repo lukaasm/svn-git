@@ -1028,6 +1028,57 @@ public sealed class Git
         return stale;
     }
 
+    /// <summary>
+    /// The worktree reads no .gitattributes from its own tree, for every git command run in it, sg's and
+    /// the user's. A .gitattributes inside an SVN tree (imgui has "* text=auto") would otherwise turn the
+    /// snapshot into LF and a push into CRLF, and rewrite every line of a file in SVN. A git clone keeps
+    /// its own rules: this is set only on the worktrees of SVN checkouts.
+    /// </summary>
+    public bool IgnoreTreeAttributes(string worktree)
+    {
+        EnsureWorktreeConfig();
+        Ok(worktree, "config", "--worktree", "attr.tree", GitRepo.EmptyTree);
+        return true;
+    }
+
+    /// <summary>
+    /// Per-worktree config, turned on the way git sparse-checkout turns it on: core.bare moves from the
+    /// shared config into the store's own config.worktree first, or every worktree would read itself as bare.
+    /// </summary>
+    void EnsureWorktreeConfig()
+    {
+        if (Run(null, "config", "--bool", "extensions.worktreeConfig").StdOut.Trim() == "true") return;
+        if (Run(null, "config", "--file", Path.Combine(Store, "config"), "--bool", "core.bare").StdOut.Trim() == "true")
+        {
+            Ok(null, "config", "--file", Path.Combine(Store, "config.worktree"), "core.bare", "true");
+            Ok(null, "config", "--file", Path.Combine(Store, "config"), "--unset", "core.bare");
+        }
+        Ok(null, "config", "extensions.worktreeConfig", "true");
+    }
+
+    /// <summary>
+    /// Hashes again every tracked file in the folders that hold a .gitattributes. Their index entries may
+    /// still hold what an attribute made of them before the store unset it; git add alone only rehashes
+    /// files whose stat changed. Once per worktree: what is hashed after that is hashed without them.
+    /// </summary>
+    public void RenormalizeAttributeFolders(string worktree)
+    {
+        var marker = GitPath(worktree, "sg-attributes-renormalized");
+        if (File.Exists(marker)) return;
+        IgnoreTreeAttributes(worktree);
+        var folders = Ok(worktree, "ls-files", "-z", "--", ":(glob)**/.gitattributes").StdOut
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Contains('/') ? p[..p.LastIndexOf('/')] : ".")
+            .Distinct(StringComparer.Ordinal).ToList();
+        if (folders.Count > 0)
+        {
+            var f = WritePathspecFile(folders.Select(p => ":(literal)" + p));
+            try { Ok(worktree, "add", "--renormalize", "--pathspec-from-file=" + f, "--pathspec-file-nul"); }
+            finally { File.Delete(f); }
+        }
+        File.WriteAllText(marker, "");
+    }
+
     /// <summary>Takes exactly these paths out of the index. Unlike a pathspec, the match is case-sensitive.</summary>
     public void ForceRemoveFromIndex(string worktree, IEnumerable<string> relPaths)
     {

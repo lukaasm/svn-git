@@ -164,7 +164,22 @@ public static class Ops
     /// The version is a key in the store's own config, read from the file rather than from git, so an
     /// open that has nothing to do costs a file read and no process.
     /// </summary>
-    const int StoreConfigVersion = 3;
+    const int StoreConfigVersion = 4;
+
+    /// <summary>Every existing worktree of an SVN checkout's branch reads no .gitattributes from its tree.</summary>
+    static void IgnoreTreeAttributesInSvnWorktrees(SgRoot root)
+    {
+        var coPaths = root.Config.Checkouts.Select(c => c.Path.TrimEnd('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var w in root.Git.WorktreeList())
+        {
+            if (w.Bare || coPaths.Contains(w.Path.TrimEnd('\\', '/')) || !Directory.Exists(w.Path)) continue;
+            var branch = w.Branch ?? root.Git.RebaseHeadName(w.Path);
+            if (branch == null) continue;
+            var baseName = root.Git.ConfigGet($"branch.{branch}.sgBase");
+            var co = baseName != null ? root.Config.Checkouts.FirstOrDefault(c => c.Name.Equals(baseName, StringComparison.OrdinalIgnoreCase)) : null;
+            if (co is { IsGit: false }) root.Git.IgnoreTreeAttributes(w.Path);
+        }
+    }
 
     /// <summary>Every StoreConfig key, then the version they are, then fsmonitor when it is asked for.</summary>
     static IEnumerable<(string Key, string Value)> StoreSettings(bool fsmonitor) =>
@@ -180,6 +195,7 @@ public static class Ops
         catch (IOException) { return; }
         if (Regex.IsMatch(text, @"(?im)^\s*configVersion\s*=\s*" + StoreConfigVersion + @"\s*$")) return;
         root.Git.ConfigMany(StoreSettings(fsmonitor: false));
+        IgnoreTreeAttributesInSvnWorktrees(root);
         root.Log.Info("store settings brought up to date: " + root.StorePath);
     }
 
@@ -537,6 +553,7 @@ public static class Ops
         if (minimal) excluded.AddRange(co.Optional.Where(o => !excluded.Contains(o, StringComparer.OrdinalIgnoreCase)));
 
         git.WorktreeAddBranchNoCheckout(dir, name, snapRef);
+        if (!co.IsGit) git.IgnoreTreeAttributes(dir);
         if (excluded.Count > 0) git.SparseSetCone(dir, ConeDirsExcluding(git, snapRef, excluded));
         root.Log.Info("writing files into " + dir);
         git.CheckoutForceProgress(dir, name, (n, t) => root.Log.Progress("writing files", n, t, "files", null));

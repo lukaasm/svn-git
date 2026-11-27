@@ -149,6 +149,7 @@ public static class Snapshot
             git.ForceRemoveFromIndex(wt, caseStale);
             log.Info($"took {caseStale.Count} path(s) out whose letter case is not the one on disk");
         }
+        git.RenormalizeAttributeFolders(wt);
 
         // 4. Local edits: put the pristine (BASE) content in the index instead of the working file.
         var candidates = status
